@@ -1,4 +1,5 @@
 import {
+  authorizeCron,
   buildFinancialStats,
   cairoDayRange,
   fetchReportData,
@@ -68,6 +69,9 @@ export function buildDailyMessage(settings, range, data, openingBalance) {
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ ok: false, error: 'Method not allowed' });
+  }
+  if (!authorizeCron(req)) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
 
   try {

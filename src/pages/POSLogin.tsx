@@ -14,9 +14,9 @@ export default function POSLogin() {
     loadCashiers();
   }, []);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loginPOS(name, password)) {
+    if (await loginPOS(name, password)) {
       navigate('/');
     } else {
       setError(true);

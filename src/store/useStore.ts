@@ -52,6 +52,8 @@ export interface Cashier {
   phone: string;
   photo_url: string;
   created_at: string;
+  /** Supabase Auth email used to sign this cashier in (set by the provisioning script). */
+  email?: string;
 }
 
 export interface PurchaseItem {
@@ -450,10 +452,10 @@ interface CashierStore {
   // Auth
   isAdminAuthenticated: boolean;
   isPOSAuthenticated: boolean;
-  login: (pin: string) => boolean;
-  logout: () => void;
-  loginPOS: (name: string, password?: string) => boolean;
-  logoutPOS: () => void;
+  login: (pin: string) => Promise<boolean>;
+  logout: () => Promise<void>;
+  loginPOS: (name: string, password?: string) => Promise<boolean>;
+  logoutPOS: () => Promise<void>;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -496,15 +498,25 @@ function getPublicInvoiceUrl(invoiceId: string): string {
   return `${baseUrl}/view-invoice/${invoiceId}`;
 }
 
-function sendTelegramAlert(payload: Record<string, unknown>) {
+async function sendTelegramAlert(payload: Record<string, unknown>) {
   if (typeof fetch === 'undefined') return;
-  fetch('/api/telegram-alert', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  }).catch((error) => {
+  try {
+    // Attach the current Supabase session token so the endpoint can verify the
+    // caller is an authenticated staff member (enforced when REQUIRE_ALERT_AUTH
+    // is set server-side — see SECURITY_SETUP.md).
+    const { data } = await supabase.auth.getSession();
+    const token = data.session?.access_token;
+    await fetch('/api/telegram-alert', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch (error) {
     console.warn('Telegram alert failed:', error);
-  });
+  }
 }
 
 function notifyLowStock(
@@ -605,33 +617,46 @@ export const useStore = create<CashierStore>((set, get) => ({
   isAdminAuthenticated: !!sessionStorage.getItem('cashier_admin_auth'),
   isPOSAuthenticated: !!sessionStorage.getItem('cashier_pos_auth'),
 
-  login: (pin: string) => {
-    if (pin === '1111') { // Admin PIN
-      sessionStorage.setItem('cashier_admin_auth', 'true');
-      set({ isAdminAuthenticated: true });
-      return true;
+  // Admin login: authenticates against Supabase Auth using a fixed admin
+  // account. The "PIN" the admin types is their Supabase password. The admin
+  // email is configured via VITE_ADMIN_EMAIL and the account is created by the
+  // provisioning script (see SECURITY_SETUP.md).
+  login: async (pin: string) => {
+    const adminEmail = import.meta.env.VITE_ADMIN_EMAIL as string | undefined;
+    if (!adminEmail) {
+      console.error('VITE_ADMIN_EMAIL is not configured. Run the security setup (SECURITY_SETUP.md).');
+      return false;
     }
-    return false;
+    const { error } = await supabase.auth.signInWithPassword({ email: adminEmail, password: pin });
+    if (error) return false;
+    sessionStorage.setItem('cashier_admin_auth', 'true');
+    set({ isAdminAuthenticated: true });
+    return true;
   },
 
-  logout: () => {
+  logout: async () => {
+    await supabase.auth.signOut();
     sessionStorage.removeItem('cashier_admin_auth');
     set({ isAdminAuthenticated: false });
   },
 
-  loginPOS: (name, password) => {
+  // Cashier login: each cashier is a Supabase Auth user (email set by the
+  // provisioning script). Authentication is delegated to Supabase — passwords
+  // are never compared in the browser.
+  loginPOS: async (name, password) => {
     const { cashiers } = get();
-    const cashier = cashiers.find(c => c.name === name && c.password === password);
-    if (cashier) {
-      sessionStorage.setItem('cashier_pos_auth', 'true');
-      sessionStorage.setItem('active_cashier_name', cashier.name);
-      set({ isPOSAuthenticated: true, activeCashier: cashier });
-      return true;
-    }
-    return false;
+    const cashier = cashiers.find(c => c.name === name);
+    if (!cashier || !cashier.email) return false;
+    const { error } = await supabase.auth.signInWithPassword({ email: cashier.email, password: password ?? '' });
+    if (error) return false;
+    sessionStorage.setItem('cashier_pos_auth', 'true');
+    sessionStorage.setItem('active_cashier_name', cashier.name);
+    set({ isPOSAuthenticated: true, activeCashier: cashier });
+    return true;
   },
 
-  logoutPOS: () => {
+  logoutPOS: async () => {
+    await supabase.auth.signOut();
     sessionStorage.removeItem('cashier_pos_auth');
     sessionStorage.removeItem('active_cashier_name');
     set({ isPOSAuthenticated: false, activeCashier: null });
@@ -1960,6 +1985,9 @@ export const useStore = create<CashierStore>((set, get) => ({
   },
 
   addCashier: async (cashier) => {
+    // NOTE: after Supabase Auth is enabled, a newly added cashier cannot log in
+    // until a matching Auth user is created. Re-run scripts/provision_auth_users.cjs
+    // (or create the Auth user via the Supabase dashboard) — see SECURITY_SETUP.md.
     const { data } = await supabase.from('cashiers').insert(cashier).select().single();
     if (data) set((state) => ({ cashiers: [data as unknown as Cashier, ...state.cashiers] }));
   },

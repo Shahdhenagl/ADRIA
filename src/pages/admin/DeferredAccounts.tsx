@@ -3,6 +3,8 @@ import { useStore } from '../../store/useStore';
 import { BookUser, CreditCard, Search, Banknote, X, FileText, Table as TableIcon, Plus, User, UserPlus, Truck, RefreshCw, Eye } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { calculateOrderReturnValue } from '../../utils/returns';
+import { escapeHtml } from '../../utils/escapeHtml';
+import { openPrintWindow } from '../../utils/printWindow';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
@@ -418,7 +420,7 @@ export default function DeferredAccounts() {
     const itemsHtml = cart.map((item: any, index: number) =>
       `<tr>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;color:#666;">${index + 1}</td>
-        <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:900;font-size:14px;">${item.name}${item.returned_quantity > 0 ? ` <span style="color:red;font-size:10px;">(مرتجع: ${item.returned_quantity})</span>` : ''}</td>
+        <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:900;font-size:14px;">${escapeHtml(item.name)}${item.returned_quantity > 0 ? ` <span style="color:red;font-size:10px;">(مرتجع: ${item.returned_quantity})</span>` : ''}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${item.quantity}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${item.sale_price.toFixed(2)}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:left;font-weight:black;font-size:15px;">${(item.sale_price * item.quantity).toFixed(2)}</td>
@@ -430,11 +432,11 @@ export default function DeferredAccounts() {
 
     const customerBlock = order.customer || profileCustomer
       ? `<div class="customer-info-grid">
-            <div class="info-item"><strong>اسم العميل:</strong> <span>${(order.customer || profileCustomer).name || '—'}</span></div>
-            <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${(order.customer || profileCustomer).phone || '—'}</span></div>
-            <div class="info-item"><strong>رقم الكارت (ID):</strong> <span dir="ltr">${(order.customer || profileCustomer).custom_id || (order.customer || profileCustomer).id.substring(0, 8) || '—'}</span></div>
+            <div class="info-item"><strong>اسم العميل:</strong> <span>${escapeHtml((order.customer || profileCustomer).name || '—')}</span></div>
+            <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${escapeHtml((order.customer || profileCustomer).phone || '—')}</span></div>
+            <div class="info-item"><strong>رقم الكارت (ID):</strong> <span dir="ltr">${escapeHtml((order.customer || profileCustomer).custom_id || (order.customer || profileCustomer).id.substring(0, 8) || '—')}</span></div>
             <div class="info-item"><strong>رقم الفاتورة:</strong> <span>#${order.id}</span></div>
-            <div class="info-item"><strong>المسؤول:</strong> <span>${order.cashier_name || '—'}</span></div>
+            <div class="info-item"><strong>المسؤول:</strong> <span>${escapeHtml(order.cashier_name || '—')}</span></div>
             <div class="info-item"><strong>التاريخ:</strong> <span>${printDate}</span></div>
             <div class="info-item" style="grid-column: span 2; border-top: 1px dashed #e2e8f0; padding-top: 4px; margin-top: 2px;">
               <strong>إجمالي المديونية الحالية:</strong> 
@@ -444,7 +446,7 @@ export default function DeferredAccounts() {
       : `<div class="customer-info-grid">
             <div class="info-item"><strong>اسم العميل:</strong> <span>عميل نقدي</span></div>
             <div class="info-item"><strong>رقم الفاتورة:</strong> <span>#${order.id}</span></div>
-            <div class="info-item"><strong>المسؤول:</strong> <span>${order.cashier_name || '—'}</span></div>
+            <div class="info-item"><strong>المسؤول:</strong> <span>${escapeHtml(order.cashier_name || '—')}</span></div>
             <div class="info-item"><strong>التاريخ:</strong> <span>${printDate}</span></div>
          </div>`;
 
@@ -499,14 +501,14 @@ export default function DeferredAccounts() {
 <body>
 <div class="invoice-container">
   <div class="header-main">
-    <img class="logo" src="${storeSettings.logo}" onerror="this.style.display='none'" />
-    
+    <img class="logo" src="${escapeHtml(storeSettings.logo)}" onerror="this.style.display='none'" />
+
     <div class="store-info-center">
-      <div class="store-name">${storeSettings.name}</div>
+      <div class="store-name">${escapeHtml(storeSettings.name)}</div>
       <div class="store-details">
-        ${storeSettings.address ? `📍 ${storeSettings.address}<br/>` : ''}
-        ${storeSettings.phone ? `📞 ${storeSettings.phone}` : ''}
-        ${storeSettings.phone2 ? ` | ${storeSettings.phone2}` : ''}
+        ${storeSettings.address ? `📍 ${escapeHtml(storeSettings.address)}<br/>` : ''}
+        ${storeSettings.phone ? `📞 ${escapeHtml(storeSettings.phone)}` : ''}
+        ${storeSettings.phone2 ? ` | ${escapeHtml(storeSettings.phone2)}` : ''}
       </div>
     </div>
 
@@ -556,13 +558,12 @@ export default function DeferredAccounts() {
     </div>
   </div>
 
-  <div class="footer">شكراً لثقتكم بنا - ${storeSettings.name} ترحب بكم دائماً</div>
+  <div class="footer">شكراً لثقتكم بنا - ${escapeHtml(storeSettings.name)} ترحب بكم دائماً</div>
 </div>
 <script>window.onload=()=>{setTimeout(()=>{window.print();window.onafterprint=()=>window.close();},500);}</script>
 </body></html>`;
 
-    const pw = window.open('', '_blank', 'width=800,height=1000');
-    if (pw) { pw.document.write(html); pw.document.close(); }
+    openPrintWindow(html);
   };
 
   const handleOpenModal = (entity: any) => {

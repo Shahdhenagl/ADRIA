@@ -18,9 +18,16 @@ export default function PublicInvoice() {
     async function fetchData() {
       try {
         setLoading(true);
-        const settingsRes = await supabase.from('store_settings').select('*').maybeSingle();
-        if (settingsRes.data) {
-          const s = settingsRes.data;
+
+        // The public page has no Supabase session, so it cannot read the tables
+        // directly (they are locked to authenticated users). Instead it calls a
+        // single SECURITY DEFINER function that returns just this one invoice.
+        const { data: rpc, error: rpcErr } = await supabase.rpc('get_public_invoice', { p_id: id });
+        if (rpcErr) throw rpcErr;
+        if (!rpc) throw new Error('Invoice not found');
+
+        const s = rpc.settings;
+        if (s) {
           setSettings({
             name: s.name,
             currency: s.currency,
@@ -36,12 +43,8 @@ export default function PublicInvoice() {
           });
         }
 
-        // Try Orders first
-        const { data: o } = await supabase
-          .from('orders')
-          .select('*, customers(*), order_items(*, products(*))')
-          .eq('id', id)
-          .maybeSingle();
+        // Sale order
+        const o = rpc.kind === 'order' ? rpc.order : null;
 
         if (o) {
           const itemRows = (o.order_items as any[]) ?? [];
@@ -57,11 +60,7 @@ export default function PublicInvoice() {
           let debtAfter = 0;
           let currentDebt = 0;
           if (o.customer_id) {
-            const { data: allCustOrders } = await supabase
-              .from('orders')
-              .select('*, order_items(*)')
-              .eq('customer_id', o.customer_id)
-              .eq('is_deleted', false);
+            const allCustOrders = (rpc.customer_orders ?? []) as any[];
             
             if (allCustOrders) {
               const sortedOrders = [...allCustOrders].sort(
@@ -128,20 +127,12 @@ export default function PublicInvoice() {
           return;
         }
 
-        // Try Maintenance Appointments if not found in orders
+        // Maintenance appointment if not a sale order
         if (!o) {
-          const { data: appt } = await supabase
-            .from('maintenance_appointments')
-            .select('*, car_subscriptions(*)')
-            .eq('id', id)
-            .maybeSingle();
+          const appt = rpc.kind === 'maintenance' ? rpc.appointment : null;
 
           if (appt) {
-            const { data: apptOrders } = await supabase
-              .from('orders')
-              .select('*, order_items(*, products(*))')
-              .eq('car_id', appt.subscription_id)
-              .eq('is_deleted', false);
+            const apptOrders = (rpc.appointment_orders ?? []) as any[];
 
             const linkedOrders = (apptOrders ?? []).filter(ord => 
               (ord.notes || '').includes(`[زيارة:${appt.id}]`) || 
@@ -198,12 +189,8 @@ export default function PublicInvoice() {
           }
         }
 
-        // Try Purchase Invoices if not found in orders
-        const { data: inv } = await supabase
-          .from('purchase_invoices')
-          .select('*, suppliers(*), purchase_items(*, products(*))')
-          .or(`id.eq.${id},invoice_number.eq.${id}`)
-          .maybeSingle();
+        // Purchase invoice
+        const inv = rpc.kind === 'purchase' ? rpc.purchase : null;
 
         if (inv) {
           const itemRows = (inv.purchase_items as any[]) ?? [];

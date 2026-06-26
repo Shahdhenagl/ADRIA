@@ -1,4 +1,26 @@
+import { createClient } from '@supabase/supabase-js';
+
 const LOW_STOCK_THRESHOLD = Number(process.env.LOW_STOCK_THRESHOLD || 3);
+
+// Verifies the Bearer token in the request against Supabase Auth.
+// Returns true only for a valid, authenticated session.
+async function verifySupabaseToken(req) {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+  if (!url || !key) return false;
+
+  const header = (req.headers && (req.headers.authorization || req.headers.Authorization)) || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!token) return false;
+
+  try {
+    const supabase = createClient(url, key);
+    const { data, error } = await supabase.auth.getUser(token);
+    return !error && !!data?.user;
+  } catch {
+    return false;
+  }
+}
 
 const TYPE_LABELS = {
   sale: 'فاتورة بيع جديدة',
@@ -150,6 +172,16 @@ export default async function handler(req, res) {
 
   if (req.method !== 'POST') {
     return res.status(405).json({ ok: false, error: 'Method not allowed' });
+  }
+
+  // Optional auth: when REQUIRE_ALERT_AUTH is enabled, require a valid Supabase
+  // session token so random anonymous callers can't spam the owner's Telegram.
+  // Backward-compatible: disabled unless the env var is set (see SECURITY_SETUP.md).
+  if (process.env.REQUIRE_ALERT_AUTH === 'true') {
+    const ok = await verifySupabaseToken(req);
+    if (!ok) {
+      return res.status(401).json({ ok: false, error: 'Unauthorized' });
+    }
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;

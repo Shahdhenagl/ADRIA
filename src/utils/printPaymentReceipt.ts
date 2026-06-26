@@ -1,3 +1,6 @@
+import { escapeHtml } from './escapeHtml';
+import { openPrintWindow } from './printWindow';
+
 export const printPaymentReceipt = (order: any, storeSettings: any) => {
   const printDate = new Date(order.date || order.created_at || new Date()).toLocaleString('ar-SA');
   
@@ -20,7 +23,7 @@ export const printPaymentReceipt = (order: any, storeSettings: any) => {
     paymentType = remaining > 0 ? '(سداد جزئي)' : '(سداد كلي)';
     description = `سداد أجل لفاتورة رقم #${invoiceId} ${paymentType}`;
     if (customDesc) {
-      description += `<br/><span style="font-size:12px;color:#64748b;margin-top:4px;display:block;">${customDesc}</span>`;
+      description += `<br/><span style="font-size:12px;color:#64748b;margin-top:4px;display:block;">${escapeHtml(customDesc)}</span>`;
     }
   } else if (order.notes && order.notes.includes('PREV-DEBT-')) {
      description = 'تحصيل رصيد مديونية قديم';
@@ -70,9 +73,9 @@ export const printPaymentReceipt = (order: any, storeSettings: any) => {
 <body>
 <div class="invoice-container">
   <div class="header-main">
-    <img class="logo" src="${storeSettings.logo}" onerror="this.style.display='none'" />
+    <img class="logo" src="${escapeHtml(storeSettings.logo)}" onerror="this.style.display='none'" />
     <div class="store-info-center">
-      <div class="store-name">${storeSettings.name}</div>
+      <div class="store-name">${escapeHtml(storeSettings.name)}</div>
     </div>
     <div style="width:80px;"></div>
   </div>
@@ -82,9 +85,9 @@ export const printPaymentReceipt = (order: any, storeSettings: any) => {
   <div class="customer-info-grid">
     <div class="info-item"><strong>رقم الإيصال:</strong> <span>${order.id}</span></div>
     <div class="info-item"><strong>التاريخ:</strong> <span>${printDate}</span></div>
-    <div class="info-item"><strong>العميل:</strong> <span>${order.customer?.name || '—'}</span></div>
-    <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${order.customer?.phone || '—'}</span></div>
-    ${order.cashier_name ? `<div class="info-item"><strong>المستلم:</strong> <span>${order.cashier_name}</span></div>` : ''}
+    <div class="info-item"><strong>العميل:</strong> <span>${escapeHtml(order.customer?.name || '—')}</span></div>
+    <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${escapeHtml(order.customer?.phone || '—')}</span></div>
+    ${order.cashier_name ? `<div class="info-item"><strong>المستلم:</strong> <span>${escapeHtml(order.cashier_name)}</span></div>` : ''}
   </div>
   
   <table>
@@ -120,6 +123,5 @@ export const printPaymentReceipt = (order: any, storeSettings: any) => {
   <script>window.onload=()=>{setTimeout(()=>{window.print();window.onafterprint=()=>window.close();},500);}</script>
 </body></html>`;
 
-  const pw = window.open('', '_blank', 'width=800,height=1000');
-  if (pw) { pw.document.write(html); pw.document.close(); }
+  openPrintWindow(html);
 };

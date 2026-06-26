@@ -1,4 +1,5 @@
 import type { Order } from '../store/useStore';
+import { escapeHtml } from './escapeHtml';
 
 export const printMaintenanceInvoice = (
   order: Order & { report?: string },
@@ -24,7 +25,7 @@ export const printMaintenanceInvoice = (
     <html dir="rtl" lang="ar">
     <head>
       <meta charset="UTF-8">
-      <title>فاتورة صيانة سيارة - ${carInfo.carNumber}</title>
+      <title>فاتورة صيانة سيارة - ${escapeHtml(carInfo.carNumber)}</title>
       <style>
         @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800;900&display=swap');
         
@@ -265,9 +266,9 @@ export const printMaintenanceInvoice = (
     <body>
       <div class="header">
         <div class="store-info">
-          <h1>${storeSettings?.name || 'مركز الخدمة'}</h1>
-          <p>${storeSettings?.address || ''}</p>
-          <p>${storeSettings?.phone || ''}</p>
+          <h1>${escapeHtml(storeSettings?.name || 'مركز الخدمة')}</h1>
+          <p>${escapeHtml(storeSettings?.address || '')}</p>
+          <p>${escapeHtml(storeSettings?.phone || '')}</p>
         </div>
         <div class="invoice-title">
           <h2>فاتورة صيانة سيارة</h2>
@@ -279,20 +280,20 @@ export const printMaintenanceInvoice = (
       <div class="info-grid">
         <div class="info-card">
           <label>بيانات العميل</label>
-          <p>${carInfo.customerName}</p>
-          <div class="sub">${carInfo.customerPhone}</div>
+          <p>${escapeHtml(carInfo.customerName)}</p>
+          <div class="sub">${escapeHtml(carInfo.customerPhone)}</div>
         </div>
         <div class="info-card">
           <label>بيانات السيارة</label>
-          <p>${carInfo.carNumber}</p>
-          <div class="sub">${carInfo.carDetails || '-'}</div>
+          <p>${escapeHtml(carInfo.carNumber)}</p>
+          <div class="sub">${escapeHtml(carInfo.carDetails || '-')}</div>
         </div>
       </div>
 
       ${order.report ? `
         <div class="report-box">
           <strong>تقرير الفحص والزيارة</strong>
-          ${order.report}
+          ${escapeHtml(order.report)}
         </div>
       ` : ''}
 
@@ -316,7 +317,7 @@ export const printMaintenanceInvoice = (
             return `
               <tr>
                 <td>${i + 1}</td>
-                <td style="font-weight: 700; color: #0f172a;">${item.name}</td>
+                <td style="font-weight: 700; color: #0f172a;">${escapeHtml(item.name)}</td>
                 <td>${itemDate}</td>
                 <td style="text-align: center;">${qty}</td>
                 <td style="text-align: left;">${price.toFixed(2)} ج.م</td>

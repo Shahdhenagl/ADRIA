@@ -3,6 +3,8 @@ import { useStore } from '../../store/useStore';
 import { Search, FileText, Table as TableIcon, User, Eye, Printer, X, TrendingUp, Wallet, ArrowRightLeft, CreditCard, Archive, Car } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { calculateOrderReturnValue } from '../../utils/returns';
+import { escapeHtml } from '../../utils/escapeHtml';
+import { openPrintWindow } from '../../utils/printWindow';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
@@ -341,7 +343,7 @@ export default function Customers() {
     
     let itemsHtml = order.items.map((item: any) =>
         `<tr>
-          <td style="padding:6px 4px;border-bottom:1px dashed #ddd;font-size:13px;">${item.name}${item.returned_quantity > 0 ? ` <span style="color:red;font-size:10px;">(مرتجع: ${item.returned_quantity})</span>` : ''}</td>
+          <td style="padding:6px 4px;border-bottom:1px dashed #ddd;font-size:13px;">${escapeHtml(item.name)}${item.returned_quantity > 0 ? ` <span style="color:red;font-size:10px;">(مرتجع: ${item.returned_quantity})</span>` : ''}</td>
           <td style="padding:6px 4px;border-bottom:1px dashed #ddd;text-align:center;font-size:13px;">${item.quantity}</td>
           <td style="padding:6px 4px;border-bottom:1px dashed #ddd;text-align:left;font-size:13px;">${(item.sale_price * item.quantity).toFixed(2)}</td>
         </tr>`
@@ -372,12 +374,12 @@ export default function Customers() {
 </head>
 <body>
   <div class="header">
-    <img class="logo" src="${storeSettings.logo}" onerror="this.style.display='none'" />
-    <div class="store-name">${storeSettings.name}</div>
+    <img class="logo" src="${escapeHtml(storeSettings.logo)}" onerror="this.style.display='none'" />
+    <div class="store-name">${escapeHtml(storeSettings.name)}</div>
   </div>
   <div class="invoice-meta">
     <span>رقم: <strong>${order.id}</strong></span>
-    <span>ID العميل: <strong>${order.customer?.custom_id || order.customer?.id.substring(0, 8) || '—'}</strong></span>
+    <span>ID العميل: <strong>${escapeHtml(order.customer?.custom_id || order.customer?.id.substring(0, 8) || '—')}</strong></span>
     <span>${printDate}</span>
   </div>
   <table>
@@ -406,7 +408,7 @@ export default function Customers() {
   ${order.notes ? `
     <div style="margin-top:12px; padding:8px; background:#fff7ed; border-radius:6px; border:1px solid #ffedd5; font-size:12px;">
       <strong style="color:#c2410c; display:block; margin-bottom:4px; font-size:11px;">ملاحظات:</strong>
-      <span style="color:#9a3412;">${order.notes}</span>
+      <span style="color:#9a3412;">${escapeHtml(order.notes)}</span>
     </div>
   ` : ''}
 
@@ -414,8 +416,7 @@ export default function Customers() {
   <script>window.onload=()=>{window.print();window.onafterprint=()=>window.close();}<\/script>
 </body></html>`;
 
-    const pw = window.open('', '_blank', 'width=400,height=600');
-    if (pw) { pw.document.write(html); pw.document.close(); }
+    openPrintWindow(html, 'width=400,height=600');
   };
 
   return (

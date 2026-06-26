@@ -1,4 +1,5 @@
 import {
+  authorizeCron,
   cairoDayRange,
   currentMonthRange,
   fetchReportData,
@@ -80,6 +81,9 @@ async function sendFinancingReminders(supabase, settings, now) {
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ ok: false, error: 'Method not allowed' });
+  }
+  if (!authorizeCron(req)) {
+    return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
 
   try {

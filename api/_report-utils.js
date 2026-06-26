@@ -10,6 +10,21 @@ export function getSupabase() {
   return createClient(url, key);
 }
 
+/**
+ * Guards a cron/report endpoint with a shared secret.
+ *
+ * Backward-compatible: if CRON_SECRET is not configured the request is allowed
+ * (no behavior change). When CRON_SECRET is set, the caller must send
+ * `Authorization: Bearer <CRON_SECRET>` — Vercel Cron sends this header
+ * automatically when the env var is present.
+ */
+export function authorizeCron(req) {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return true;
+  const header = (req.headers && (req.headers.authorization || req.headers.Authorization)) || '';
+  return header === `Bearer ${secret}`;
+}
+
 export function money(value, currency = 'ج.م') {
   return `${Number(value || 0).toFixed(2)} ${currency}`;
 }

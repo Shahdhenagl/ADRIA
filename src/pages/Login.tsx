@@ -9,9 +9,9 @@ export default function Login() {
   const navigate = useNavigate();
   const { login } = useStore();
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (login(pin)) {
+    if (await login(pin)) {
       navigate('/admin/overview');
     } else {
       setError(true);

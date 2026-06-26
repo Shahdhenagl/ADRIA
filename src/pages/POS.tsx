@@ -5,6 +5,8 @@ import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, 
 import { Html5Qrcode } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
+import { escapeHtml } from '../utils/escapeHtml';
+import { openPrintWindow } from '../utils/printWindow';
 
 
 export default function POS() {
@@ -460,7 +462,7 @@ export default function POS() {
     const itemsHtml = orderDetails.cart.map((item: any, index: number) =>
       `<tr>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;color:#666;">${index + 1}</td>
-        <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:900;font-size:14px;">${item.name}</td>
+        <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:900;font-size:14px;">${escapeHtml(item.name)}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${formatQty(item.quantity, item.unit)}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${item.sale_price.toFixed(2)}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:left;font-weight:black;font-size:15px;">${(item.sale_price * item.quantity).toFixed(2)}</td>
@@ -472,11 +474,11 @@ export default function POS() {
 
     const customerBlock = (orderDetails.customerName || orderDetails.customerPhone || orderDetails.customId)
       ? `<div class="customer-info-grid">
-            <div class="info-item"><strong>اسم العميل:</strong> <span>${orderDetails.customerName || '—'}</span></div>
-            <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${orderDetails.customerPhone || '—'}</span></div>
-            <div class="info-item"><strong>رقم الكارت (ID):</strong> <span dir="ltr">${orderDetails.customId || orderDetails.customerId?.substring(0, 8) || '—'}</span></div>
+            <div class="info-item"><strong>اسم العميل:</strong> <span>${escapeHtml(orderDetails.customerName || '—')}</span></div>
+            <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${escapeHtml(orderDetails.customerPhone || '—')}</span></div>
+            <div class="info-item"><strong>رقم الكارت (ID):</strong> <span dir="ltr">${escapeHtml(orderDetails.customId || orderDetails.customerId?.substring(0, 8) || '—')}</span></div>
             <div class="info-item"><strong>رقم الفاتورة:</strong> <span>#${invId}</span></div>
-            <div class="info-item"><strong>المسؤول:</strong> <span>${activeCashier?.name || '—'}</span></div>
+            <div class="info-item"><strong>المسؤول:</strong> <span>${escapeHtml(activeCashier?.name || '—')}</span></div>
             <div class="info-item"><strong>التاريخ:</strong> <span>${printDate}</span></div>
             <div class="info-item" style="grid-column: span 2; border-top: 1px dashed #e2e8f0; padding-top: 4px; margin-top: 2px;">
               <strong>إجمالي المديونية الحالية:</strong> 
@@ -486,7 +488,7 @@ export default function POS() {
       : `<div class="customer-info-grid">
             <div class="info-item"><strong>اسم العميل:</strong> <span>عميل نقدي</span></div>
             <div class="info-item"><strong>رقم الفاتورة:</strong> <span>#${invId}</span></div>
-            <div class="info-item"><strong>المسؤول:</strong> <span>${activeCashier?.name || '—'}</span></div>
+            <div class="info-item"><strong>المسؤول:</strong> <span>${escapeHtml(activeCashier?.name || '—')}</span></div>
             <div class="info-item"><strong>التاريخ:</strong> <span>${printDate}</span></div>
          </div>`;
 
@@ -542,14 +544,14 @@ export default function POS() {
 <body>
 <div class="invoice-container">
   <div class="header-main">
-    <img class="logo" src="${currentSettings.logo}" onerror="this.style.display='none'" />
-    
+    <img class="logo" src="${escapeHtml(currentSettings.logo)}" onerror="this.style.display='none'" />
+
     <div class="store-info-center">
-      <div class="store-name">${currentSettings.name}</div>
+      <div class="store-name">${escapeHtml(currentSettings.name)}</div>
       <div class="store-details">
-        ${currentSettings.address ? `📍 ${currentSettings.address}<br/>` : ''}
-        ${currentSettings.phone ? `📞 ${currentSettings.phone}` : ''}
-        ${currentSettings.phone2 ? ` | ${currentSettings.phone2}` : ''}
+        ${currentSettings.address ? `📍 ${escapeHtml(currentSettings.address)}<br/>` : ''}
+        ${currentSettings.phone ? `📞 ${escapeHtml(currentSettings.phone)}` : ''}
+        ${currentSettings.phone2 ? ` | ${escapeHtml(currentSettings.phone2)}` : ''}
       </div>
     </div>
 
@@ -574,7 +576,7 @@ export default function POS() {
 
   <div class="summary-section">
     <div class="summary-row"><span>المجموع الفرعي:</span><span>${orderDetails.subtotal.toFixed(2)} ${currentSettings.currency}</span></div>
-    ${orderDetails.couponCode ? `<div class="summary-row" style="color:#e53e3e;font-weight:700;"><span>كوبون (${orderDetails.couponCode}):</span><span>- ${(orderDetails.couponDiscountAmount || 0).toFixed(2)} ${currentSettings.currency}</span></div>` : ''}
+    ${orderDetails.couponCode ? `<div class="summary-row" style="color:#e53e3e;font-weight:700;"><span>كوبون (${escapeHtml(orderDetails.couponCode)}):</span><span>- ${(orderDetails.couponDiscountAmount || 0).toFixed(2)} ${currentSettings.currency}</span></div>` : ''}
     ${(orderDetails.discount - (orderDetails.couponDiscountAmount || 0)) > 0.5 ? `<div class="summary-row" style="color:#e53e3e;font-weight:700;"><span>خصم الفاتورة:</span><span>- ${(orderDetails.discount - (orderDetails.couponDiscountAmount || 0)).toFixed(2)} ${currentSettings.currency}</span></div>` : ''}
     <div class="summary-row"><span>الضريبة (${currentSettings.taxRate}%):</span><span>${orderDetails.tax.toFixed(2)} ${currentSettings.currency}</span></div>
     <div class="summary-row total"><span>الإجمالي النهائي:</span><span>${orderDetails.total.toFixed(2)} ${currentSettings.currency}</span></div>
@@ -591,7 +593,7 @@ export default function POS() {
     ${orderDetails.notes ? `
       <div style="margin-top:10px; padding:8px; background:#fff7ed; border-radius:8px; border:1px solid #ffedd5;">
         <div style="font-size:11px; color:#c2410c; margin-bottom:4px; font-weight:bold;">ملاحظات:</div>
-        <div style="font-size:12px; color:#9a3412;">${orderDetails.notes}</div>
+        <div style="font-size:12px; color:#9a3412;">${escapeHtml(orderDetails.notes)}</div>
       </div>
     ` : ''}
     
@@ -604,16 +606,12 @@ export default function POS() {
     </div>
   </div>
 
-  <div class="footer">شكراً لثقتكم بنا - ${currentSettings.name} ترحب بكم دائماً</div>
+  <div class="footer">شكراً لثقتكم بنا - ${escapeHtml(currentSettings.name)} ترحب بكم دائماً</div>
 </div>
 <script>window.onload=()=>{setTimeout(()=>{window.print();window.onafterprint=()=>window.close();},500);}<\/script>
 </body></html>`;
 
-    const pw = window.open('', '_blank', 'width=800,height=1000');
-    if (pw) {
-      pw.document.write(html);
-      pw.document.close();
-    }
+    openPrintWindow(html);
   };
 
   // Opens payment method modal before checkout

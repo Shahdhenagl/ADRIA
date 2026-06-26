@@ -4,6 +4,8 @@ import { ArrowRightLeft, Search, User, Printer, CreditCard, FileText, Table as T
 import { normalizeArabic } from '../../utils/textUtils';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { calculateOrderReturnValue } from '../../utils/returns';
+import { escapeHtml } from '../../utils/escapeHtml';
+import { openPrintWindow } from '../../utils/printWindow';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
@@ -61,7 +63,7 @@ export default function Invoices() {
     const itemsHtml = cart.map((item: any, index: number) =>
       `<tr>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;color:#666;">${index + 1}</td>
-        <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:900;font-size:14px;">${item.name}${item.returned_quantity > 0 ? ` <span style="color:red;font-size:10px;">(مرتجع: ${item.returned_quantity})</span>` : ''}</td>
+        <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:900;font-size:14px;">${escapeHtml(item.name)}${item.returned_quantity > 0 ? ` <span style="color:red;font-size:10px;">(مرتجع: ${item.returned_quantity})</span>` : ''}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${item.quantity}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${item.sale_price.toFixed(2)}</td>
         <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:left;font-weight:black;font-size:15px;">${(item.sale_price * item.quantity).toFixed(2)}</td>
@@ -73,11 +75,11 @@ export default function Invoices() {
 
     const customerBlock = order.customer
       ? `<div class="customer-info-grid">
-            <div class="info-item"><strong>اسم العميل:</strong> <span>${order.customer.name || '—'}</span></div>
-            <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${order.customer.phone || '—'}</span></div>
-            <div class="info-item"><strong>رقم الكارت (ID):</strong> <span dir="ltr">${order.customer.custom_id || order.customer.id.substring(0, 8) || '—'}</span></div>
+            <div class="info-item"><strong>اسم العميل:</strong> <span>${escapeHtml(order.customer.name || '—')}</span></div>
+            <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${escapeHtml(order.customer.phone || '—')}</span></div>
+            <div class="info-item"><strong>رقم الكارت (ID):</strong> <span dir="ltr">${escapeHtml(order.customer.custom_id || order.customer.id.substring(0, 8) || '—')}</span></div>
             <div class="info-item"><strong>رقم الفاتورة:</strong> <span>#${order.id}</span></div>
-            <div class="info-item"><strong>المسؤول:</strong> <span>${order.cashier_name || '—'}</span></div>
+            <div class="info-item"><strong>المسؤول:</strong> <span>${escapeHtml(order.cashier_name || '—')}</span></div>
             <div class="info-item"><strong>التاريخ:</strong> <span>${printDate}</span></div>
             <div class="info-item" style="grid-column: span 2; border-top: 1px dashed #e2e8f0; padding-top: 4px; margin-top: 2px;">
               <strong>إجمالي المديونية الحالية:</strong> 
@@ -87,7 +89,7 @@ export default function Invoices() {
       : `<div class="customer-info-grid">
             <div class="info-item"><strong>اسم العميل:</strong> <span>عميل نقدي</span></div>
             <div class="info-item"><strong>رقم الفاتورة:</strong> <span>#${order.id}</span></div>
-            <div class="info-item"><strong>المسؤول:</strong> <span>${order.cashier_name || '—'}</span></div>
+            <div class="info-item"><strong>المسؤول:</strong> <span>${escapeHtml(order.cashier_name || '—')}</span></div>
             <div class="info-item"><strong>التاريخ:</strong> <span>${printDate}</span></div>
          </div>`;
 
@@ -142,14 +144,14 @@ export default function Invoices() {
 <body>
 <div class="invoice-container">
   <div class="header-main">
-    <img class="logo" src="${storeSettings.logo}" onerror="this.style.display='none'" />
-    
+    <img class="logo" src="${escapeHtml(storeSettings.logo)}" onerror="this.style.display='none'" />
+
     <div class="store-info-center">
-      <div class="store-name">${storeSettings.name}</div>
+      <div class="store-name">${escapeHtml(storeSettings.name)}</div>
       <div class="store-details">
-        ${storeSettings.address ? `📍 ${storeSettings.address}<br/>` : ''}
-        ${storeSettings.phone ? `📞 ${storeSettings.phone}` : ''}
-        ${storeSettings.phone2 ? ` | ${storeSettings.phone2}` : ''}
+        ${storeSettings.address ? `📍 ${escapeHtml(storeSettings.address)}<br/>` : ''}
+        ${storeSettings.phone ? `📞 ${escapeHtml(storeSettings.phone)}` : ''}
+        ${storeSettings.phone2 ? ` | ${escapeHtml(storeSettings.phone2)}` : ''}
       </div>
     </div>
 
@@ -199,13 +201,12 @@ export default function Invoices() {
     </div>
   </div>
 
-  <div class="footer">شكراً لثقتكم بنا - ${storeSettings.name} ترحب بكم دائماً</div>
+  <div class="footer">شكراً لثقتكم بنا - ${escapeHtml(storeSettings.name)} ترحب بكم دائماً</div>
 </div>
 <script>window.onload=()=>{setTimeout(()=>{window.print();window.onafterprint=()=>window.close();},500);}</script>
 </body></html>`;
 
-    const pw = window.open('', '_blank', 'width=800,height=1000');
-    if (pw) { pw.document.write(html); pw.document.close(); }
+    openPrintWindow(html);
   };
 
   const handleSendWhatsApp = (order: any) => {
@@ -681,14 +682,14 @@ export default function Invoices() {
                           >
                             <Eye size={18} />
                           </button>
-                          <button 
-                            onClick={() => handlePrint(order)}
-                            style={{ backgroundColor: storeSettings.themeColor + '10', color: storeSettings.themeColor }}
-                            className="p-2 rounded-lg hover:bg-opacity-20 transition-all shadow-sm border border-transparent hover:border-current"
-                            title="طباعة الفاتورة"
-                          >
-                            <Printer size={18} />
-                          </button>
+                          <button 
+                            onClick={() => handlePrint(order)}
+                            style={{ backgroundColor: storeSettings.themeColor + '10', color: storeSettings.themeColor }}
+                            className="p-2 rounded-lg hover:bg-opacity-20 transition-all shadow-sm border border-transparent hover:border-current"
+                            title="طباعة الفاتورة"
+                          >
+                            <Printer size={18} />
+                          </button>
                           {order.customer?.phone && (
                             <button
                               onClick={() => handleSendWhatsApp(order)}

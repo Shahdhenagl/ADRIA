@@ -4,6 +4,8 @@ import type { PurchaseItem, Product } from '../../store/useStore';
 import { Users, Search, Plus, Edit2, Trash2, Phone, MapPin, Calendar, ShoppingCart, FileText, X, ChevronDown, Printer, Eye } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
+import { escapeHtml } from '../../utils/escapeHtml';
+import { openPrintWindow } from '../../utils/printWindow';
 
 function ProductSearchSelect({ 
   value, 
@@ -335,7 +337,7 @@ export default function Suppliers() {
       return `
         <tr>
           <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;">${index + 1}</td>
-          <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:bold;">${product?.name || 'منتج غير معروف'}</td>
+          <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:bold;">${escapeHtml(product?.name || 'منتج غير معروف')}</td>
           <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;">${item.quantity}</td>
           <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;">${item.purchase_price.toFixed(2)}</td>
           <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:left;font-weight:black;">${(item.purchase_price * item.quantity).toFixed(2)}</td>
@@ -393,18 +395,18 @@ export default function Suppliers() {
 <div class="invoice-container">
   <div class="header-main">
     <div class="store-identity">
-      <img class="logo" src="${storeSettings.logo}" onerror="this.style.display='none'" />
+      <img class="logo" src="${escapeHtml(storeSettings.logo)}" onerror="this.style.display='none'" />
       <div>
-        <div class="store-name">${storeSettings.name}</div>
-        <div class="store-details">${storeSettings.address} | ${storeSettings.phone}</div>
+        <div class="store-name">${escapeHtml(storeSettings.name)}</div>
+        <div class="store-details">${escapeHtml(storeSettings.address)} | ${escapeHtml(storeSettings.phone)}</div>
       </div>
     </div>
     <div class="invoice-title-badge">${isPaymentReceipt ? 'إيصال سداد مورد' : 'فاتورة مشتريات'}</div>
   </div>
 
   <div class="info-grid">
-    <div class="info-item"><strong>المورد:</strong> <span>${supplier?.name || 'مورد محذوف'}</span></div>
-    <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${supplier?.phone || '—'}</span></div>
+    <div class="info-item"><strong>المورد:</strong> <span>${escapeHtml(supplier?.name || 'مورد محذوف')}</span></div>
+    <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${escapeHtml(supplier?.phone || '—')}</span></div>
     <div class="info-item"><strong>رقم المستند:</strong> <span>#${inv.invoice_number}</span></div>
     <div class="info-item"><strong>التاريخ:</strong> <span>${new Date(inv.created_at).toLocaleString('ar-SA')}</span></div>
   </div>
@@ -461,18 +463,14 @@ export default function Suppliers() {
   </div>
 
   <div style="margin-top: 20px; border-top: 1px dashed #cbd5e1; padding-top: 10px; display: flex; justify-content: space-between; align-items: center;">
-    <div style="font-size: 10px; color: #94a3b8;">${storeSettings.name} - إدارة الموردين</div>
+    <div style="font-size: 10px; color: #94a3b8;">${escapeHtml(storeSettings.name)} - إدارة الموردين</div>
     <div style="font-size: 10px; color: #94a3b8; font-family: monospace;">#${inv.invoice_number}</div>
   </div>
 </div>
 <script>window.onload=()=>{setTimeout(()=>{window.print();window.onafterprint=()=>window.close();},500);}<\/script>
 </body></html>`;
 
-    const pw = window.open('', '_blank', 'width=800,height=1000');
-    if (pw) {
-      pw.document.write(html);
-      pw.document.close();
-    }
+    openPrintWindow(html);
   };
 
   const tc = storeSettings.themeColor;
