@@ -167,14 +167,20 @@ export default function Customers() {
     }, 0);
 
     // Debt = Original Total - Returned Value - Paid Amount
+    // ملاحظة: نفس منطق صفحة "حسابات الآجل" بالضبط حتى يتطابق الرقمان:
+    //  - الفواتير ذات مديونية موجبة تُضاف
+    //  - مدفوعات السداد العامة (ليست سداد فاتورة محددة) تُطرح
+    //  - لا تُحتسب المديونيات السالبة الناتجة عن إرجاع فاتورة مدفوعة (الإرجاع استرداد نقدي وليس رصيداً دائناً)
     const totalDebt = Math.max(0, activeCustomerOrders.reduce((sum, o) => {
-      // Ignore specific payments that already reduced original invoice's debt
-      if (o.type === 'payment' && o.notes?.includes('سداد أجل للفاتورة رقم')) {
-        return sum;
-      }
       const returnedValue = calculateOrderReturnValue(o);
       const effectiveTotal = o.type === 'payment' ? 0 : o.total - returnedValue;
-      return sum + (effectiveTotal - o.paid_amount);
+      const debt = effectiveTotal - o.paid_amount;
+      if (debt > 0.009) {
+        return sum + debt;
+      } else if (o.type === 'payment' && !(o.notes && o.notes.includes('سداد أجل للفاتورة رقم'))) {
+        return sum + debt; // مدفوعات السداد العامة (قيمة سالبة)
+      }
+      return sum;
     }, 0));
 
     return { customerOrders, activeCustomerOrders, totalSpent, totalProfit, totalDebt, totalReturns };
