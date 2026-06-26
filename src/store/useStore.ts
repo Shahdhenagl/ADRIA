@@ -2505,6 +2505,14 @@ export const useStore = create<CashierStore>((set, get) => ({
   },
 
 setupRealtime: () => {
+    // loadAll() can run more than once (e.g. again right after login), and
+    // re-subscribing to an already-subscribed channel throws
+    // "cannot add postgres_changes callbacks ... after subscribe()".
+    // Remove any existing channel first so this is safe to call repeatedly.
+    supabase.getChannels()
+      .filter((c) => c.topic === 'realtime:db-changes')
+      .forEach((c) => supabase.removeChannel(c));
+
     const channel = supabase
       .channel('db-changes')
       .on(
