@@ -484,11 +484,11 @@ export default function POS() {
     const printDate = new Date().toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const itemsHtml = orderDetails.cart.map((item: any, index: number) =>
       `<tr>
-        <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;color:#666;">${index + 1}</td>
-        <td style="padding:10px 4px;border-bottom:1px solid #eee;font-weight:900;font-size:14px;">${escapeHtml(item.name)}</td>
-        <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${formatQty(item.quantity, item.unit)}</td>
-        <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:center;font-weight:bold;">${item.sale_price.toFixed(2)}</td>
-        <td style="padding:10px 4px;border-bottom:1px solid #eee;text-align:left;font-weight:black;font-size:15px;">${(item.sale_price * item.quantity).toFixed(2)}</td>
+        <td style="text-align:center;">${index + 1}</td>
+        <td style="text-align:right;font-weight:bold;">${escapeHtml(item.name)}</td>
+        <td style="text-align:center;">${formatQty(item.quantity, item.unit)}</td>
+        <td style="text-align:center;">${item.sale_price.toFixed(2)}</td>
+        <td style="text-align:left;font-weight:bold;">${(item.sale_price * item.quantity).toFixed(2)}</td>
       </tr>`
     ).join('');
 
@@ -523,44 +523,43 @@ export default function POS() {
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
   *{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo', sans-serif;}
-  body{background:#fff;color:#1e293b;padding:0;margin:0;}
-  .invoice-container{width:148mm;min-height:100mm;margin:0 auto;padding:5mm;position:relative;display:flex;flex-direction:column;gap:5px;}
-  
-  .header-main{display:flex;justify-content:space-between;align-items:center;border-bottom:3px solid #1e293b;padding-bottom:5px;margin-bottom:5px;}
-  .logo{height:64px;width:auto;max-width:260px;object-fit:contain;border-radius:12px;border:1px solid #e2e8f0;padding:2px;background:#fff;}
-  .store-name{font-size:24px;font-weight:900;color:#1e293b;line-height:1.2;}
-  .store-details{font-size:10px;color:#64748b;margin-top:3px;line-height:1.3;font-weight:bold;}
-  .store-info-center{flex:1;display:flex;flex-direction:column;align-items:center;text-align:center;padding:0 10px;}
-  
-  
-  .customer-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:5px;background:#f8fafc;padding:8px;border-radius:10px;border:1px solid #e2e8f0;}
-  .info-item{font-size:12px;display:flex;gap:6px;}
-  .info-item strong{color:#64748b;white-space:nowrap;}
-  .info-item span{color:#1e293b;font-weight:700;}
-  
-  .qr-code-container{display:flex;flex-direction:column;align-items:center;gap:3px;}
-  .qr-code-img{width:80px;height:80px;padding:3px;background:#fff;border-radius:10px;border:1px solid #e2e8f0;box-shadow: 0 1px 3px rgba(0,0,0,0.1);}
-  .qr-label{font-size:10px;font-weight:900;color:#1e293b;text-align:center;margin-top:2px;background:#f1f5f9;padding:2px 8px;border-radius:4px;}
+  body{background:#fff;color:#000;margin:0;}
+  .invoice-container{width:80mm;margin:0 auto;padding:3mm 2mm;display:flex;flex-direction:column;}
+
+  .header-main{text-align:center;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;}
+  .logo{max-height:55px;max-width:62mm;width:auto;object-fit:contain;display:block;margin:0 auto 4px;}
+  .store-name{font-size:17px;font-weight:900;color:#000;line-height:1.2;}
+  .store-details{font-size:9px;color:#333;margin-top:2px;line-height:1.4;font-weight:bold;}
+
+  .customer-info-grid{display:flex;flex-direction:column;gap:2px;margin-bottom:6px;font-size:10px;}
+  .info-item{display:flex;justify-content:space-between;gap:6px;}
+  .info-item strong{color:#444;white-space:nowrap;}
+  .info-item span{color:#000;font-weight:700;}
 
   table{width:100%;border-collapse:collapse;margin-bottom:5px;}
-  thead th{background:#f1f5f9;color:#475569;font-size:12px;padding:8px 6px;text-align:center;border-bottom:2px solid #cbd5e1;}
+  thead th{font-size:9px;padding:4px 1px;border-bottom:1px solid #000;font-weight:900;}
   thead th:nth-child(2){text-align:right;}
   thead th:last-child{text-align:left;}
-  
-  .summary-section{margin-right:auto;width:60%;margin-top:5px;}
-  .summary-row{display:flex;justify-content:space-between;padding:5px 0;font-size:13px;border-bottom:1px solid #f1f5f9;}
-  .summary-row.total{border-top:2px solid #1e293b;border-bottom:none;margin-top:3px;font-size:18px;font-weight:900;color:#1e293b;}
-  
-  .payment-status{margin-top:8px;padding:6px;border-radius:6px;text-align:center;font-weight:bold;font-size:13px;}
-  .status-paid{background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;}
-  .status-debt{background:#fef2f2;color:#dc2626;border:1px solid #fecaca;}
-  
-  .footer{text-align:center;margin-top:15px;padding-top:10px;border-top:1px dashed #cbd5e1;font-size:11px;color:#94a3b8;font-weight:bold;}
-  
+  tbody td{font-size:9px;padding:3px 1px;border-bottom:1px dotted #bbb;vertical-align:top;}
+
+  .summary-section{width:100%;margin-top:4px;}
+  .summary-row{display:flex;justify-content:space-between;padding:2px 0;font-size:10px;}
+  .summary-row.total{border-top:1px solid #000;border-bottom:1px solid #000;margin-top:3px;padding:4px 0;font-size:15px;font-weight:900;color:#000;}
+
+  .payment-status{margin-top:6px;padding:5px;border-radius:5px;text-align:center;font-weight:bold;font-size:11px;}
+  .status-paid{background:#e8f5e9;color:#1b5e20;border:1px solid #a5d6a7;}
+  .status-debt{background:#ffebee;color:#b71c1c;border:1px solid #ef9a9a;}
+
+  .qr-code-container{display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:8px;}
+  .qr-code-img{width:90px;height:90px;}
+  .qr-label{font-size:9px;font-weight:900;color:#000;}
+
+  .footer{text-align:center;margin-top:8px;padding-top:6px;border-top:1px dashed #000;font-size:9px;color:#333;font-weight:bold;}
+
   @media print{
-    @page{size:A5;margin:0;}
-    body{-webkit-print-color-adjust:exact;}
-    .invoice-container{width:148mm;height:auto;padding:5mm;}
+    @page{size:80mm auto;margin:0;}
+    body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .invoice-container{width:80mm;padding:3mm 2mm;}
   }
 </style>
 </head>
@@ -568,19 +567,11 @@ export default function POS() {
 <div class="invoice-container">
   <div class="header-main">
     <img class="logo" src="${escapeHtml(currentSettings.logo)}" onerror="this.style.display='none'" />
-
-    <div class="store-info-center">
-      <div class="store-name">${escapeHtml(currentSettings.name)}</div>
-      <div class="store-details">
-        ${currentSettings.address ? `📍 ${escapeHtml(currentSettings.address)}<br/>` : ''}
-        ${currentSettings.phone ? `📞 ${escapeHtml(currentSettings.phone)}` : ''}
-        ${currentSettings.phone2 ? ` | ${escapeHtml(currentSettings.phone2)}` : ''}
-      </div>
-    </div>
-
-    <div class="qr-code-container">
-      <img class="qr-code-img" src="${qrCodeUrl}" alt="QR Code" />
-      <div class="qr-label">تفاصيل الفاتورة</div>
+    <div class="store-name">${escapeHtml(currentSettings.name)}</div>
+    <div class="store-details">
+      ${currentSettings.address ? `📍 ${escapeHtml(currentSettings.address)}<br/>` : ''}
+      ${currentSettings.phone ? `📞 ${escapeHtml(currentSettings.phone)}` : ''}
+      ${currentSettings.phone2 ? ` | ${escapeHtml(currentSettings.phone2)}` : ''}
     </div>
   </div>
 
@@ -588,11 +579,11 @@ export default function POS() {
 
   <table>
     <thead><tr>
-      <th style="width:40px">#</th>
-      <th style="text-align:right">البيان / المنتج</th>
-      <th style="width:60px">الكمية</th>
-      <th style="width:80px">السعر</th>
-      <th style="width:100px;text-align:left">الإجمالي</th>
+      <th style="width:8%">#</th>
+      <th style="text-align:right">الصنف</th>
+      <th style="width:14%">كمية</th>
+      <th style="width:20%">سعر</th>
+      <th style="width:22%;text-align:left">إجمالي</th>
     </tr></thead>
     <tbody>${itemsHtml}</tbody>
   </table>
@@ -627,6 +618,11 @@ export default function POS() {
       ${orderDetails.splitPayments.wallet > 0 ? `<div class="summary-row" style="font-size:12px;"><span>📱 محفظة:</span><span>${orderDetails.splitPayments.wallet.toFixed(2)}</span></div>` : ''}
       ${orderDetails.splitPayments.instapay > 0 ? `<div class="summary-row" style="font-size:12px;"><span>⚡ انستا باي:</span><span>${orderDetails.splitPayments.instapay.toFixed(2)}</span></div>` : ''}
     </div>
+  </div>
+
+  <div class="qr-code-container">
+    <img class="qr-code-img" src="${qrCodeUrl}" alt="QR Code" />
+    <div class="qr-label">امسح الكود لعرض الفاتورة</div>
   </div>
 
   <div class="footer">شكراً لثقتكم بنا - ${escapeHtml(currentSettings.name)} ترحب بكم دائماً</div>
