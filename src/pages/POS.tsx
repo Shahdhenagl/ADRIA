@@ -880,17 +880,39 @@ export default function POS() {
 
   const handleReturnAll = async () => {
     if (!activeReturnOrder) return;
-    if (!confirm("هل أنت متأكد من رغبتك في استرجاع الفاتورة بالكامل؟")) return;
 
     const itemsSum = activeReturnOrder.items.reduce((sum: number, item: any) => sum + (item.quantity * item.sale_price), 0);
     const discountRatio = itemsSum > 0 ? activeReturnOrder.total / itemsSum : 1;
 
+    // Total value of the goods being returned (after the invoice discount).
+    const totalReturnValue = activeReturnOrder.items.reduce((sum: number, item: any) => {
+      const available = Math.max(0, item.quantity - item.returned_quantity);
+      return sum + (available * item.sale_price * discountRatio);
+    }, 0);
+
+    // For a deferred invoice, settle the outstanding debt first and only refund
+    // the remainder as cash out of the drawer.
+    const outstandingDebt = Math.max(0, activeReturnOrder.total - activeReturnOrder.paid_amount);
+    const debtSettled = Math.min(totalReturnValue, outstandingDebt);
+    const cashToRefund = Math.max(0, totalReturnValue - outstandingDebt);
+    const cashRatio = totalReturnValue > 0 ? cashToRefund / totalReturnValue : 0;
+
+    if (!confirm(
+      `استرجاع الفاتورة بالكامل؟\n` +
+      `قيمة المرتجع: ${totalReturnValue.toFixed(2)} ${storeSettings.currency}\n` +
+      `يُخصم من المديونية: ${debtSettled.toFixed(2)} ${storeSettings.currency}\n` +
+      `يُرد كاش للعميل: ${cashToRefund.toFixed(2)} ${storeSettings.currency}`
+    )) return;
+
     const returnsArray = activeReturnOrder.items.map((item: any) => {
       const available = item.quantity - item.returned_quantity;
+      const itemValue = available * item.sale_price * discountRatio;
       return {
         productId: item.id,
         returnQty: available,
-        refundAmount: available * item.sale_price * discountRatio
+        // Distribute the cash refund across items proportionally; the rest of
+        // each item's value is implicitly settled against the customer's debt.
+        refundAmount: itemValue * cashRatio
       };
     }).filter((r: any) => r.returnQty > 0);
 
