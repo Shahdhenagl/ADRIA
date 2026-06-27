@@ -1771,21 +1771,21 @@ export default function POS() {
         </header>
 
         {/* Invoice type + season bar */}
-        <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 dark:border-slate-800 flex-wrap">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-bold text-slate-400">نوع الفاتورة:</span>
+        <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-5 px-3 py-2 border-b border-gray-100 dark:border-slate-800">
+          <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar">
+            <span className="text-[11px] font-bold text-slate-400 shrink-0">الفاتورة</span>
             {([['retail', 'قطاعي'], ['half', 'نص جملة'], ['wholesale', 'جملة']] as const).map(([k, label]) => (
               <button key={k} onClick={() => setInvoiceType(k)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${invoiceType === k ? 'bg-purple-600 text-white shadow' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
+                className={`shrink-0 px-4 py-2 rounded-xl text-xs font-black transition ${invoiceType === k ? 'bg-purple-600 text-white shadow-md' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
                 {label}
               </button>
             ))}
           </div>
-          <div className="flex items-center gap-1.5">
-            <span className="text-[11px] font-bold text-slate-400">الموسم:</span>
+          <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar">
+            <span className="text-[11px] font-bold text-slate-400 shrink-0">الموسم</span>
             {([['all', 'الكل'], ['summer', 'صيفي'], ['winter', 'شتوي']] as const).map(([k, label]) => (
               <button key={k} onClick={() => setPosSeason(k)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${posSeason === k ? 'bg-amber-500 text-white shadow' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
+                className={`shrink-0 px-4 py-2 rounded-xl text-xs font-black transition ${posSeason === k ? 'bg-amber-500 text-white shadow-md' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
                 {label}
               </button>
             ))}
@@ -1801,11 +1801,11 @@ export default function POS() {
             <ChevronRight size={20} className="text-gray-600 dark:text-gray-300" />
           </button>
           
-          <div ref={categoriesRef} className="flex gap-3 p-5 overflow-x-auto hide-scrollbar items-center scroll-smooth">
+          <div ref={categoriesRef} className="flex gap-2 md:gap-3 p-3 md:p-5 overflow-x-auto hide-scrollbar items-center scroll-smooth">
             <button
               onClick={() => setActiveCategory('all')}
               style={activeCategory === 'all' ? { background: storeSettings.themeColor } : {}}
-              className={`px-6 py-2.5 rounded-2xl whitespace-nowrap font-bold transition shadow-sm border ${activeCategory === 'all'
+              className={`px-4 py-2 md:px-6 md:py-2.5 text-sm md:text-base rounded-2xl whitespace-nowrap font-bold transition shadow-sm border ${activeCategory === 'all'
                   ? 'text-white border-transparent'
                   : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700'
                 }`}
@@ -1817,7 +1817,7 @@ export default function POS() {
                 key={c.id}
                 onClick={() => setActiveCategory(c.id)}
                 style={activeCategory === c.id ? { background: storeSettings.themeColor } : {}}
-                className={`px-6 py-2.5 rounded-2xl whitespace-nowrap font-bold transition shadow-sm border ${activeCategory === c.id
+                className={`px-4 py-2 md:px-6 md:py-2.5 text-sm md:text-base rounded-2xl whitespace-nowrap font-bold transition shadow-sm border ${activeCategory === c.id
                     ? 'text-white border-transparent'
                     : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-gray-300 border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700'
                   }`}
@@ -1871,14 +1871,28 @@ export default function POS() {
                   <div className="flex items-end justify-between mt-3 pt-2 border-t border-gray-100 dark:border-slate-700">
                     <div>
                       <p className="text-[10px] text-slate-400 font-medium mb-0.5">سعر البيع / {getUnitConfig(product.unit).label}</p>
-                      {product.discount_price && product.discount_price > 0 && product.discount_price < product.sale_price ? (
-                        <span className="flex items-center gap-1.5">
-                          <span className="text-xs text-gray-400 line-through">{product.sale_price}</span>
-                          <span style={{ color: storeSettings.themeColor }} className="text-lg font-black">{product.discount_price} <span className="text-xs text-gray-500 dark:text-gray-400">{storeSettings.currency}</span></span>
-                        </span>
-                      ) : (
-                        <span style={{ color: storeSettings.themeColor }} className="text-lg font-black dark:opacity-90">{product.sale_price} <span className="text-xs text-gray-500 dark:text-gray-400">{storeSettings.currency}</span></span>
-                      )}
+                      {(() => {
+                        const wholesale = invoiceType === 'wholesale' && (product.wholesale_price || 0) > 0;
+                        const half = invoiceType === 'half' && (product.half_wholesale_price || 0) > 0;
+                        if (wholesale || half) {
+                          const price = wholesale ? product.wholesale_price : product.half_wholesale_price;
+                          return (
+                            <span className="flex items-center gap-1.5">
+                              <span style={{ color: storeSettings.themeColor }} className="text-lg font-black">{price} <span className="text-xs text-gray-500 dark:text-gray-400">{storeSettings.currency}</span></span>
+                              <span className="text-[9px] font-bold bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">{wholesale ? 'جملة' : 'نص جملة'}</span>
+                            </span>
+                          );
+                        }
+                        if ((product.discount_price || 0) > 0 && (product.discount_price || 0) < product.sale_price) {
+                          return (
+                            <span className="flex items-center gap-1.5">
+                              <span className="text-xs text-gray-400 line-through">{product.sale_price}</span>
+                              <span style={{ color: storeSettings.themeColor }} className="text-lg font-black">{product.discount_price} <span className="text-xs text-gray-500 dark:text-gray-400">{storeSettings.currency}</span></span>
+                            </span>
+                          );
+                        }
+                        return <span style={{ color: storeSettings.themeColor }} className="text-lg font-black dark:opacity-90">{product.sale_price} <span className="text-xs text-gray-500 dark:text-gray-400">{storeSettings.currency}</span></span>;
+                      })()}
                     </div>
                     <div style={!isOutOfStock ? { backgroundColor: storeSettings.themeColor + '15', color: storeSettings.themeColor, borderColor: storeSettings.themeColor + '30' } : {}} className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-all ${isOutOfStock ? 'bg-gray-100 text-gray-400 border-gray-200 dark:bg-slate-700 dark:border-slate-600' : ''}`}>
                       <Plus size={18} strokeWidth={3} />
