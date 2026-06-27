@@ -38,6 +38,7 @@ const TYPE_LABELS = {
   transfer: 'تحويل داخلي بين وسائل الدفع',
   cashier_expense: 'مصروف من الكاشير',
   cashier_income: 'إيراد من الكاشير',
+  manager_withdrawal: 'سحب باسم المدير',
 };
 
 function line(label, value) {

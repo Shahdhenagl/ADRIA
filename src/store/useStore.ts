@@ -417,6 +417,7 @@ interface CashierStore {
   
   // Expenses
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
+  managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number }) => Promise<boolean>;
   updateExpense: (id: string, expense: Partial<Expense>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
 
@@ -3041,6 +3042,35 @@ setupRealtime: () => {
       };
       set((state) => ({ expenses: [newExp, ...state.expenses] }));
     }
+  },
+
+  // سحب المدير: يُسجّل كمصروف "سحب مدير" (يخصم من الخزنة) + تنبيه تليجرام. لا يُحذف.
+  managerWithdraw: async (managerName, split) => {
+    const total = (split.cash || 0) + (split.visa || 0) + (split.wallet || 0) + (split.instapay || 0);
+    if (total <= 0) return false;
+    const primary = split.cash >= split.visa && split.cash >= split.wallet && split.cash >= split.instapay ? 'cash'
+      : split.visa >= split.wallet && split.visa >= split.instapay ? 'visa'
+      : split.wallet >= split.instapay ? 'wallet' : 'instapay';
+    await get().addExpense({
+      category: 'سحب مدير',
+      amount: total,
+      note: managerName,
+      payment_method: primary,
+      paid_cash: split.cash || 0,
+      paid_visa: split.visa || 0,
+      paid_wallet: split.wallet || 0,
+      paid_instapay: split.instapay || 0,
+    } as Omit<Expense, 'id' | 'date'>);
+    sendTelegramAlert({
+      type: 'manager_withdrawal',
+      actor: getActorName(get()),
+      currency: get().storeSettings.currency,
+      description: `سحب باسم المدير: ${managerName}`,
+      amount: total,
+      paymentMethod: primary,
+      date: new Date().toISOString(),
+    });
+    return true;
   },
 
   updateExpense: async (id, expense) => {

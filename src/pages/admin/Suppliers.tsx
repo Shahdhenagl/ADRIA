@@ -985,7 +985,7 @@ export default function Suppliers() {
                 <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden mb-8">
                   <div className="p-6 border-b border-slate-50 flex items-center justify-between">
                     <h3 className="font-black text-slate-800 flex items-center gap-2"><ShoppingCart size={18} style={{ color: tc }} /> الأصناف المشتراة من هذا المورد</h3>
-                    <span className="text-xs font-bold text-slate-400">{productStats.length} صنف</span>
+                    <span className="text-xs font-bold text-slate-400">{productStats.length} صنف · إجمالي القطع المشتراة: <span className="text-slate-700">{productStats.reduce((sum, s) => sum + s.totalQty, 0).toLocaleString()}</span></span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-right text-sm">
