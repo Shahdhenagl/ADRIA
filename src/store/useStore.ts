@@ -431,7 +431,7 @@ interface CashierStore {
 
   // Manufacturing
   loadManufacturing: () => Promise<void>;
-  addMaterial: (m: Omit<Material, 'id' | 'created_at'>) => Promise<void>;
+  addMaterial: (m: Omit<Material, 'id' | 'created_at'>, paymentMethod?: string) => Promise<void>;
   updateMaterial: (id: string, m: Partial<Material>) => Promise<void>;
   deleteMaterial: (id: string) => Promise<void>;
   addProductionOrder: (input: {
@@ -2140,9 +2140,23 @@ export const useStore = create<CashierStore>((set, get) => ({
     });
   },
 
-  addMaterial: async (m) => {
+  addMaterial: async (m, paymentMethod = 'cash') => {
     const { data } = await supabase.from('materials').insert(m).select().single();
     if (data) set((s) => ({ materials: [data as unknown as Material, ...s.materials] }));
+    // Record the purchase as a treasury expense (pulls money out of the drawer).
+    const total = (Number(m.cost_per_unit) || 0) * (Number(m.stock_quantity) || 0);
+    if (total > 0) {
+      await get().addExpense({
+        category: 'شراء خامات',
+        amount: total,
+        note: `شراء خامة: ${m.name}`,
+        payment_method: paymentMethod,
+        paid_cash: paymentMethod === 'cash' ? total : 0,
+        paid_visa: paymentMethod === 'visa' ? total : 0,
+        paid_wallet: paymentMethod === 'wallet' ? total : 0,
+        paid_instapay: paymentMethod === 'instapay' ? total : 0,
+      } as Omit<Expense, 'id' | 'date'>);
+    }
   },
 
   updateMaterial: async (id, m) => {
@@ -2236,6 +2250,20 @@ export const useStore = create<CashierStore>((set, get) => ({
           quantity: m.quantity,
           cost: m.mat!.cost_per_unit * m.quantity,
         })));
+      }
+
+      // Manufacturing labor / extra costs are a real cash outflow.
+      if (extra_costs > 0) {
+        await get().addExpense({
+          category: 'تكاليف تصنيع',
+          amount: extra_costs,
+          note: `مصنعية: ${input.product_name}${input.notes ? ' — ' + input.notes : ''}`,
+          payment_method: 'cash',
+          paid_cash: extra_costs,
+          paid_visa: 0,
+          paid_wallet: 0,
+          paid_instapay: 0,
+        } as Omit<Expense, 'id' | 'date'>);
       }
 
       await get().loadManufacturing();
