@@ -2,6 +2,27 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 
+// Creates/updates the Supabase Auth account for a cashier via the server
+// endpoint (which holds the service-role key), so a cashier added from the
+// admin panel can log in immediately. Best-effort: in local dev (no /api) or on
+// failure it silently no-ops, and you can still run the provisioning script.
+async function provisionCashierAuth(id: string, password: string): Promise<boolean> {
+  try {
+    const { data: sess } = await supabase.auth.getSession();
+    const token = sess?.session?.access_token;
+    if (!token) return false;
+    const res = await fetch('/api/provision-cashier', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ id, password }),
+    });
+    return res.ok;
+  } catch (e) {
+    console.warn('provisionCashierAuth failed:', e);
+    return false;
+  }
+}
+
 // ─── Types ───────────────────────────────────────────────────
 export interface Product {
   id: string;
@@ -2026,15 +2047,24 @@ export const useStore = create<CashierStore>((set, get) => ({
   },
 
   addCashier: async (cashier) => {
-    // NOTE: after Supabase Auth is enabled, a newly added cashier cannot log in
-    // until a matching Auth user is created. Re-run scripts/provision_auth_users.cjs
-    // (or create the Auth user via the Supabase dashboard) — see SECURITY_SETUP.md.
     const { data } = await supabase.from('cashiers').insert(cashier).select().single();
-    if (data) set((state) => ({ cashiers: [data as unknown as Cashier, ...state.cashiers] }));
+    if (!data) return;
+    const row = data as unknown as Cashier;
+    // Auto-create the cashier's login (Supabase Auth) so they can sign in right away.
+    if (row.password) {
+      const ok = await provisionCashierAuth(row.id, row.password);
+      if (ok) row.email = `cashier-${row.id}@cashier.local`;
+    }
+    set((state) => ({ cashiers: [row, ...state.cashiers] }));
   },
 
   updateCashier: async (id, updated) => {
     await supabase.from('cashiers').update(updated).eq('id', id);
+    // If the password changed, sync it to the cashier's login account.
+    if (updated.password) {
+      const ok = await provisionCashierAuth(id, updated.password);
+      if (ok) updated = { ...updated, email: `cashier-${id}@cashier.local` };
+    }
     set((state) => ({ cashiers: state.cashiers.map((c) => (c.id === id ? { ...c, ...updated } : c)) }));
   },
 
