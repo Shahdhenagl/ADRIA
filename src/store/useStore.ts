@@ -2128,7 +2128,12 @@ export const useStore = create<CashierStore>((set, get) => ({
   },
 
   addCashier: async (cashier) => {
-    const { data } = await supabase.from('cashiers').insert(cashier).select().single();
+    const { data, error } = await supabase.from('cashiers').insert(cashier).select().single();
+    if (error) {
+      console.error('Add Cashier Error:', error);
+      alert('تعذّر حفظ المحاسب في قاعدة البيانات:\n' + (error.message || '') + '\n(غالباً لازم تعملي تسجيل دخول من جديد كأدمن.)');
+      return;
+    }
     if (!data) return;
     const row = data as unknown as Cashier;
     // Auto-create the cashier's login (Supabase Auth) so they can sign in right away.
@@ -3745,6 +3750,7 @@ setupRealtime: () => {
     const { data, error } = await supabase.from('employees').insert(employee).select().single();
     if (error) {
       console.error("Add Employee Error:", error);
+      alert('تعذّر حفظ الموظف:\n' + (error.message || '') + '\n(جرّبي تسجيل الدخول من جديد كأدمن.)');
       return;
     }
     if (data) {
@@ -3776,6 +3782,7 @@ setupRealtime: () => {
     const { data, error } = await supabase.from('employee_transactions').insert(transaction).select().single();
     if (error) {
       console.error("Add Employee Transaction Error:", error);
+      alert('تعذّر حفظ المعاملة (راتب/سلفة):\n' + (error.message || '') + '\n(جرّبي تسجيل الدخول من جديد كأدمن.)');
       return;
     }
     

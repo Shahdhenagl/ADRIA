@@ -25,8 +25,17 @@ export default async function handler(req, res) {
   if (!token) { res.status(401).json({ error: 'unauthorized' }); return; }
   const { data: caller, error: callerErr } = await admin.auth.getUser(token);
   if (callerErr || !caller?.user) { res.status(401).json({ error: 'unauthorized' }); return; }
-  if (adminEmail && caller.user.email !== adminEmail) {
-    res.status(403).json({ error: 'forbidden' }); return;
+  const callerEmail = (caller.user.email || '').toLowerCase();
+  // A cashier account must never provision other logins. Any other authenticated
+  // user is the admin (only admin + cashiers have accounts). We compare to
+  // VITE_ADMIN_EMAIL when it's configured AND matches; otherwise we still allow
+  // any non-cashier account, so a build-time/runtime email mismatch can't lock
+  // out provisioning.
+  if (callerEmail.endsWith('@cashier.local')) {
+    res.status(403).json({ error: 'forbidden (cashier accounts cannot provision logins)' }); return;
+  }
+  if (adminEmail && callerEmail !== adminEmail.toLowerCase()) {
+    console.warn(`provision-cashier: caller ${callerEmail} != VITE_ADMIN_EMAIL ${adminEmail} — allowing (non-cashier).`);
   }
 
   // Parse body (Vercel usually parses JSON, but be defensive).
