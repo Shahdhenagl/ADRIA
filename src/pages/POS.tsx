@@ -187,6 +187,61 @@ export default function POS() {
     else if (phone && !phone.startsWith(code)) phone = code + phone;
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
   };
+  // ── Daily treasury (تقفيل اليوم) — view only ──────────────
+  const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const [showDayBudget, setShowDayBudget] = useState(false);
+  const [dayBudgetDate, setDayBudgetDate] = useState(todayStr());
+  const [dayBudget, setDayBudget] = useState<any>(null);
+  const [dayBudgetLoading, setDayBudgetLoading] = useState(false);
+
+  const computeDayBudget = async (dayStr: string) => {
+    setDayBudgetLoading(true);
+    try {
+      const { supabase } = await import('../lib/supabase');
+      const start = new Date(`${dayStr}T00:00:00`);
+      const end = new Date(start); end.setDate(end.getDate() + 1);
+      const [expRes, purRes, salRes] = await Promise.all([
+        supabase.from('expenses').select('*'),
+        supabase.from('purchase_invoices').select('*'),
+        supabase.from('employee_transactions').select('*'),
+      ]);
+      const methods = ['cash', 'visa', 'wallet', 'instapay'];
+      const zero = (): Record<string, number> => ({ cash: 0, visa: 0, wallet: 0, instapay: 0 });
+      const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
+      const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) => {
+        const c = +rec.paid_cash || 0, v = +rec.paid_visa || 0, w = +rec.paid_wallet || 0, i = +rec.paid_instapay || 0;
+        if (c + v + w + i > 0) { t.cash += c; t.visa += v; t.wallet += w; t.instapay += i; return; }
+        const amt = Math.abs(+rec[field] || 0);
+        const m = mOverride || rec.payment_method || 'cash';
+        if (methods.includes(m)) t[m] += amt; else t.cash += amt;
+      };
+      orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
+        const d = new Date(o.date);
+        const inDay = d >= start && d < end;
+        const before = d < start;
+        if (!inDay && !before) return;
+        if ((o.type === 'sale' || o.type === 'payment')) addM(inDay ? dayIn : befIn, o, 'paid_amount');
+        const refunded = (o.items || []).reduce((s: number, it: any) => s + (+it.refunded_amount || 0), 0);
+        if (refunded > 0) addM(inDay ? dayOut : befOut, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+      });
+      const addOut = (arr: any[], field: string) => (arr || []).forEach((r: any) => {
+        const d = new Date(r.created_at);
+        if (d >= start && d < end) addM(dayOut, r, field);
+        else if (d < start) addM(befOut, r, field);
+      });
+      addOut(expRes.data as any[], 'amount');
+      addOut(purRes.data as any[], 'paid_amount');
+      addOut(salRes.data as any[], 'amount');
+      const sum = (o: Record<string, number>) => o.cash + o.visa + o.wallet + o.instapay;
+      const opening = (Number((storeSettings as any).initialBalance ?? (storeSettings as any).initial_balance) || 0) + sum(befIn) - sum(befOut);
+      const totalIn = sum(dayIn), totalOut = sum(dayOut);
+      setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut });
+    } catch (e) { console.error(e); alert('تعذّر تحميل ميزانية اليوم'); }
+    setDayBudgetLoading(false);
+  };
+
+  useEffect(() => { if (showDayBudget) computeDayBudget(dayBudgetDate); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [showDayBudget, dayBudgetDate]);
+
   const [activeReturnOrder, setActiveReturnOrder] = useState<any>(null);
   const [pendingReturns, setPendingReturns] = useState<Record<string, { returnQty: number, refundAmount: number, returnType?: 'debt' | 'cash' }>>({});
   // Amount of the return value applied to the customer's debt. null = automatic
@@ -1285,6 +1340,60 @@ export default function POS() {
         </div>
       )}
 
+      {showDayBudget && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3" onClick={() => setShowDayBudget(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-emerald-600 text-white px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-black flex items-center gap-2"><Banknote size={22} /> تقفيل اليوم (عرض)</h2>
+              <button onClick={() => setShowDayBudget(false)} className="hover:bg-white/20 p-1.5 rounded-lg"><X size={22} /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div className="flex items-center gap-2 flex-wrap">
+                <label className="text-sm font-bold text-slate-600 dark:text-slate-300">التاريخ:</label>
+                <input type="date" value={dayBudgetDate} onChange={(e) => setDayBudgetDate(e.target.value)} className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 font-bold text-sm" />
+                <button onClick={() => setDayBudgetDate(todayStr())} className="text-xs font-bold text-emerald-600 hover:underline">اليوم</button>
+              </div>
+              {dayBudgetLoading || !dayBudget ? (
+                <p className="text-center text-slate-400 py-10 font-bold">جاري الحساب...</p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-slate-100 dark:bg-slate-900/40 rounded-xl p-4 text-center">
+                      <div className="text-[11px] font-bold text-slate-500">رصيد بداية اليوم</div>
+                      <div className="text-xl font-black text-slate-800 dark:text-slate-100">{dayBudget.opening.toFixed(2)}</div>
+                    </div>
+                    <div className="bg-emerald-600 text-white rounded-xl p-4 text-center">
+                      <div className="text-[11px] font-bold opacity-90">رصيد نهاية اليوم</div>
+                      <div className="text-xl font-black">{dayBudget.closing.toFixed(2)}</div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 text-center border border-green-100 dark:border-green-800"><div className="text-[11px] font-bold text-green-700 dark:text-green-400">إجمالي الداخل</div><div className="text-lg font-black text-green-700 dark:text-green-400">{dayBudget.totalIn.toFixed(2)}</div></div>
+                    <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 text-center border border-red-100 dark:border-red-800"><div className="text-[11px] font-bold text-red-700 dark:text-red-400">إجمالي الخارج</div><div className="text-lg font-black text-red-700 dark:text-red-400">{dayBudget.totalOut.toFixed(2)}</div></div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-slate-500 mb-2">التفصيل حسب وسيلة الدفع (صافي اليوم):</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {([['cash', 'كاش'], ['visa', 'فيزا'], ['instapay', 'انستا باي'], ['wallet', 'محفظة']] as const).map(([k, label]) => {
+                        const net = dayBudget.dayIn[k] - dayBudget.dayOut[k];
+                        return (
+                          <div key={k} className="bg-slate-50 dark:bg-slate-900/40 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
+                            <div className="text-[11px] font-bold text-slate-500">{label}</div>
+                            <div className="text-lg font-black text-slate-800 dark:text-slate-100">{net.toFixed(2)} {storeSettings.currency}</div>
+                            <div className="text-[10px] text-slate-400">داخل {dayBudget.dayIn[k].toFixed(2)} · خارج {dayBudget.dayOut[k].toFixed(2)}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 text-center">عرض فقط — اليوم من 12 منتصف الليل إلى 12 منتصف الليل.</p>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showHistory && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3" onClick={() => setShowHistory(false)}>
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
@@ -1644,6 +1753,9 @@ export default function POS() {
             {/* Left: Invoices history + Returns Button */}
             <button onClick={() => setShowHistory(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-2xl font-bold transition border border-indigo-100 dark:border-indigo-900/30 whitespace-nowrap shadow-sm shrink-0">
               <FileText size={18} /> <span className="text-sm">الفواتير</span>
+            </button>
+            <button onClick={() => setShowDayBudget(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 rounded-2xl font-bold transition border border-emerald-100 dark:border-emerald-900/30 whitespace-nowrap shadow-sm shrink-0">
+              <Banknote size={18} /> <span className="text-sm">تقفيل اليوم</span>
             </button>
             <button onClick={() => setShowReturnsModal(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-2xl font-bold transition border border-red-100 dark:border-red-900/30 whitespace-nowrap shadow-sm shrink-0">
               <RefreshCcw size={18} /> <span className="text-sm">مرتجع</span>
