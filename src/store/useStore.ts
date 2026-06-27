@@ -31,6 +31,7 @@ export interface Product {
   purchase_price: number;
   average_purchase_price: number;
   sale_price: number;
+  discount_price?: number; // سعر البيع بعد الخصم (لو موجود يُستخدم في البيع)
   stock_quantity: number;
   category_id: string;
   unit: string; // وحدة المنتج: قطعة / كيلو / جرام / لتر ... (المخزون والسعر بهذه الوحدة)
@@ -1115,7 +1116,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         return { cart: state.cart.map((i) => (i.id === product.id ? { ...i, quantity: next } : i)) };
       }
       const first = Math.min(step, product.stock_quantity);
-      return { cart: [...state.cart, { ...product, quantity: first, returned_quantity: 0 }] };
+      const price = product.discount_price && product.discount_price > 0 ? product.discount_price : product.sale_price;
+      return { cart: [...state.cart, { ...product, sale_price: price, quantity: first, returned_quantity: 0 }] };
     }),
 
   // إضافة منتج للسلة بكمية محددة (تُستخدم لإدخال الوزن من شاشة الكاشير)
@@ -1129,7 +1131,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         return { cart: state.cart.map((i) => (i.id === product.id ? { ...i, quantity: next } : i)) };
       }
       const qty = Math.max(min, Math.min(quantity, product.stock_quantity));
-      return { cart: [...state.cart, { ...product, quantity: qty, returned_quantity: 0 }] };
+      const price = product.discount_price && product.discount_price > 0 ? product.discount_price : product.sale_price;
+      return { cart: [...state.cart, { ...product, sale_price: price, quantity: qty, returned_quantity: 0 }] };
     }),
 
   removeFromCart: (productId) => set((state) => ({ cart: state.cart.filter((i) => i.id !== productId) })),

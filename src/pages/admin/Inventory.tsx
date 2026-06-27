@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useStore, type Product } from '../../store/useStore';
-import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2 } from 'lucide-react';
+import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
+import { generateBarcode, printBarcodeLabels } from '../../utils/printBarcodeLabels';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
@@ -57,6 +58,7 @@ export default function Inventory() {
     purchase_price: 0,
     average_purchase_price: 0,
     sale_price: 0,
+    discount_price: 0,
     stock_quantity: 0,
     category_id: categories[0]?.id || '',
     unit: 'قطعة'
@@ -138,6 +140,7 @@ export default function Inventory() {
       purchase_price: product.purchase_price,
       average_purchase_price: product.average_purchase_price || product.purchase_price,
       sale_price: product.sale_price,
+      discount_price: product.discount_price || 0,
       stock_quantity: product.stock_quantity,
       category_id: product.category_id,
       unit: product.unit || 'قطعة'
@@ -153,6 +156,7 @@ export default function Inventory() {
       purchase_price: 0,
       average_purchase_price: 0,
       sale_price: 0,
+      discount_price: 0,
       stock_quantity: 0,
       category_id: categories[0]?.id || '',
       unit: 'قطعة'
@@ -162,23 +166,42 @@ export default function Inventory() {
 
   const submitProduct = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.name || !formData.barcode) {
-      alert("الرجاء ملء جميع الحقول المطلوبة (الاسم والباركود).");
+    if (!formData.name) {
+      alert("الرجاء إدخال اسم المنتج.");
       return;
     }
 
-    const duplicate = products.find(p => p.barcode === formData.barcode && p.id !== editingProductId);
+    // الباركود: لو فاضي يتولّد تلقائياً (النظام بيتعامل بالكود ده في البيع على الـ POS)
+    let barcode = (formData.barcode || '').trim();
+    if (!barcode) {
+      const existing = new Set(products.map(p => p.barcode).filter(Boolean) as string[]);
+      barcode = generateBarcode(existing);
+    }
+
+    const duplicate = products.find(p => p.barcode === barcode && p.id !== editingProductId);
     if (duplicate) {
-      alert(`عذراً، هذا الباركود مسجل من قبل للمنتج: "${duplicate.name}". يرجى إدخال باركود فريد.`);
+      alert(`عذراً, هذا الباركود مسجل من قبل للمنتج: "${duplicate.name}". يرجى إدخال باركود فريد.`);
       return;
     }
-    
+
+    const payload = { ...formData, barcode };
     if (editingProductId) {
-      updateProduct(editingProductId, { ...formData });
+      updateProduct(editingProductId, payload);
     } else {
-      addProduct({ ...formData });
+      addProduct(payload);
+      // طباعة ملصقات الباركود بعدد القطع المضافة على طابعة الباركود الحراري
+      if (payload.stock_quantity > 0) {
+        printBarcodeLabels({
+          name: payload.name,
+          code: barcode,
+          price: payload.sale_price,
+          discountPrice: payload.discount_price,
+          currency: storeSettings.currency,
+          count: payload.stock_quantity,
+        });
+      }
     }
-    
+
     setShowAddModal(false);
     setEditingProductId(null);
     setFormData({
@@ -187,6 +210,7 @@ export default function Inventory() {
       purchase_price: 0,
       average_purchase_price: 0,
       sale_price: 0,
+      discount_price: 0,
       stock_quantity: 0,
       category_id: categories[0]?.id || '',
       unit: 'قطعة'
@@ -366,6 +390,11 @@ export default function Inventory() {
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">سعر البيع لكل {getUnitConfig(formData.unit).label} <span className="text-red-500">*</span></label>
                   <input type="number" min="0" step="0.01" required value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: parseFloat(e.target.value) || 0})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-green-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر البيع بعد الخصم (اختياري)</label>
+                  <input type="number" min="0" step="0.01" value={formData.discount_price} onChange={e => setFormData({...formData, discount_price: parseFloat(e.target.value) || 0})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-amber-500" />
+                  <p className="text-xs text-slate-400 mt-1">لو دخلت قيمة هنا، هتبقى هي سعر البيع الفعلي على الكاشير. والباركود لو سيبته فاضي هيتولّد تلقائياً.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">الكمية الحالية في المخزون</label>
@@ -604,6 +633,23 @@ export default function Inventory() {
                       <div className="flex items-center justify-center gap-2">
                         <button onClick={() => openEditModal(product)} className="p-2 text-indigo-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition" title="تعديل المنتج">
                           <Edit2 size={18} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            const code = product.barcode || generateBarcode(new Set(products.map(p => p.barcode).filter(Boolean) as string[]));
+                            if (!product.barcode) updateProduct(product.id, { barcode: code });
+                            const n = prompt('عدد ملصقات الباركود المراد طباعتها:', String(product.stock_quantity || 1));
+                            if (n === null) return;
+                            printBarcodeLabels({
+                              name: product.name, code,
+                              price: product.sale_price, discountPrice: product.discount_price,
+                              currency: storeSettings.currency, count: parseInt(n) || 1,
+                            });
+                          }}
+                          className="p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 rounded-lg transition"
+                          title="طباعة باركود"
+                        >
+                          <Printer size={18} />
                         </button>
                         {/* زر الإخفاء/الإظهار بدلاً من الحذف */}
                         <button
