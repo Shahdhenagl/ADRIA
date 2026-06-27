@@ -1,72 +1,7 @@
--- =============================================================================
--- SECURE RLS MIGRATION  (fixes S1: "allow all" RLS, and S4: public invoice leak)
--- =============================================================================
---
---  WHAT THIS DOES
---  --------------
---  1. Replaces every table's permissive `allow all` policy (which granted the
---     public `anon` role full read/write/delete) with policies that ONLY allow
---     the `authenticated` role. After this, the public anon key alone can no
---     longer read or modify ANY business data.
---  2. Adds a SECURITY DEFINER function `get_public_invoice(text)` so the public
---     invoice page (/view-invoice/:id) keeps working WITHOUT giving anon access
---     to the underlying tables. anon may only execute this one function, which
---     returns a single invoice (sale / maintenance / purchase) scoped by id.
---
---  ⚠️  RUN ORDER (see SECURITY_SETUP.md) — DO NOT run this first.
---      Run it ONLY AFTER:
---        (a) you have provisioned the admin + cashier Supabase Auth users
---            (scripts/provision_auth_users.cjs), and
---        (b) the new front-end build (which signs in via Supabase Auth and
---            reads the public page through get_public_invoice) is deployed and
---            you've confirmed admin + a cashier can log in.
---      Running this before the app can authenticate will lock the POS out of
---      its own database.
---
---  This script is idempotent — safe to run more than once.
--- =============================================================================
-
-begin;
-
--- ---------------------------------------------------------------------------
--- 1) Authenticated-only policies for every business table; remove anon access.
--- ---------------------------------------------------------------------------
-do $$
-declare
-  t text;
-  tables text[] := array[
-    'store_settings','categories','products','customers','suppliers',
-    'car_subscriptions','maintenance_appointments','purchase_invoices','purchase_items',
-    'orders','invoice_counter','order_items','expenses',
-    'financing_accounts','financing_payments','financing_transactions',
-    'cashiers','employees','employee_transactions','employee_leaves',
-    'product_suggestions','cashier_notes','coupons','deleted_invoices',
-    'materials','production_orders','production_materials','managers'
-  ];
-begin
-  foreach t in array tables loop
-    if to_regclass(format('public.%I', t)) is null then
-      continue;  -- table not present in this database
-    end if;
-
-    execute format('alter table public.%I enable row level security;', t);
-    execute format('drop policy if exists "allow all" on public.%I;', t);
-    execute format('drop policy if exists "authenticated full access" on public.%I;', t);
-    execute format(
-      'create policy "authenticated full access" on public.%I for all to authenticated using (true) with check (true);',
-      t
-    );
-    execute format('revoke all on public.%I from anon;', t);
-    execute format('grant all on public.%I to authenticated;', t);
-  end loop;
-end $$;
-
--- ---------------------------------------------------------------------------
--- 2) Public invoice access via a single SECURITY DEFINER function.
---    Covers the three things the public receipt page can show:
---    a sale order, a maintenance appointment, or a purchase invoice.
---    Returns only the data the receipt renders, scoped to one id.
--- ---------------------------------------------------------------------------
+-- ADRIA — إصلاح فتح فاتورة الشراء من لينك التليجرام.
+-- المشكلة: get_public_invoice كانت بتقارن maintenance_appointments.id (uuid) = p_id (text)
+-- فبترمي خطأ "operator does not exist: uuid = text" مع أي id مش order → اللينك مبيفتحش.
+-- الحل: cast كل المقارنات لـ ::text. شغّله مرة واحدة.
 create or replace function public.get_public_invoice(p_id text)
 returns jsonb
 language plpgsql
@@ -83,7 +18,6 @@ declare
   v_appointment_orders jsonb := '[]'::jsonb;
   v_purchase jsonb;
 begin
-  -- Store settings (safe, non-sensitive fields used by the template).
   select jsonb_build_object(
            'name', s.name, 'currency', s.currency, 'logo', s.logo,
            'tax_rate', s.tax_rate, 'theme_color', s.theme_color,
@@ -95,7 +29,7 @@ begin
   from store_settings s
   limit 1;
 
-  -- (a) Sale order ---------------------------------------------------------
+  -- (a) Sale order
   select to_jsonb(o) || jsonb_build_object(
            'customers', (select to_jsonb(c) from customers c where c.id = o.customer_id),
            'order_items', (
@@ -130,7 +64,7 @@ begin
                              'order', v_order, 'customer_orders', v_customer_orders);
   end if;
 
-  -- (b) Maintenance appointment -------------------------------------------
+  -- (b) Maintenance appointment
   if to_regclass('public.maintenance_appointments') is not null then
     select to_jsonb(a) || jsonb_build_object(
              'car_subscriptions', (select to_jsonb(cs) from car_subscriptions cs where cs.id = a.subscription_id)
@@ -158,7 +92,7 @@ begin
     end if;
   end if;
 
-  -- (c) Purchase invoice (by id or invoice_number) ------------------------
+  -- (c) Purchase invoice (by id or invoice_number)
   select to_jsonb(pi) || jsonb_build_object(
            'suppliers', (select to_jsonb(su) from suppliers su where su.id = pi.supplier_id),
            'purchase_items', (
@@ -181,8 +115,5 @@ begin
 end;
 $$;
 
--- anon (and authenticated) may execute ONLY this function — no table access.
 revoke all on function public.get_public_invoice(text) from public;
 grant execute on function public.get_public_invoice(text) to anon, authenticated;
-
-commit;

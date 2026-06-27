@@ -89,7 +89,10 @@ export default async function handler(req, res) {
   try {
     const supabase = getSupabase();
     const settings = await fetchStoreSettings(supabase);
-    const today = new Date();
+    // Optional ?date=YYYY-MM-DD to (re)send the report for a specific Cairo day
+    // (used for manual testing / catching up a missed day). Defaults to "now".
+    const dateParam = (req.query && (req.query.date || req.query.day)) || (req.body && req.body.date);
+    const today = dateParam ? new Date(`${dateParam}T12:00:00+03:00`) : new Date();
     const sent = [];
 
     const dayRange = cairoDayRange(today);
