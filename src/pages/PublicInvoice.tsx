@@ -53,6 +53,8 @@ export default function PublicInvoice() {
             name: i.product_name || i.products?.name || 'منتج غير معروف',
             quantity: i.quantity,
             sale_price: i.sale_price,
+            regular_price: i.products?.sale_price,
+            discount_price: i.products?.discount_price,
             returned_quantity: i.returned_quantity || 0,
           }));
 
@@ -435,7 +437,11 @@ export default function PublicInvoice() {
                     <td className="p-4 text-center text-slate-400 font-bold text-xs">{idx + 1}</td>
                     <td className="p-4 font-black text-slate-800 text-sm">{item.name}</td>
                     {!isPayment && <td className="p-4 text-center font-black text-slate-800">{item.quantity}</td>}
-                    <td className="p-4 text-center font-bold text-slate-600 text-xs">{item.sale_price.toFixed(2)}</td>
+                    <td className="p-4 text-center font-bold text-slate-600 text-xs">
+                      {(item as any).regular_price && ((item as any).discount_price || 0) > 0 && Math.abs(item.sale_price - ((item as any).discount_price || 0)) < 0.01 && (item as any).regular_price > item.sale_price ? (
+                        <span className="inline-flex items-center gap-1"><span className="line-through text-slate-400">{(item as any).regular_price.toFixed(2)}</span><span className="text-emerald-600 font-black">{item.sale_price.toFixed(2)}</span></span>
+                      ) : item.sale_price.toFixed(2)}
+                    </td>
                     <td className="p-4 text-left font-black text-slate-900 text-sm">{ (item.quantity * item.sale_price).toFixed(2) }</td>
                   </tr>
                 ))}

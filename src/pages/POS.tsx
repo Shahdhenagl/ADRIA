@@ -575,15 +575,20 @@ export default function POS() {
   const printInvoice = (invId: string, orderDetails: any) => {
     const currentSettings = { ...storeSettings };
     const printDate = new Date().toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-    const itemsHtml = orderDetails.cart.map((item: any, index: number) =>
-      `<tr>
+    const itemsHtml = orderDetails.cart.map((item: any, index: number) => {
+      const prod = products.find(p => p.id === item.id);
+      const hasDisc = prod && (prod.discount_price || 0) > 0 && Math.abs(item.sale_price - (prod.discount_price || 0)) < 0.01 && prod.sale_price > (prod.discount_price || 0);
+      const priceCell = hasDisc
+        ? `<span style="text-decoration:line-through;color:#999;font-size:8px;">${prod!.sale_price.toFixed(2)}</span> ${item.sale_price.toFixed(2)}`
+        : item.sale_price.toFixed(2);
+      return `<tr>
         <td style="text-align:center;">${index + 1}</td>
         <td style="text-align:right;font-weight:bold;">${escapeHtml(item.name)}</td>
         <td style="text-align:center;">${formatQty(item.quantity, item.unit)}</td>
-        <td style="text-align:center;">${item.sale_price.toFixed(2)}</td>
+        <td style="text-align:center;">${priceCell}</td>
         <td style="text-align:left;font-weight:bold;">${(item.sale_price * item.quantity).toFixed(2)}</td>
-      </tr>`
-    ).join('');
+      </tr>`;
+    }).join('');
 
     const invoiceUrl = `${window.location.origin}/view-invoice/${invId}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(invoiceUrl)}`;
@@ -1866,7 +1871,14 @@ export default function POS() {
                   <div className="flex items-end justify-between mt-3 pt-2 border-t border-gray-100 dark:border-slate-700">
                     <div>
                       <p className="text-[10px] text-slate-400 font-medium mb-0.5">سعر البيع / {getUnitConfig(product.unit).label}</p>
-                      <span style={{ color: storeSettings.themeColor }} className="text-lg font-black dark:opacity-90">{product.sale_price} <span className="text-xs text-gray-500 dark:text-gray-400">{storeSettings.currency}</span></span>
+                      {product.discount_price && product.discount_price > 0 && product.discount_price < product.sale_price ? (
+                        <span className="flex items-center gap-1.5">
+                          <span className="text-xs text-gray-400 line-through">{product.sale_price}</span>
+                          <span style={{ color: storeSettings.themeColor }} className="text-lg font-black">{product.discount_price} <span className="text-xs text-gray-500 dark:text-gray-400">{storeSettings.currency}</span></span>
+                        </span>
+                      ) : (
+                        <span style={{ color: storeSettings.themeColor }} className="text-lg font-black dark:opacity-90">{product.sale_price} <span className="text-xs text-gray-500 dark:text-gray-400">{storeSettings.currency}</span></span>
+                      )}
                     </div>
                     <div style={!isOutOfStock ? { backgroundColor: storeSettings.themeColor + '15', color: storeSettings.themeColor, borderColor: storeSettings.themeColor + '30' } : {}} className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-all ${isOutOfStock ? 'bg-gray-100 text-gray-400 border-gray-200 dark:bg-slate-700 dark:border-slate-600' : ''}`}>
                       <Plus size={18} strokeWidth={3} />
@@ -1981,6 +1993,7 @@ export default function POS() {
                   <div className="flex flex-col">
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <label className="text-[9px] font-bold text-gray-400 uppercase tracking-wider">سعر {getUnitConfig(item.unit).label}:</label>
+                      {(() => { const prod = products.find(p => p.id === item.id); return prod && (prod.discount_price || 0) > 0 && Math.abs(item.sale_price - (prod.discount_price || 0)) < 0.01 && prod.sale_price > (prod.discount_price || 0) ? (<span className="text-[9px] text-gray-400 line-through">{prod.sale_price}</span>) : null; })()}
                       <input
                         type="number"
                         dir="ltr"

@@ -173,41 +173,41 @@ export default function Manufacturing() {
             </div>
 
             {/* Materials used */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">الخامات المستخدمة</label>
-                <button onClick={() => setRows((rs) => [...rs, { material_id: '', quantity: '' }])} className="text-indigo-600 text-xs font-bold hover:underline">+ خامة</button>
+            <div className="bg-slate-50 dark:bg-slate-900/30 rounded-xl p-3 border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-black text-slate-700 dark:text-slate-200">الخامات المستخدمة</label>
+                <button onClick={() => setRows((rs) => [...rs, { material_id: '', quantity: '' }])} className="text-indigo-600 text-xs font-bold bg-indigo-50 dark:bg-indigo-900/30 px-2 py-1 rounded-lg hover:bg-indigo-100">+ خامة</button>
               </div>
               <div className="space-y-2">
                 {rows.map((r, i) => (
-                  <div key={i} className="flex gap-2">
-                    <select className={input + ' flex-1'} value={r.material_id} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, material_id: e.target.value } : x)))}>
+                  <div key={i} className="flex gap-2 items-center">
+                    <select className={input + ' flex-1 cursor-pointer appearance-none bg-no-repeat'} style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'%2364748b\' stroke-width=\'3\'%3E%3Cpath d=\'M6 9l6 6 6-6\'/%3E%3C/svg%3E")', backgroundPosition: 'left 10px center' }} value={r.material_id} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, material_id: e.target.value } : x)))}>
                       <option value="">اختر خامة</option>
                       {materials.map((m) => <option key={m.id} value={m.id}>{m.name} ({m.cost_per_unit} {cur}/{m.unit})</option>)}
                     </select>
                     <input className={input + ' w-24'} type="number" placeholder="كمية" value={r.quantity} onChange={(e) => setRows((rs) => rs.map((x, j) => (j === i ? { ...x, quantity: e.target.value } : x)))} />
-                    {rows.length > 1 && <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-red-500 px-2"><Trash2 size={16} /></button>}
+                    {rows.length > 1 && <button onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))} className="text-red-500 hover:bg-red-50 p-2 rounded-lg shrink-0"><Trash2 size={16} /></button>}
                   </div>
                 ))}
               </div>
             </div>
 
             {/* Extra costs (multiple rows) */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="text-xs font-bold text-slate-600 dark:text-slate-300">تكاليف إضافية (مصنعية، خيوط، شحن...)</label>
-                <button onClick={() => setCosts((cs) => [...cs, { label: '', amount: '' }])} className="text-indigo-600 text-xs font-bold hover:underline">+ تكلفة</button>
+            <div className="bg-slate-50 dark:bg-slate-900/30 rounded-xl p-3 border border-slate-200 dark:border-slate-700">
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-sm font-black text-slate-700 dark:text-slate-200">تكاليف إضافية <span className="text-[10px] font-normal text-slate-400">(مصنعية، خيوط، شحن...)</span></label>
+                <button onClick={() => setCosts((cs) => [...cs, { label: '', amount: '' }])} className="text-indigo-600 text-xs font-bold bg-indigo-50 dark:bg-indigo-900/30 px-2 py-1 rounded-lg hover:bg-indigo-100">+ تكلفة</button>
               </div>
               <div className="space-y-2">
                 {costs.map((c, i) => (
-                  <div key={i} className="flex gap-2">
+                  <div key={i} className="flex gap-2 items-center">
                     <input className={input + ' flex-1'} placeholder="نوع التكلفة" value={c.label} onChange={(e) => setCosts((cs) => cs.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
                     <input className={input + ' w-24'} type="number" placeholder={cur} value={c.amount} onChange={(e) => setCosts((cs) => cs.map((x, j) => (j === i ? { ...x, amount: e.target.value } : x)))} />
-                    {costs.length > 1 && <button onClick={() => setCosts((cs) => cs.filter((_, j) => j !== i))} className="text-red-500 px-2"><Trash2 size={16} /></button>}
+                    {costs.length > 1 && <button onClick={() => setCosts((cs) => cs.filter((_, j) => j !== i))} className="text-red-500 hover:bg-red-50 p-2 rounded-lg shrink-0"><Trash2 size={16} /></button>}
                   </div>
                 ))}
               </div>
-              <p className="text-[11px] text-slate-400 mt-1">التكاليف الإضافية تُخصم من الخزنة كمصروف "تكاليف تصنيع".</p>
+              <p className="text-[11px] text-slate-400 mt-2">التكاليف الإضافية تُخصم من الخزنة كمصروف "تكاليف تصنيع".</p>
             </div>
 
             <Field label="ملاحظات (اختياري)"><input className={input} value={pNotes} onChange={(e) => setPNotes(e.target.value)} /></Field>
