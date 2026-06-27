@@ -2,6 +2,13 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 
+// Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
+function priceForType(product: any, type: string): number {
+  if (type === 'wholesale') return (product.wholesale_price && product.wholesale_price > 0) ? product.wholesale_price : product.sale_price;
+  if (type === 'half') return (product.half_wholesale_price && product.half_wholesale_price > 0) ? product.half_wholesale_price : product.sale_price;
+  return (product.discount_price && product.discount_price > 0) ? product.discount_price : product.sale_price;
+}
+
 // Creates/updates the Supabase Auth account for a cashier via the server
 // endpoint (which holds the service-role key), so a cashier added from the
 // admin panel can log in immediately. Best-effort: in local dev (no /api) or on
@@ -34,7 +41,10 @@ export interface Product {
   purchase_price: number;
   average_purchase_price: number;
   sale_price: number;
-  discount_price?: number; // سعر البيع بعد الخصم (لو موجود يُستخدم في البيع)
+  discount_price?: number; // سعر البيع بعد الخصم (قطاعي)
+  wholesale_price?: number; // سعر الجملة
+  half_wholesale_price?: number; // سعر نص الجملة
+  season?: string; // 'summer' / 'winter'
   stock_quantity: number;
   display_quantity?: number; // الكمية المعروضة في المحل (الباقي في المستودع)
   category_id: string;
@@ -334,6 +344,7 @@ interface CashierStore {
   materials: Material[];
   productionOrders: ProductionOrder[];
   cart: OrderItem[];
+  invoiceType: 'retail' | 'half' | 'wholesale';
   orders: Order[];
   expenses: Expense[];
   financingAccounts: FinancingAccount[];
@@ -366,6 +377,7 @@ interface CashierStore {
   updateQuantity: (productId: string, quantity: number) => void;
   updatePrice: (productId: string, price: number) => void;
   clearCart: () => void;
+  setInvoiceType: (t: 'retail' | 'half' | 'wholesale') => void;
 
   // Operations
   checkout: (
@@ -666,6 +678,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   materials: [],
   productionOrders: [],
   cart: [],
+  invoiceType: 'retail',
   orders: [],
   expenses: [],
   financingAccounts: [],
@@ -1120,7 +1133,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         return { cart: state.cart.map((i) => (i.id === product.id ? { ...i, quantity: next } : i)) };
       }
       const first = Math.min(step, product.stock_quantity);
-      const price = product.discount_price && product.discount_price > 0 ? product.discount_price : product.sale_price;
+      const price = priceForType(product, state.invoiceType);
       return { cart: [...state.cart, { ...product, sale_price: price, quantity: first, returned_quantity: 0 }] };
     }),
 
@@ -1135,7 +1148,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         return { cart: state.cart.map((i) => (i.id === product.id ? { ...i, quantity: next } : i)) };
       }
       const qty = Math.max(min, Math.min(quantity, product.stock_quantity));
-      const price = product.discount_price && product.discount_price > 0 ? product.discount_price : product.sale_price;
+      const price = priceForType(product, state.invoiceType);
       return { cart: [...state.cart, { ...product, sale_price: price, quantity: qty, returned_quantity: 0 }] };
     }),
 
@@ -1155,6 +1168,15 @@ export const useStore = create<CashierStore>((set, get) => ({
     })),
 
   clearCart: () => set({ cart: [] }),
+
+  // Switch pricing tier; re-price items already in the cart.
+  setInvoiceType: (t) => set((state) => ({
+    invoiceType: t,
+    cart: state.cart.map((i) => {
+      const prod = state.products.find((p) => p.id === i.id);
+      return prod ? { ...i, sale_price: priceForType(prod, t) } : i;
+    }),
+  })),
 
   // ── Checkout ───────────────────────────────────────────────
   checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId) => {
@@ -1233,6 +1255,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       set({
         orders: [newOfflineOrder, ...state.orders],
         cart: [],
+        invoiceType: 'retail',
         products: updatedProducts,
         customers: updatedCustomers,
         offlineQueue: updatedQueue
@@ -1397,6 +1420,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       set({
         orders: [newOrder, ...state.orders],
         cart: [],
+        invoiceType: 'retail',
         products: updatedProducts,
         customers: updatedCustomers,
         invoiceCounter: nextCounter,

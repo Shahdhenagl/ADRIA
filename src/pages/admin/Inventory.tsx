@@ -12,6 +12,7 @@ export default function Inventory() {
   const { products, categories, storeSettings, addProduct, updateProduct, orders } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [stockLocation, setStockLocation] = useState<'all' | 'warehouse' | 'display'>('all');
+  const [seasonFilter, setSeasonFilter] = useState<'all' | 'summer' | 'winter'>('all');
   const [warehouseQty, setWarehouseQty] = useState(0); // كمية المستودع عند إضافة منتج جديد
   const [newCategoryName, setNewCategoryName] = useState('');
   const [showCatForm, setShowCatForm] = useState(false);
@@ -61,6 +62,9 @@ export default function Inventory() {
     average_purchase_price: 0,
     sale_price: 0,
     discount_price: 0,
+    wholesale_price: 0,
+    half_wholesale_price: 0,
+    season: 'summer',
     stock_quantity: 0,
     display_quantity: 0,
     category_id: categories[0]?.id || '',
@@ -92,14 +96,18 @@ export default function Inventory() {
     const matchesStock = showLowStock ? qtyOf(p) < 5 : true;
     const matchesHidden = showHidden ? p.is_hidden === true : !p.is_hidden; // showHidden=true → المخفيين فقط
     const matchesCategory = selectedCategory === 'all' || p.category_id === selectedCategory;
-    return matchesSearch && matchesStock && matchesHidden && matchesCategory;
+    const matchesSeason = seasonFilter === 'all' || p.season === seasonFilter;
+    return matchesSearch && matchesStock && matchesHidden && matchesCategory && matchesSeason;
   }).sort((a, b) => new Date((b as any).created_at || 0).getTime() - new Date((a as any).created_at || 0).getTime());
   const hiddenCount = products.filter(p => p.is_hidden).length;
 
-  // الإحصائيات حسب المخزن المختار (الكل / المستودع / المعرض).
-  const totalStockValue = products.reduce((acc, p) => acc + (qtyOf(p) * (p.average_purchase_price || p.purchase_price || 0)), 0);
-  const lowStockCount = products.filter(p => qtyOf(p) < 5).length;
-  const totalItems = products.reduce((acc, p) => acc + qtyOf(p), 0);
+  // الإحصائيات حسب الفلاتر المختارة (الموسم + التصنيف + المخزن).
+  const statsBase = products.filter(p => !p.is_hidden
+    && (selectedCategory === 'all' || p.category_id === selectedCategory)
+    && (seasonFilter === 'all' || p.season === seasonFilter));
+  const totalStockValue = statsBase.reduce((acc, p) => acc + (qtyOf(p) * (p.average_purchase_price || p.purchase_price || 0)), 0);
+  const lowStockCount = statsBase.filter(p => qtyOf(p) < 5).length;
+  const totalItems = statsBase.reduce((acc, p) => acc + qtyOf(p), 0);
 
   const handleToggleHide = (product: Product) => {
     const action = product.is_hidden ? 'إظهار' : 'إخفاء';
@@ -161,6 +169,9 @@ export default function Inventory() {
       average_purchase_price: product.average_purchase_price || product.purchase_price,
       sale_price: product.sale_price,
       discount_price: product.discount_price || 0,
+      wholesale_price: product.wholesale_price || 0,
+      half_wholesale_price: product.half_wholesale_price || 0,
+      season: product.season || 'summer',
       stock_quantity: product.stock_quantity,
       display_quantity: product.display_quantity || 0,
       category_id: product.category_id,
@@ -178,6 +189,9 @@ export default function Inventory() {
       average_purchase_price: 0,
       sale_price: 0,
       discount_price: 0,
+      wholesale_price: 0,
+      half_wholesale_price: 0,
+      season: 'summer',
       stock_quantity: 0,
       display_quantity: 0,
       category_id: categories[0]?.id || '',
@@ -240,6 +254,9 @@ export default function Inventory() {
       average_purchase_price: 0,
       sale_price: 0,
       discount_price: 0,
+      wholesale_price: 0,
+      half_wholesale_price: 0,
+      season: 'summer',
       stock_quantity: 0,
       display_quantity: 0,
       category_id: categories[0]?.id || '',
@@ -372,15 +389,26 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* فلتر المخزن: الكل / المستودع / المحل */}
-      <div className="flex items-center gap-2 bg-white rounded-2xl p-2 shadow-sm border border-slate-100 w-fit mb-2">
-        <span className="text-xs font-bold text-slate-500 px-2">المخزن:</span>
-        {([['all', 'الكل'], ['warehouse', 'المستودع'], ['display', 'المحل']] as const).map(([k, label]) => (
-          <button key={k} onClick={() => setStockLocation(k)}
-            className={`px-4 py-2 rounded-xl text-sm font-bold transition ${stockLocation === k ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:bg-slate-100'}`}>
-            {label}
-          </button>
-        ))}
+      {/* فلاتر: الموسم + المخزن */}
+      <div className="flex items-center gap-3 flex-wrap mb-2">
+        <div className="flex items-center gap-2 bg-white rounded-2xl p-2 shadow-sm border border-slate-100 w-fit">
+          <span className="text-xs font-bold text-slate-500 px-2">الموسم:</span>
+          {([['all', 'الكل'], ['summer', 'صيفي'], ['winter', 'شتوي']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setSeasonFilter(k)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition ${seasonFilter === k ? 'bg-amber-500 text-white shadow' : 'text-slate-600 hover:bg-slate-100'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 bg-white rounded-2xl p-2 shadow-sm border border-slate-100 w-fit">
+          <span className="text-xs font-bold text-slate-500 px-2">المخزن:</span>
+          {([['all', 'الكل'], ['warehouse', 'المستودع'], ['display', 'المحل']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setStockLocation(k)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition ${stockLocation === k ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 hover:bg-slate-100'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ADD PRODUCT MODAL */}
@@ -440,6 +468,25 @@ export default function Inventory() {
                   <label className="block text-sm font-bold text-slate-700 mb-1">سعر البيع بعد الخصم (اختياري)</label>
                   <input type="number" min="0" step="0.01" value={formData.discount_price} onChange={e => setFormData({...formData, discount_price: parseFloat(e.target.value) || 0})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-amber-500" />
                   <p className="text-xs text-slate-400 mt-1">لو دخلت قيمة هنا، هتبقى هي سعر البيع الفعلي على الكاشير. والباركود لو سيبته فاضي هيتولّد تلقائياً.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر نص الجملة <span className="text-[10px] text-slate-400">(اختياري)</span></label>
+                  <input type="number" min="0" step="0.01" value={formData.half_wholesale_price} onChange={e => setFormData({...formData, half_wholesale_price: parseFloat(e.target.value) || 0})} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-sky-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر الجملة <span className="text-[10px] text-slate-400">(اختياري)</span></label>
+                  <input type="number" min="0" step="0.01" value={formData.wholesale_price} onChange={e => setFormData({...formData, wholesale_price: parseFloat(e.target.value) || 0})} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-purple-500" />
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-sm font-bold text-slate-700 mb-1">الموسم</label>
+                  <div className="flex gap-2">
+                    {([['summer','صيفي'],['winter','شتوي']] as const).map(([k,label]) => (
+                      <button type="button" key={k} onClick={() => setFormData({...formData, season: k})}
+                        className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition border ${formData.season === k ? 'bg-indigo-600 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 {!editingProductId ? (
                   <>

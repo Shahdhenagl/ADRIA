@@ -10,7 +10,8 @@ import { openPrintWindow } from '../utils/printWindow';
 
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType } = useStore();
+  const [posSeason, setPosSeason] = useState<'all' | 'summer' | 'winter'>('all');
   const navigate = useNavigate();
 
   const [activeCategory, setActiveCategory] = useState<string>('all');
@@ -902,7 +903,8 @@ export default function POS() {
     (p) => {
       const normalizedName = normalizeArabic(p.name);
       const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => normalizedName.includes(term)) || (p.barcode && p.barcode.includes(searchQuery));
-      return !p.is_hidden && (activeCategory === 'all' || p.category_id === activeCategory) && matchesSearch;
+      const matchesSeason = posSeason === 'all' || p.season === posSeason;
+      return !p.is_hidden && (activeCategory === 'all' || p.category_id === activeCategory) && matchesSearch && matchesSeason;
     }
   );
 
@@ -1762,6 +1764,28 @@ export default function POS() {
             </button>
           </div>
         </header>
+
+        {/* Invoice type + season bar */}
+        <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-gray-100 dark:border-slate-800 flex-wrap">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-400">نوع الفاتورة:</span>
+            {([['retail', 'قطاعي'], ['half', 'نص جملة'], ['wholesale', 'جملة']] as const).map(([k, label]) => (
+              <button key={k} onClick={() => setInvoiceType(k)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${invoiceType === k ? 'bg-purple-600 text-white shadow' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-bold text-slate-400">الموسم:</span>
+            {([['all', 'الكل'], ['summer', 'صيفي'], ['winter', 'شتوي']] as const).map(([k, label]) => (
+              <button key={k} onClick={() => setPosSeason(k)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${posSeason === k ? 'bg-amber-500 text-white shadow' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {/* Categories Tabs */}
         <div className="relative group bg-slate-50/50 dark:bg-slate-800/20 border-b border-gray-100 dark:border-slate-800">
