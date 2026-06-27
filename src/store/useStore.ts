@@ -300,7 +300,7 @@ interface CashierStore {
   maintenanceAppointments: MaintenanceAppointment[];
 
   // Data loading
-  loadAll: () => Promise<void>;
+  loadAll: (silent?: boolean) => Promise<void>;
   loadSettingsOnly: () => Promise<void>;
   loadProductsOnly: () => Promise<void>;
 
@@ -635,7 +635,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     set({ isAdminAuthenticated: true });
     // Reload data now that we have an authenticated session (under RLS, the
     // initial anon load returns nothing).
-    await get().loadAll();
+    await get().loadAll(true);
     return true;
   },
 
@@ -658,7 +658,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     sessionStorage.setItem('active_cashier_name', cashier.name);
     set({ isPOSAuthenticated: true, activeCashier: cashier });
     // Reload data now that we have an authenticated session.
-    await get().loadAll();
+    await get().loadAll(true);
     return true;
   },
 
@@ -689,8 +689,11 @@ export const useStore = create<CashierStore>((set, get) => ({
   },
 
   // ── Load all data from Supabase ────────────────────────────
-  loadAll: async () => {
-    set({ isLoading: true, dbError: null });
+  loadAll: async (silent = false) => {
+    // silent = reload data in the background without toggling the full-screen
+    // loader (which would unmount the Router and drop a pending navigate, e.g.
+    // right after login). Used by login()/loginPOS().
+    if (!silent) set({ isLoading: true, dbError: null });
     try {
       const [settingsRes, categoriesRes, productsRes, customersRes, ordersRes, counterRes, cashiersRes, employeesRes, employeeTransactionsRes, employeeLeavesRes] =
         await Promise.all([
