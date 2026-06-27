@@ -150,6 +150,43 @@ export default function POS() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [showReturnsModal, setShowReturnsModal] = useState(false);
   const [returnSearchQuery, setReturnSearchQuery] = useState('');
+  const [showHistory, setShowHistory] = useState(false);
+  const [historySearch, setHistorySearch] = useState('');
+
+  // Reprint a past order on the thermal receipt by reconstructing its details.
+  const reprintOrder = (order: any) => {
+    const items = order.items || [];
+    const details = {
+      cart: items,
+      subtotal: items.reduce((s: number, i: any) => s + (i.sale_price * i.quantity), 0),
+      discount: order.discount_amount || 0,
+      tax: 0,
+      total: order.total,
+      paidAmount: order.paid_amount,
+      splitPayments: { cash: order.paid_cash || 0, visa: order.paid_visa || 0, wallet: order.paid_wallet || 0, instapay: order.paid_instapay || 0 },
+      customerName: order.customer?.name || '',
+      customerPhone: order.customer?.phone || '',
+      customId: order.customer?.custom_id || order.customer?.card_number || '',
+      customerId: order.customer?.id || '',
+      paymentMethod: order.payment_method,
+      totalDebt: Math.max(0, (order.total || 0) - (order.paid_amount || 0)),
+      couponCode: order.coupon_code,
+      couponDiscountAmount: order.discount_amount || 0,
+    };
+    printInvoice(order.id, details);
+  };
+
+  // Send a past invoice to the customer on WhatsApp (public link + summary).
+  const sendOrderWhatsApp = (order: any) => {
+    const invoiceLink = `${window.location.origin}/view-invoice/${order.id}`;
+    const itemsText = (order.items || []).map((i: any) => `• ${i.name} (${formatQty(i.quantity, i.unit)}) - ${(i.sale_price * i.quantity).toFixed(2)} ${storeSettings.currency}`).join('\n');
+    const message = `*فاتورة من ${storeSettings.name}*\n\n*رقم الفاتورة:* #${order.id}\n*الإجمالي:* ${(order.total || 0).toFixed(2)} ${storeSettings.currency}\n\n*عرض الفاتورة بالتفاصيل:*\n${invoiceLink}\n\n*تفاصيل الطلب:*\n${itemsText}\n\n*شكراً لتعاملكم معنا!*`;
+    let phone = (order.customer?.phone || '').replace(/\D/g, '');
+    const code = storeSettings.whatsappCountryCode || '2';
+    if (phone.startsWith('0')) phone = code + phone.substring(1);
+    else if (phone && !phone.startsWith(code)) phone = code + phone;
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
+  };
   const [activeReturnOrder, setActiveReturnOrder] = useState<any>(null);
   const [pendingReturns, setPendingReturns] = useState<Record<string, { returnQty: number, refundAmount: number, returnType?: 'debt' | 'cash' }>>({});
   // Amount of the return value applied to the customer's debt. null = automatic
@@ -1248,6 +1285,55 @@ export default function POS() {
         </div>
       )}
 
+      {showHistory && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3" onClick={() => setShowHistory(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-indigo-600 text-white px-5 py-4 flex items-center justify-between">
+              <h2 className="text-lg font-black flex items-center gap-2"><FileText size={22} /> الفواتير السابقة</h2>
+              <button onClick={() => setShowHistory(false)} className="hover:bg-white/20 p-1.5 rounded-lg"><X size={22} /></button>
+            </div>
+            <div className="p-4 border-b border-slate-100 dark:border-slate-700">
+              <div className="relative">
+                <Search className="absolute right-3 top-3 text-slate-400" size={18} />
+                <input
+                  autoFocus
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  placeholder="ابحث برقم الفاتورة أو اسم العميل أو رقم التليفون..."
+                  className="w-full bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl py-2.5 pr-10 pl-3 text-sm font-semibold focus:ring-2 focus:ring-indigo-500 outline-none"
+                />
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+              {(() => {
+                const q = historySearch.trim().toLowerCase();
+                const list = orders
+                  .filter((o) => !o.is_deleted && o.type !== 'payment')
+                  .filter((o) => !q || o.id.toLowerCase().includes(q) || (o.customer?.name || '').toLowerCase().includes(q) || (o.customer?.phone || '').includes(q))
+                  .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                  .slice(0, 100);
+                if (list.length === 0) return <p className="text-center text-slate-400 py-10 font-bold">لا توجد فواتير</p>;
+                return list.map((o) => (
+                  <div key={o.id} className="bg-slate-50 dark:bg-slate-900/40 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div>
+                        <p className="font-black text-slate-800 dark:text-slate-100 text-sm">#{o.id} · {o.customer?.name || 'عميل نقدي'}</p>
+                        <p className="text-[11px] text-slate-500">{new Date(o.date).toLocaleString('ar-EG')} · الإجمالي: <b>{(o.total || 0).toFixed(2)} {storeSettings.currency}</b>{(o.total - o.paid_amount) > 0.5 ? ` · باقي: ${(o.total - o.paid_amount).toFixed(2)}` : ''}</p>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => window.open(`/view-invoice/${o.id}`, '_blank')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300">عرض</button>
+                        <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
+                        <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
+                      </div>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
       {showReturnsModal && (
         <div className="fixed inset-0 z-[150] bg-black/50 backdrop-blur-sm flex items-start md:items-center justify-center p-4 pt-8 md:pt-4 pb-20 md:pb-4">
           <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-700">
@@ -1555,7 +1641,10 @@ export default function POS() {
               </div>
             </div>
 
-            {/* Left: Returns Button */}
+            {/* Left: Invoices history + Returns Button */}
+            <button onClick={() => setShowHistory(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-2xl font-bold transition border border-indigo-100 dark:border-indigo-900/30 whitespace-nowrap shadow-sm shrink-0">
+              <FileText size={18} /> <span className="text-sm">الفواتير</span>
+            </button>
             <button onClick={() => setShowReturnsModal(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-2xl font-bold transition border border-red-100 dark:border-red-900/30 whitespace-nowrap shadow-sm shrink-0">
               <RefreshCcw size={18} /> <span className="text-sm">مرتجع</span>
             </button>

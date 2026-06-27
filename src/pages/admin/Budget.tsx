@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { allocatePayment } from '../../utils/paymentAllocator';
@@ -22,8 +22,16 @@ interface UnifiedTransaction {
 }
 
 export default function Budget() {
-  const { orders, expenses, purchaseInvoices, employeeTransactions, storeSettings } = useStore();
-  
+  const { orders, expenses, purchaseInvoices, employeeTransactions, storeSettings, productionOrders, loadManufacturing } = useStore();
+
+  useEffect(() => { loadManufacturing(); }, []);
+
+  // Potential profit from all manufacturing runs = Σ (sale price − piece cost) × qty.
+  const manufacturingProfit = useMemo(
+    () => productionOrders.reduce((s, p) => s + (((Number(p.sale_price) || 0) - (Number(p.cost_per_piece) || 0)) * (Number(p.quantity) || 0)), 0),
+    [productionOrders]
+  );
+
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'month' | 'custom_month' | 'year' | 'custom_year' | 'custom'>('month');
   const [customDate, setCustomDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [customMonth, setCustomMonth] = useState<string>(new Date().toISOString().slice(0, 7));
@@ -667,8 +675,8 @@ export default function Budget() {
               <TrendingUp size={24} />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-500">صافي ربح الخدمات</p>
-              <h3 className="text-2xl font-black text-indigo-600 dark:text-indigo-400 mt-1">{stats.serviceProfit.toFixed(2)}</h3>
+              <p className="text-sm font-bold text-slate-500">صافي الربح من التصنيع</p>
+              <h3 className="text-2xl font-black text-indigo-600 dark:text-indigo-400 mt-1">{manufacturingProfit.toFixed(2)}</h3>
             </div>
           </div>
         </div>
