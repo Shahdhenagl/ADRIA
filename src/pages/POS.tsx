@@ -61,6 +61,10 @@ export default function POS() {
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const openEditOrder = (o: any) => { setEditingOrder(o); setShowHistory(false); };
 
+  // تنقّل بالكيبورد (Enter) بين الحقول وقت الزحمة من غير ماوس
+  const focusById = (id: string) => { setTimeout(() => { const el = document.getElementById(id) as HTMLElement | null; el?.focus(); }, 0); };
+  const keyNext = (e: React.KeyboardEvent, nextId: string) => { if (e.key === 'Enter') { e.preventDefault(); focusById(nextId); } };
+
   const deleteOrderWithOtp = async (o: any) => {
     const reason = prompt('سبب حذف الفاتورة؟', 'حذف من الكاشير');
     if (reason === null) return;
@@ -1266,13 +1270,15 @@ export default function POS() {
                     <Printer size={20} /> إعادة طباعة
                   </button>
                   <button
+                    autoFocus
                     onClick={() => {
                       setShowSuccessModal(false);
                       clearCart();
+                      focusById('pos-cust-name');
                     }}
-                    className="flex-1 bg-slate-900 hover:bg-black text-white py-3.5 rounded-2xl font-bold transition-all"
+                    className="flex-1 bg-slate-900 hover:bg-black text-white py-3.5 rounded-2xl font-bold transition-all focus:ring-4 focus:ring-slate-400"
                   >
-                    إغلاق
+                    إغلاق وفاتورة جديدة
                   </button>
                 </div>
               </div>
@@ -2114,7 +2120,9 @@ export default function POS() {
             <div className="flex-1 relative group">
               <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-indigo-400 group-focus-within:scale-110 transition-transform"><CreditCard size={14} /></span>
               <input
+                id="pos-cust-card"
                 type="text" dir="ltr" value={customerId} onChange={handleIdChange}
+                onKeyDown={(e) => keyNext(e, 'pos-salesperson')}
                 className="w-full bg-white/95 text-indigo-600 dark:text-indigo-400 placeholder-slate-400 border-0 py-2 pr-8 pl-2 rounded-xl focus:ring-2 focus:ring-white focus:outline-none transition font-black shadow-inner text-xs h-full"
                 placeholder="رقم الكارت"
               />
@@ -2122,7 +2130,9 @@ export default function POS() {
             <div className="flex-1 relative group">
               <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:scale-110 transition-transform"><Smartphone size={14} /></span>
               <input
+                id="pos-cust-phone"
                 type="text" dir="ltr" value={customerPhone} onChange={handlePhoneChange}
+                onKeyDown={(e) => keyNext(e, 'pos-cust-card')}
                 className="w-full bg-white/95 text-slate-800 placeholder-slate-400 border-0 py-2 pr-8 pl-2 rounded-xl focus:ring-2 focus:ring-white focus:outline-none transition font-medium shadow-inner text-xs h-full"
                 placeholder="الموبايل"
               />
@@ -2130,9 +2140,11 @@ export default function POS() {
             <div className="flex-[1.2] relative group">
               <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:scale-110 transition-transform"><ShoppingCart size={14} /></span>
               <input
+                id="pos-cust-name"
                 type="text" value={customerName}
                 onChange={e => { setCustomerName(e.target.value); setShowCustomerSuggestions(true); }}
                 onFocus={() => setShowCustomerSuggestions(true)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); setShowCustomerSuggestions(false); focusById('pos-cust-phone'); } }}
                 className="w-full bg-white/95 text-slate-800 placeholder-slate-400 border-0 py-2 pr-8 pl-2 rounded-xl focus:ring-2 focus:ring-white focus:outline-none transition font-medium shadow-inner text-xs h-full"
                 placeholder="الاسم"
               />
@@ -2236,8 +2248,10 @@ export default function POS() {
           <div className="mb-3">
             <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 block mb-1">👤 الموظف البائع (لحساب مبيعاته وعمولته)</label>
             <select
+              id="pos-salesperson"
               value={salesperson?.id || ''}
               onChange={(e) => { const emp = employees.find((x) => x.id === e.target.value); setSalesperson(emp ? { id: emp.id, name: emp.name } : null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusById('pos-checkout-btn'); } }}
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none"
             >
               <option value="">— بدون تحديد —</option>
@@ -2318,6 +2332,7 @@ export default function POS() {
 
           <div className="flex gap-3">
             <button
+              id="pos-checkout-btn"
               onClick={() => { setShouldPrint(false); setShowCheckoutModal(true); }}
               disabled={cart.length === 0 || pricesHidden}
               style={cart.length > 0 && !pricesHidden ? { background: storeSettings.themeColor } : {}}
@@ -2381,7 +2396,9 @@ export default function POS() {
                       {p.icon} {p.label}
                     </label>
                     <input
+                      autoFocus={p.id === 'cash'}
                       type="number" dir="ltr" value={p.val} onChange={(e) => p.set(e.target.value)} placeholder="0.00"
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCheckoutClick(shouldPrint); } }}
                       className="w-full bg-slate-50 dark:bg-slate-900 border-2 border-transparent focus:border-indigo-500 py-3 px-4 rounded-2xl focus:outline-none transition-all font-black text-lg text-left shadow-inner"
                     />
                   </div>
