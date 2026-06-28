@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import { useStore } from '../../store/useStore';
 import { Scissors, Plus, Trash2, Package, Factory, Warehouse } from 'lucide-react';
 import { generateBarcode, printBarcodeLabels } from '../../utils/printBarcodeLabels';
@@ -22,8 +22,9 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 export default function Manufacturing() {
   const {
     materials, productionOrders, products, storeSettings, suppliers,
-    loadManufacturing, addMaterial, deleteMaterial, addProductionOrder,
+    loadManufacturing, addMaterial, deleteMaterial, addProductionOrder, transferFromFactory,
   } = useStore();
+  const [transfer, setTransfer] = useState<{ id: string; display: string; warehouse: string } | null>(null);
   const cur = storeSettings.currency;
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none';
   const selectCls = input + ' cursor-pointer';
@@ -328,19 +329,52 @@ export default function Manufacturing() {
           <h2 className="text-base font-black text-purple-800 dark:text-purple-300 mb-4 flex items-center gap-2"><Warehouse size={18} /> مخزن المصنع (قطع محتجزة) — قيمته {factoryValue.toFixed(2)} {cur}</h2>
           <div className="overflow-x-auto">
             <table className="w-full text-right text-sm">
-              <thead><tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="p-2">المنتج</th><th className="p-2">الكود</th><th className="p-2">بالمصنع</th><th className="p-2">تكلفة القطعة</th><th className="p-2">القيمة</th></tr></thead>
+              <thead><tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="p-2">المنتج</th><th className="p-2">الكود</th><th className="p-2">بالمصنع</th><th className="p-2">تكلفة القطعة</th><th className="p-2">القيمة</th><th className="p-2">تحويل للبيع</th></tr></thead>
               <tbody>
                 {factoryItems.map((p) => {
                   const c = Number(p.average_purchase_price ?? p.purchase_price) || 0;
                   const q = Number(p.factory_quantity) || 0;
+                  const open = transfer?.id === p.id;
                   return (
-                    <tr key={p.id} className="border-b border-slate-100 dark:border-slate-700/50">
-                      <td className="p-2 font-bold text-slate-800 dark:text-slate-100">{p.name}</td>
-                      <td className="p-2 font-mono text-xs">{p.barcode || '-'}</td>
-                      <td className="p-2 font-black text-purple-700">{q}</td>
-                      <td className="p-2">{c.toFixed(2)} {cur}</td>
-                      <td className="p-2 font-bold">{(q * c).toFixed(2)} {cur}</td>
-                    </tr>
+                    <Fragment key={p.id}>
+                      <tr className="border-b border-slate-100 dark:border-slate-700/50">
+                        <td className="p-2 font-bold text-slate-800 dark:text-slate-100">{p.name}</td>
+                        <td className="p-2 font-mono text-xs">{p.barcode || '-'}</td>
+                        <td className="p-2 font-black text-purple-700">{q}</td>
+                        <td className="p-2">{c.toFixed(2)} {cur}</td>
+                        <td className="p-2 font-bold">{(q * c).toFixed(2)} {cur}</td>
+                        <td className="p-2">
+                          <button onClick={() => setTransfer(open ? null : { id: p.id, display: '', warehouse: String(q) })} className="text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white px-3 py-1.5 rounded-lg">
+                            {open ? 'إغلاق' : 'تحويل'}
+                          </button>
+                        </td>
+                      </tr>
+                      {open && (
+                        <tr className="bg-purple-50/50 dark:bg-purple-900/10">
+                          <td colSpan={6} className="p-3">
+                            <div className="flex flex-wrap items-end gap-2">
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 mb-1">للعرض</label>
+                                <input className={input + ' w-24'} type="number" min="0" placeholder="0" value={transfer!.display} onChange={(e) => setTransfer((t) => t && { ...t, display: e.target.value })} />
+                              </div>
+                              <div>
+                                <label className="block text-[11px] font-bold text-slate-500 mb-1">للمستودع</label>
+                                <input className={input + ' w-24'} type="number" min="0" placeholder="0" value={transfer!.warehouse} onChange={(e) => setTransfer((t) => t && { ...t, warehouse: e.target.value })} />
+                              </div>
+                              <span className="text-xs text-slate-500 pb-2">المتاح بالمصنع: <b className="text-purple-700">{q}</b></span>
+                              <button
+                                onClick={async () => {
+                                  const ok = await transferFromFactory(p.id, Number(transfer!.display) || 0, Number(transfer!.warehouse) || 0);
+                                  if (ok) { setTransfer(null); alert('تم تحويل القطع للبيع ✅'); }
+                                }}
+                                className="mr-auto bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold px-4 py-2 rounded-lg">
+                                تأكيد التحويل
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   );
                 })}
               </tbody>

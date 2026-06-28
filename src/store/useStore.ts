@@ -452,6 +452,7 @@ interface CashierStore {
   addMaterial: (m: Omit<Material, 'id' | 'created_at'>, payment?: { supplierId?: string; split?: { cash: number; visa: number; wallet: number; instapay: number } }) => Promise<void>;
   updateMaterial: (id: string, m: Partial<Material>) => Promise<void>;
   deleteMaterial: (id: string) => Promise<void>;
+  transferFromFactory: (productId: string, toDisplay: number, toWarehouse: number) => Promise<boolean>;
   addProductionOrder: (input: {
     product_name: string;
     color?: string;
@@ -2239,6 +2240,31 @@ export const useStore = create<CashierStore>((set, get) => ({
   deleteMaterial: async (id) => {
     await supabase.from('materials').delete().eq('id', id);
     set((s) => ({ materials: s.materials.filter((x) => x.id !== id) }));
+  },
+
+  // تحويل قطع من مخزن المصنع للبيع (عرض/مستودع) → تتاح في الكاشير.
+  transferFromFactory: async (productId, toDisplay, toWarehouse) => {
+    const state = get();
+    const p = state.products.find((x) => x.id === productId);
+    if (!p) return false;
+    const factory = Number(p.factory_quantity) || 0;
+    const dis = Math.max(0, Number(toDisplay) || 0);
+    const wh = Math.max(0, Number(toWarehouse) || 0);
+    const move = dis + wh;
+    if (move <= 0) { alert('أدخل كمية للتحويل'); return false; }
+    if (move > factory + 0.001) { alert('الكمية المطلوبة أكبر من المتاح في مخزن المصنع'); return false; }
+    const newFactory = factory - move;
+    const newStock = (Number(p.stock_quantity) || 0) + move;
+    const newDisplay = (Number(p.display_quantity) || 0) + dis;
+    const { error } = await supabase.from('products').update({
+      factory_quantity: newFactory,
+      stock_quantity: newStock,
+      display_quantity: newDisplay,
+    }).eq('id', productId);
+    if (error) { alert('فشل التحويل: ' + error.message); return false; }
+    set((s) => ({ products: s.products.map((x) => (x.id === productId ? { ...x, factory_quantity: newFactory, stock_quantity: newStock, display_quantity: newDisplay } : x)) }));
+    new BroadcastChannel('cashier-sync').postMessage('sync_products');
+    return true;
   },
 
   addProductionOrder: async (input) => {
