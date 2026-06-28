@@ -93,7 +93,9 @@ export default async function handler(req, res) {
     // Optional ?date=YYYY-MM-DD to (re)send the report for a specific Cairo day
     // (used for manual testing / catching up a missed day). Defaults to "now".
     const dateParam = (req.query && (req.query.date || req.query.day)) || (req.body && req.body.date);
-    const today = dateParam ? new Date(`${dateParam}T12:00:00+03:00`) : new Date();
+    // بدون date: نطرح ساعتين من وقت التشغيل حتى لو اشتغل الكرون متأخراً (نافذة الـ
+    // ساعة المرنة في Hobby) يظل التقرير على اليوم الصحيح الذي انتهى، لا اليوم الجديد الفارغ.
+    const today = dateParam ? new Date(`${dateParam}T12:00:00+03:00`) : new Date(Date.now() - 2 * 60 * 60 * 1000);
     const sent = [];
 
     const dayRange = cairoDayRange(today);
