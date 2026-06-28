@@ -60,6 +60,28 @@ export default function POS() {
   const [historyToday, setHistoryToday] = useState(true);
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const openEditOrder = (o: any) => { setEditingOrder(o); setShowHistory(false); };
+
+  const deleteOrderWithOtp = async (o: any) => {
+    const reason = prompt('سبب حذف الفاتورة؟', 'حذف من الكاشير');
+    if (reason === null) return;
+    try {
+      const { supabase } = await import('../lib/supabase');
+      const { data } = await supabase.auth.getSession();
+      const tk = data.session?.access_token;
+      const headers = { 'Content-Type': 'application/json', ...(tk ? { Authorization: `Bearer ${tk}` } : {}) };
+      const details = `حذف فاتورة #${o.id}\nالعميل: ${o.customer?.name || 'نقدي'}\nالإجمالي: ${(o.total || 0).toFixed(2)} ${storeSettings.currency}\nالسبب: ${reason || '-'}`;
+      const r1 = await fetch('/api/wholesale-otp', { method: 'POST', headers, body: JSON.stringify({ action: 'request', purpose: 'invoice', details }) });
+      const j1 = await r1.json();
+      if (!j1.ok) { alert('تعذّر إرسال رمز التأكيد: ' + (j1.error || '')); return; }
+      const code = prompt('تم إرسال رمز التأكيد للمدير على تليجرام.\nأدخل الرمز لإتمام الحذف:');
+      if (!code) return;
+      const r2 = await fetch('/api/wholesale-otp', { method: 'POST', headers, body: JSON.stringify({ action: 'verify', purpose: 'invoice', code: code.trim() }) });
+      const j2 = await r2.json();
+      if (!j2.ok) { alert(j2.error || 'رمز غير صحيح'); return; }
+      const ok = await deleteOrder(o.id, reason || 'حذف من الكاشير');
+      if (ok) alert('تم حذف الفاتورة وإرجاع الكمية للمخزون ✅');
+    } catch { alert('تعذّر تنفيذ الحذف'); }
+  };
   // OTP gate for wholesale / half-wholesale: prices hidden + checkout blocked until verified.
   const [wholesaleUnlocked, setWholesaleUnlocked] = useState(false);
   const [otpInput, setOtpInput] = useState('');
@@ -1586,7 +1608,7 @@ export default function POS() {
                         <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
                         <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
                         <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><Edit2 size={14} /> تعديل</button>
-                        <button onClick={async () => { const reason = prompt('سبب حذف الفاتورة؟', 'حذف من الكاشير'); if (reason === null) return; const ok = await deleteOrder(o.id, reason || 'حذف من الكاشير'); if (ok) alert('تم حذف الفاتورة وإرجاع الكمية للمخزون ✅'); }} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
+                        <button onClick={() => deleteOrderWithOtp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
                       </div>
                     </div>
                   </div>
@@ -1598,7 +1620,7 @@ export default function POS() {
       )}
 
       {editingOrder && (
-        <EditInvoiceModal invoice={editingOrder} onClose={() => setEditingOrder(null)} />
+        <EditInvoiceModal invoice={editingOrder} onClose={() => setEditingOrder(null)} requireOtp />
       )}
 
       {showReturnsModal && (

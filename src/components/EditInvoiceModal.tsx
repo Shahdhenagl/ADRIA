@@ -6,9 +6,10 @@ import type { Order, OrderItem, Product } from '../store/useStore';
 interface EditInvoiceModalProps {
   invoice: Order;
   onClose: () => void;
+  requireOtp?: boolean; // يطلب رمز تأكيد من المدير قبل الحفظ (للكاشير)
 }
 
-export function EditInvoiceModal({ invoice, onClose }: EditInvoiceModalProps) {
+export function EditInvoiceModal({ invoice, onClose, requireOtp }: EditInvoiceModalProps) {
   const { products, editOrder, storeSettings } = useStore();
   
   const [cart, setCart] = useState<OrderItem[]>([...invoice.items]);
@@ -85,6 +86,25 @@ export function EditInvoiceModal({ invoice, onClose }: EditInvoiceModalProps) {
     if (cart.length === 0) {
       setError('لا يمكن حفظ فاتورة بدون منتجات. قم بحذف الفاتورة بدلاً من ذلك.');
       return;
+    }
+
+    // تأكيد OTP من المدير (للكاشير) قبل الحفظ
+    if (requireOtp) {
+      try {
+        const { supabase } = await import('../lib/supabase');
+        const { data } = await supabase.auth.getSession();
+        const tk = data.session?.access_token;
+        const headers = { 'Content-Type': 'application/json', ...(tk ? { Authorization: `Bearer ${tk}` } : {}) };
+        const details = `تعديل فاتورة #${invoice.id}\nالإجمالي الجديد: ${total.toFixed(2)} ${storeSettings.currency}\nالسبب: ${reason}`;
+        const r1 = await fetch('/api/wholesale-otp', { method: 'POST', headers, body: JSON.stringify({ action: 'request', purpose: 'invoice', details }) });
+        const j1 = await r1.json();
+        if (!j1.ok) { setError('تعذّر إرسال رمز التأكيد: ' + (j1.error || '')); return; }
+        const code = window.prompt('تم إرسال رمز التأكيد للمدير على تليجرام.\nأدخل الرمز لإتمام التعديل:');
+        if (!code) return;
+        const r2 = await fetch('/api/wholesale-otp', { method: 'POST', headers, body: JSON.stringify({ action: 'verify', purpose: 'invoice', code: code.trim() }) });
+        const j2 = await r2.json();
+        if (!j2.ok) { setError(j2.error || 'رمز غير صحيح'); return; }
+      } catch { setError('تعذّر التحقق من الرمز'); return; }
     }
 
     setIsSubmitting(true);
