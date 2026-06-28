@@ -1583,15 +1583,16 @@ export default function POS() {
                     <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 text-center border border-red-100 dark:border-red-800"><div className="text-[11px] font-bold text-red-700 dark:text-red-400">إجمالي الخارج</div><div className="text-lg font-black text-red-700 dark:text-red-400">{dayBudget.totalOut.toFixed(2)}</div></div>
                   </div>
                   <div>
-                    <div className="text-xs font-bold text-slate-500 mb-2">التفصيل حسب وسيلة الدفع (صافي اليوم):</div>
+                    <div className="text-xs font-bold text-slate-500 mb-2">الرصيد الحالي الفعلي في الخزنة (بالتقسيمة):</div>
                     <div className="grid grid-cols-2 gap-3">
                       {([['cash', 'كاش'], ['visa', 'فيزا'], ['instapay', 'انستا باي'], ['wallet', 'محفظة']] as const).map(([k, label]) => {
+                        const bal = (dayBudget.shopAvail?.[k]) ?? (dayBudget.dayIn[k] - dayBudget.dayOut[k]);
                         const net = dayBudget.dayIn[k] - dayBudget.dayOut[k];
                         return (
                           <div key={k} className="bg-slate-50 dark:bg-slate-900/40 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
                             <div className="text-[11px] font-bold text-slate-500">{label}</div>
-                            <div className="text-lg font-black text-slate-800 dark:text-slate-100">{net.toFixed(2)} {storeSettings.currency}</div>
-                            <div className="text-[10px] text-slate-400">داخل {dayBudget.dayIn[k].toFixed(2)} · خارج {dayBudget.dayOut[k].toFixed(2)}</div>
+                            <div className={`text-lg font-black ${bal < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100'}`}>{bal.toFixed(2)} {storeSettings.currency}</div>
+                            <div className="text-[10px] text-slate-400">صافي اليوم: {net.toFixed(2)} (داخل {dayBudget.dayIn[k].toFixed(2)} · خارج {dayBudget.dayOut[k].toFixed(2)})</div>
                           </div>
                         );
                       })}
