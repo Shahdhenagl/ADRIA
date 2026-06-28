@@ -265,9 +265,23 @@ export function EditInvoiceModal({ invoice, onClose }: EditInvoiceModalProps) {
 
             <div className="bg-slate-50 rounded-2xl p-6 flex flex-col justify-center space-y-4 border border-slate-100">
               <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+                <span className="text-slate-600 font-medium">الإجمالي القديم:</span>
+                <span className="text-lg font-bold text-slate-500">{(invoice.total || 0).toLocaleString()} {storeSettings.currency}</span>
+              </div>
+              <div className="flex justify-between items-center pb-4 border-b border-slate-200">
                 <span className="text-slate-600 font-medium">الإجمالي الجديد:</span>
                 <span className="text-2xl font-black text-slate-800">{total.toLocaleString()} {storeSettings.currency}</span>
               </div>
+              {(() => {
+                const diff = total - (invoice.total || 0);
+                if (Math.abs(diff) < 0.01) return null;
+                return (
+                  <div className={`flex justify-between items-center pb-4 border-b border-slate-200 ${diff > 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                    <span className="font-bold">{diff > 0 ? '⬆️ تاخد من العميل فرق:' : '⬇️ ترجّع للعميل فرق:'}</span>
+                    <span className="text-xl font-black">{Math.abs(diff).toLocaleString()} {storeSettings.currency}</span>
+                  </div>
+                );
+              })()}
               <div className="flex justify-between items-center pb-4 border-b border-slate-200">
                 <span className="text-slate-600 font-medium">إجمالي المدفوع:</span>
                 <span className="text-xl font-bold text-emerald-600">{paidAmount.toLocaleString()} {storeSettings.currency}</span>

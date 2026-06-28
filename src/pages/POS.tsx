@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, type Product } from '../store/useStore';
+import { EditInvoiceModal } from '../components/EditInvoiceModal';
 import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
@@ -10,8 +11,11 @@ import { openPrintWindow } from '../utils/printWindow';
 
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder } = useStore();
   const [posSeason, setPosSeason] = useState<'all' | 'summer' | 'winter'>('all');
+  const [historyToday, setHistoryToday] = useState(true);
+  const [editingOrder, setEditingOrder] = useState<any>(null);
+  const openEditOrder = (o: any) => { setEditingOrder(o); setShowHistory(false); };
   // OTP gate for wholesale / half-wholesale: prices hidden + checkout blocked until verified.
   const [wholesaleUnlocked, setWholesaleUnlocked] = useState(false);
   const [otpInput, setOtpInput] = useState('');
@@ -1454,10 +1458,14 @@ export default function POS() {
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-3" onClick={() => setShowHistory(false)}>
           <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="bg-indigo-600 text-white px-5 py-4 flex items-center justify-between">
-              <h2 className="text-lg font-black flex items-center gap-2"><FileText size={22} /> الفواتير السابقة</h2>
+              <h2 className="text-lg font-black flex items-center gap-2"><FileText size={22} /> {historyToday ? 'فواتير اليوم' : 'كل الفواتير'}</h2>
               <button onClick={() => setShowHistory(false)} className="hover:bg-white/20 p-1.5 rounded-lg"><X size={22} /></button>
             </div>
-            <div className="p-4 border-b border-slate-100 dark:border-slate-700">
+            <div className="p-4 border-b border-slate-100 dark:border-slate-700 space-y-3">
+              <div className="flex gap-2">
+                <button onClick={() => setHistoryToday(true)} className={`flex-1 py-2 rounded-xl text-sm font-black transition ${historyToday ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>اليوم</button>
+                <button onClick={() => setHistoryToday(false)} className={`flex-1 py-2 rounded-xl text-sm font-black transition ${!historyToday ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>الكل</button>
+              </div>
               <div className="relative">
                 <Search className="absolute right-3 top-3 text-slate-400" size={18} />
                 <input
@@ -1472,8 +1480,10 @@ export default function POS() {
             <div className="flex-1 overflow-y-auto p-3 space-y-2">
               {(() => {
                 const q = historySearch.trim().toLowerCase();
+                const todayStr = new Date().toDateString();
                 const list = orders
                   .filter((o) => !o.is_deleted && o.type !== 'payment')
+                  .filter((o) => !historyToday || new Date(o.date).toDateString() === todayStr)
                   .filter((o) => !q || o.id.toLowerCase().includes(q) || (o.customer?.name || '').toLowerCase().includes(q) || (o.customer?.phone || '').includes(q))
                   .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                   .slice(0, 100);
@@ -1489,6 +1499,8 @@ export default function POS() {
                         <button onClick={() => window.open(`/view-invoice/${o.id}`, '_blank')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300">عرض</button>
                         <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
                         <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
+                        <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><Edit2 size={14} /> تعديل</button>
+                        <button onClick={async () => { const reason = prompt('سبب حذف الفاتورة؟', 'حذف من الكاشير'); if (reason === null) return; const ok = await deleteOrder(o.id, reason || 'حذف من الكاشير'); if (ok) alert('تم حذف الفاتورة وإرجاع الكمية للمخزون ✅'); }} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
                       </div>
                     </div>
                   </div>
@@ -1497,6 +1509,10 @@ export default function POS() {
             </div>
           </div>
         </div>
+      )}
+
+      {editingOrder && (
+        <EditInvoiceModal invoice={editingOrder} onClose={() => setEditingOrder(null)} />
       )}
 
       {showReturnsModal && (
