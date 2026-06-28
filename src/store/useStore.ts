@@ -424,6 +424,7 @@ interface CashierStore {
   // Expenses
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number }) => Promise<boolean>;
+  recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
   updateExpense: (id: string, expense: Partial<Expense>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
 
@@ -3168,6 +3169,57 @@ setupRealtime: () => {
       date: new Date().toISOString(),
     });
     return true;
+  },
+
+  // معاملة شريك (إيداع/سحب). على خزنة المحل تنعكس في الخزنة كمصروف/إيراد؛ على الخزنة
+  // الأساسية تُسجَّل في دفتر الشركاء فقط. لا تُحذف.
+  recordPartnerTransaction: async (tx) => {
+    const amount = Math.abs(Number(tx.amount) || 0);
+    if (amount <= 0) return false;
+    const method = tx.method || 'cash';
+    const split = {
+      cash: method === 'cash' ? amount : 0,
+      visa: method === 'visa' ? amount : 0,
+      wallet: method === 'wallet' ? amount : 0,
+      instapay: method === 'instapay' ? amount : 0,
+    };
+    const { data, error } = await supabase.from('partner_transactions').insert({
+      partner_id: tx.partner_id,
+      partner_name: tx.partner_name,
+      type: tx.type,
+      amount,
+      treasury: tx.treasury,
+      method,
+      note: tx.note || null,
+    }).select().single();
+    if (error) { alert('فشل حفظ معاملة الشريك: ' + error.message); return false; }
+
+    // انعكاس على خزنة المحل فقط
+    if (tx.treasury === 'shop') {
+      if (tx.type === 'withdraw') {
+        await get().addExpense({
+          category: 'سحب شريك', amount, note: `سحب الشريك: ${tx.partner_name}`,
+          payment_method: method, paid_cash: split.cash, paid_visa: split.visa, paid_wallet: split.wallet, paid_instapay: split.instapay,
+        } as Omit<Expense, 'id' | 'date'>);
+      } else {
+        // إيداع = إيراد للخزنة (مبلغ سالب في المصروفات)
+        await get().addExpense({
+          category: 'إيداع شريك', amount: -amount, note: `إيداع الشريك: ${tx.partner_name}`,
+          payment_method: method, paid_cash: split.cash, paid_visa: split.visa, paid_wallet: split.wallet, paid_instapay: split.instapay,
+        } as Omit<Expense, 'id' | 'date'>);
+      }
+    }
+
+    sendTelegramAlert({
+      type: tx.type === 'withdraw' ? 'partner_withdraw' : 'partner_deposit',
+      actor: getActorName(get()),
+      currency: get().storeSettings.currency,
+      description: `${tx.type === 'withdraw' ? 'سحب' : 'إيداع'} للشريك ${tx.partner_name} — ${tx.treasury === 'shop' ? 'خزنة المحل' : 'الخزنة الأساسية'}`,
+      amount,
+      paymentMethod: method,
+      date: new Date().toISOString(),
+    });
+    return data ? true : true;
   },
 
   updateExpense: async (id, expense) => {

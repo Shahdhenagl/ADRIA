@@ -23,6 +23,7 @@ import StockAlerts from './pages/admin/StockAlerts';
 import Coupons from './pages/admin/Coupons';
 import Manufacturing from './pages/admin/Manufacturing';
 import Managers from './pages/admin/Managers';
+import Partners from './pages/admin/Partners';
 import PublicInvoice from './pages/PublicInvoice';
 import { useStore } from './store/useStore';
 
@@ -186,6 +187,7 @@ function App() {
             <Route path="settings" element={<Settings />} />
             <Route path="manufacturing" element={<Manufacturing />} />
             <Route path="managers" element={<Managers />} />
+            <Route path="partners" element={<Partners />} />
           </Route>
           <Route path="/view-invoice/:id" element={<PublicInvoice />} />
         </Routes>

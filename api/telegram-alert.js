@@ -39,6 +39,8 @@ const TYPE_LABELS = {
   cashier_expense: 'مصروف من الكاشير',
   cashier_income: 'إيراد من الكاشير',
   manager_withdrawal: 'سحب باسم المدير',
+  partner_withdraw: 'سحب شريك',
+  partner_deposit: 'إيداع شريك',
 };
 
 function line(label, value) {

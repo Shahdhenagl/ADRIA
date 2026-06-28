@@ -41,7 +41,8 @@ declare
     'financing_accounts','financing_payments','financing_transactions',
     'cashiers','employees','employee_transactions','employee_leaves',
     'product_suggestions','cashier_notes','coupons','deleted_invoices',
-    'materials','production_orders','production_materials','managers'
+    'materials','production_orders','production_materials','managers',
+    'partners','partner_transactions'
   ];
 begin
   foreach t in array tables loop
