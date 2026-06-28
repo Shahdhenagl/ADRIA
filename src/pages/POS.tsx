@@ -11,7 +11,51 @@ import { openPrintWindow } from '../utils/printWindow';
 
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer } = useStore();
+  // Transfer day-closing balance to savings (with manager OTP)
+  const [showSaveXfer, setShowSaveXfer] = useState(false);
+  const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
+  const [saveXferOtp, setSaveXferOtp] = useState('');
+  const [saveXferSent, setSaveXferSent] = useState(false);
+  const [saveXferBusy, setSaveXferBusy] = useState(false);
+  const PAY_KEYS = [['cash', 'كاش'], ['visa', 'فيزا'], ['wallet', 'محفظة'], ['instapay', 'انستا باي']] as const;
+  const saveXferToken = async () => { const { supabase } = await import('../lib/supabase'); const { data } = await supabase.auth.getSession(); return data.session?.access_token; };
+  const saveXferTotal = PAY_KEYS.reduce((s, [k]) => s + (Number(saveXfer[k]) || 0), 0);
+  const saveXferValidate = () => {
+    const avail = dayBudget?.shopAvail || {};
+    if (saveXferTotal <= 0) { alert('حدّد المبلغ المراد تحويله'); return false; }
+    for (const [k, label] of PAY_KEYS) { if ((Number(saveXfer[k]) || 0) > (avail[k] || 0) + 0.001) { alert(`مبلغ ${label} أكبر من المتاح في خزنة المحل (${(avail[k] || 0).toFixed(2)})`); return false; } }
+    return true;
+  };
+  const saveXferRequest = async () => {
+    if (!saveXferValidate()) return;
+    setSaveXferBusy(true);
+    try {
+      const lines = PAY_KEYS.filter(([k]) => (Number(saveXfer[k]) || 0) > 0).map(([k, l]) => `${l}: ${Number(saveXfer[k]).toFixed(2)}`).join(' | ');
+      const details = `تحويل من خزنة المحل ➜ الادخار\n${lines}\nالإجمالي: ${saveXferTotal.toFixed(2)} ${storeSettings.currency}`;
+      const t = await saveXferToken();
+      const r = await fetch('/api/wholesale-otp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }, body: JSON.stringify({ action: 'request', purpose: 'savings', details }) });
+      const j = await r.json();
+      if (j.ok) { setSaveXferSent(true); alert('تم إرسال تفاصيل التحويل ورمز التأكيد للمدير على تليجرام 📲'); }
+      else alert('تعذّر إرسال الرمز: ' + (j.error || ''));
+    } catch { alert('تعذّر إرسال الرمز'); }
+    setSaveXferBusy(false);
+  };
+  const saveXferConfirm = async () => {
+    if (!saveXferValidate()) return;
+    if (!saveXferOtp.trim()) { alert('أدخل رمز التأكيد'); return; }
+    setSaveXferBusy(true);
+    try {
+      const t = await saveXferToken();
+      const r = await fetch('/api/wholesale-otp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }, body: JSON.stringify({ action: 'verify', purpose: 'savings', code: saveXferOtp.trim() }) });
+      const j = await r.json();
+      if (!j.ok) { alert(j.error || 'رمز غير صحيح'); setSaveXferBusy(false); return; }
+      const split = { cash: Number(saveXfer.cash) || 0, visa: Number(saveXfer.visa) || 0, wallet: Number(saveXfer.wallet) || 0, instapay: Number(saveXfer.instapay) || 0 };
+      const ok = await savingsTransfer(split, 'in', 'day_closing');
+      if (ok) { alert('تم تحويل المبلغ لخزنة الادخار ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
+    } catch { alert('تعذّر تنفيذ التحويل'); }
+    setSaveXferBusy(false);
+  };
   const [posSeason, setPosSeason] = useState<'all' | 'summer' | 'winter'>('all');
   const [historyToday, setHistoryToday] = useState(true);
   const [editingOrder, setEditingOrder] = useState<any>(null);
@@ -289,7 +333,11 @@ export default function POS() {
       const sum = (o: Record<string, number>) => o.cash + o.visa + o.wallet + o.instapay;
       const opening = (Number((storeSettings as any).initialBalance ?? (storeSettings as any).initial_balance) || 0) + sum(befIn) - sum(befOut);
       const totalIn = sum(dayIn), totalOut = sum(dayOut);
-      setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut });
+      // الرصيد الحالي في خزنة المحل لكل وسيلة (كل الفترات) — للتحويل لخزنة الادخار.
+      const shopAvail: Record<string, number> = { cash: 0, visa: 0, wallet: 0, instapay: 0 };
+      (['cash', 'visa', 'wallet', 'instapay'] as const).forEach((m) => { shopAvail[m] = (befIn[m] + dayIn[m]) - (befOut[m] + dayOut[m]); });
+      shopAvail.cash += Number((storeSettings as any).initialBalance ?? (storeSettings as any).initial_balance) || 0;
+      setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut, shopAvail });
     } catch (e) { console.error(e); alert('تعذّر تحميل ميزانية اليوم'); }
     setDayBudgetLoading(false);
   };
@@ -1446,7 +1494,42 @@ export default function POS() {
                       })}
                     </div>
                   </div>
-                  <p className="text-[11px] text-slate-400 text-center">عرض فقط — اليوم من 12 منتصف الليل إلى 12 منتصف الليل.</p>
+                  <p className="text-[11px] text-slate-400 text-center">اليوم من 12 منتصف الليل إلى 12 منتصف الليل.</p>
+
+                  {/* Transfer to savings */}
+                  <div className="border-t border-slate-100 dark:border-slate-700 pt-3">
+                    {!showSaveXfer ? (
+                      <button onClick={() => { setShowSaveXfer(true); const a = dayBudget.shopAvail || {}; setSaveXfer({ cash: String(Math.max(0, a.cash || 0) || ''), visa: String(Math.max(0, a.visa || 0) || ''), wallet: String(Math.max(0, a.wallet || 0) || ''), instapay: String(Math.max(0, a.instapay || 0) || '') }); }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2">🏦 تحويل لخزنة الادخار</button>
+                    ) : (
+                      <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-black text-indigo-800 dark:text-indigo-300">تحويل لخزنة الادخار</span>
+                          <button onClick={() => { setShowSaveXfer(false); setSaveXferSent(false); }} className="text-xs font-bold text-slate-500">إغلاق</button>
+                        </div>
+                        <p className="text-[11px] text-slate-500">المبالغ مملوءة بكامل الموجود في خزنة المحل — عدّليها لو عايزة مبلغ محدد (مش أكبر من المتاح). كل طريقة بتتحوّل بنفسها.</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {PAY_KEYS.map(([k, label]) => (
+                            <div key={k}>
+                              <label className="text-[11px] font-bold text-slate-500">{label} <span className="text-slate-400">(متاح {((dayBudget.shopAvail?.[k]) || 0).toFixed(0)})</span></label>
+                              <input className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-bold" type="number" min="0" value={saveXfer[k]} onChange={(e) => { setSaveXfer((s) => ({ ...s, [k]: e.target.value })); setSaveXferSent(false); }} />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-center font-black text-slate-700 dark:text-slate-200">الإجمالي: {saveXferTotal.toFixed(2)} {storeSettings.currency}</div>
+                        {!saveXferSent ? (
+                          <button onClick={saveXferRequest} disabled={saveXferBusy} className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black py-2.5 rounded-xl">{saveXferBusy ? 'جاري...' : '📲 إرسال للمدير وطلب رمز التأكيد'}</button>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="flex gap-2">
+                              <input className="flex-1 bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-700 rounded-lg px-3 py-2 text-center font-black tracking-widest" dir="ltr" placeholder="رمز التأكيد" value={saveXferOtp} onChange={(e) => setSaveXferOtp(e.target.value)} />
+                              <button onClick={saveXferConfirm} disabled={saveXferBusy} className="shrink-0 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-4 rounded-lg">تأكيد</button>
+                            </div>
+                            <button onClick={saveXferRequest} disabled={saveXferBusy} className="text-[11px] font-bold text-amber-700">إعادة إرسال الرمز</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
             </div>

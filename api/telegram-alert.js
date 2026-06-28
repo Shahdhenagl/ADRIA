@@ -41,6 +41,8 @@ const TYPE_LABELS = {
   manager_withdrawal: 'سحب باسم المدير',
   partner_withdraw: 'سحب شريك',
   partner_deposit: 'إيداع شريك',
+  savings_in: 'تحويل لخزنة الادخار',
+  savings_out: 'تحويل من خزنة الادخار',
 };
 
 function line(label, value) {

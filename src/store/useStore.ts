@@ -425,6 +425,7 @@ interface CashierStore {
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number }) => Promise<boolean>;
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
+  savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number }, direction: 'in' | 'out', source: string, note?: string) => Promise<boolean>;
   updateExpense: (id: string, expense: Partial<Expense>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
 
@@ -3220,6 +3221,43 @@ setupRealtime: () => {
       date: new Date().toISOString(),
     });
     return data ? true : true;
+  },
+
+  // تحويل بين خزنة المحل وخزنة الادخار (كل طريقة بطريقتها). ينعكس على خزنة المحل
+  // كمصروف (تحويل للادخار) أو إيراد (تحويل من الادخار)، ويُسجَّل في دفتر الادخار.
+  savingsTransfer: async (split, direction, source, note) => {
+    const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0 };
+    const total = s.cash + s.visa + s.wallet + s.instapay;
+    if (total <= 0) return false;
+    const primary = s.cash >= s.visa && s.cash >= s.wallet && s.cash >= s.instapay ? 'cash'
+      : s.visa >= s.wallet && s.visa >= s.instapay ? 'visa'
+      : s.wallet >= s.instapay ? 'wallet' : 'instapay';
+
+    // انعكاس على خزنة المحل
+    await get().addExpense({
+      category: direction === 'in' ? 'تحويل لخزنة الادخار' : 'تحويل من خزنة الادخار',
+      amount: direction === 'in' ? total : -total,
+      note: note || (direction === 'in' ? 'تحويل من المحل للادخار' : 'تحويل من الادخار للمحل'),
+      payment_method: primary,
+      paid_cash: s.cash, paid_visa: s.visa, paid_wallet: s.wallet, paid_instapay: s.instapay,
+    } as Omit<Expense, 'id' | 'date'>);
+
+    // دفتر الادخار: صف لكل طريقة بمبلغ
+    const rows = (['cash', 'visa', 'wallet', 'instapay'] as const)
+      .filter((m) => s[m] > 0)
+      .map((m) => ({ direction, amount: s[m], method: m, source: source || 'manual', note: note || null }));
+    if (rows.length) await supabase.from('savings_transactions').insert(rows);
+
+    sendTelegramAlert({
+      type: direction === 'in' ? 'savings_in' : 'savings_out',
+      actor: getActorName(get()),
+      currency: get().storeSettings.currency,
+      description: `${direction === 'in' ? 'تحويل للادخار' : 'تحويل من الادخار'}: ${total.toFixed(2)}`,
+      amount: total,
+      paymentMethod: primary,
+      date: new Date().toISOString(),
+    });
+    return true;
   },
 
   updateExpense: async (id, expense) => {
