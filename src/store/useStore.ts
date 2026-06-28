@@ -47,6 +47,7 @@ export interface Product {
   season?: string; // 'summer' / 'winter'
   stock_quantity: number;
   display_quantity?: number; // الكمية المعروضة في المحل (الباقي في المستودع)
+  factory_quantity?: number; // كمية مخزن المصنع (غير متاحة للبيع حتى تُحوَّل)
   category_id: string;
   unit: string; // وحدة المنتج: قطعة / كيلو / جرام / لتر ... (المخزون والسعر بهذه الوحدة)
   is_hidden?: boolean; // إخفاء المنتج من الكاشير دون حذفه
@@ -60,6 +61,7 @@ export interface Material {
   unit: string;
   cost_per_unit: number;
   stock_quantity: number;
+  supplier_id?: string; // المورد الذي تُشترى منه الخامة (اختياري)
   created_at?: string;
 }
 
@@ -447,7 +449,7 @@ interface CashierStore {
 
   // Manufacturing
   loadManufacturing: () => Promise<void>;
-  addMaterial: (m: Omit<Material, 'id' | 'created_at'>, paymentMethod?: string) => Promise<void>;
+  addMaterial: (m: Omit<Material, 'id' | 'created_at'>, payment?: { supplierId?: string; split?: { cash: number; visa: number; wallet: number; instapay: number } }) => Promise<void>;
   updateMaterial: (id: string, m: Partial<Material>) => Promise<void>;
   deleteMaterial: (id: string) => Promise<void>;
   addProductionOrder: (input: {
@@ -457,6 +459,9 @@ interface CashierStore {
     quantity: number;
     sale_price: number;
     extra_costs: number;
+    display_quantity?: number;
+    warehouse_quantity?: number;
+    extra_costs_split?: { cash: number; visa: number; wallet: number; instapay: number };
     notes?: string;
     materials: { material_id: string; quantity: number }[];
   }) => Promise<boolean>;
@@ -2183,21 +2188,45 @@ export const useStore = create<CashierStore>((set, get) => ({
     });
   },
 
-  addMaterial: async (m, paymentMethod = 'cash') => {
-    const { data } = await supabase.from('materials').insert(m).select().single();
+  addMaterial: async (m, payment) => {
+    const supplierId = payment?.supplierId || null;
+    const split = payment?.split || { cash: 0, visa: 0, wallet: 0, instapay: 0 };
+    const { data } = await supabase.from('materials').insert({ ...m, supplier_id: supplierId }).select().single();
     if (data) set((s) => ({ materials: [data as unknown as Material, ...s.materials] }));
-    // Record the purchase as a treasury expense (pulls money out of the drawer).
+
     const total = (Number(m.cost_per_unit) || 0) * (Number(m.stock_quantity) || 0);
-    if (total > 0) {
+    if (total <= 0) return;
+
+    const paid = (Number(split.cash) || 0) + (Number(split.visa) || 0) + (Number(split.wallet) || 0) + (Number(split.instapay) || 0);
+    const primary = split.cash >= split.visa && split.cash >= split.wallet && split.cash >= split.instapay ? 'cash'
+      : split.visa >= split.wallet && split.visa >= split.instapay ? 'visa'
+      : split.wallet >= split.instapay ? 'wallet' : 'instapay';
+
+    if (supplierId) {
+      // مشتريات من مورد: تُسجّل كفاتورة شراء — الباقي (total - paid) يبقى دين على المورد يُسدَّد لاحقاً.
+      const { data: inv } = await supabase.from('purchase_invoices').insert({
+        invoice_number: `MAT-${Date.now()}`,
+        supplier_id: supplierId,
+        total,
+        paid_amount: paid,
+        paid_cash: split.cash || 0,
+        paid_visa: split.visa || 0,
+        paid_wallet: split.wallet || 0,
+        paid_instapay: split.instapay || 0,
+        payment_method: primary,
+      }).select().single();
+      if (inv) set((s) => ({ purchaseInvoices: [{ ...(inv as any), items: [] }, ...s.purchaseInvoices] }));
+    } else {
+      // بدون مورد: مصروف "شراء خامات" بالمبلغ المدفوع فعلاً (نقدي مباشر).
       await get().addExpense({
         category: 'شراء خامات',
         amount: total,
         note: `شراء خامة: ${m.name}`,
-        payment_method: paymentMethod,
-        paid_cash: paymentMethod === 'cash' ? total : 0,
-        paid_visa: paymentMethod === 'visa' ? total : 0,
-        paid_wallet: paymentMethod === 'wallet' ? total : 0,
-        paid_instapay: paymentMethod === 'instapay' ? total : 0,
+        payment_method: primary,
+        paid_cash: split.cash || 0,
+        paid_visa: split.visa || 0,
+        paid_wallet: split.wallet || 0,
+        paid_instapay: split.instapay || 0,
       } as Omit<Expense, 'id' | 'date'>);
     }
   },
@@ -2226,6 +2255,12 @@ export const useStore = create<CashierStore>((set, get) => ({
 
     if (quantity <= 0) { alert('من فضلك أدخل عدد القطع المنتجة'); return false; }
 
+    // توزيع القطع: عرض + مستودع = متاح للبيع (الكاشير)، والباقي يبقى في مخزن المصنع.
+    const display = Math.max(0, Math.min(quantity, Number(input.display_quantity) || 0));
+    const warehouse = Math.max(0, Math.min(quantity - display, Number(input.warehouse_quantity) || 0));
+    const sellable = display + warehouse;
+    const factory = Math.max(0, quantity - sellable);
+
     try {
       // 1) خصم الخامات من المخزون
       for (const m of usedMaterials) {
@@ -2240,11 +2275,15 @@ export const useStore = create<CashierStore>((set, get) => ({
       const existing = code ? state.products.find((p) => p.barcode === code) : undefined;
       if (existing) {
         const oldStock = Number(existing.stock_quantity) || 0;
+        const oldFactory = Number(existing.factory_quantity) || 0;
+        const oldDisplay = Number(existing.display_quantity) || 0;
         const oldAvg = Number(existing.average_purchase_price ?? existing.purchase_price) || 0;
-        const newStock = oldStock + quantity;
-        const newAvg = newStock > 0 ? ((oldAvg * oldStock) + total_cost) / newStock : cost_per_piece;
+        const oldPieces = oldStock + oldFactory;
+        const newAvg = (oldPieces + quantity) > 0 ? ((oldAvg * oldPieces) + total_cost) / (oldPieces + quantity) : cost_per_piece;
         const { error } = await supabase.from('products').update({
-          stock_quantity: newStock,
+          stock_quantity: oldStock + sellable,
+          display_quantity: oldDisplay + display,
+          factory_quantity: oldFactory + factory,
           average_purchase_price: newAvg,
           purchase_price: newAvg,
           sale_price: input.sale_price,
@@ -2258,7 +2297,9 @@ export const useStore = create<CashierStore>((set, get) => ({
           barcode: code || null,
           color: input.color || null,
           unit: 'قطعة',
-          stock_quantity: quantity,
+          stock_quantity: sellable,
+          display_quantity: display,
+          factory_quantity: factory,
           sale_price: input.sale_price,
           purchase_price: cost_per_piece,
           average_purchase_price: cost_per_piece,
@@ -2295,17 +2336,23 @@ export const useStore = create<CashierStore>((set, get) => ({
         })));
       }
 
-      // Manufacturing labor / extra costs are a real cash outflow.
+      // Manufacturing labor / extra costs are a real cash outflow — split-aware.
       if (extra_costs > 0) {
+        const sp = input.extra_costs_split;
+        const spSum = sp ? (Number(sp.cash) || 0) + (Number(sp.visa) || 0) + (Number(sp.wallet) || 0) + (Number(sp.instapay) || 0) : 0;
+        const finalSplit = sp && spSum > 0 ? sp : { cash: extra_costs, visa: 0, wallet: 0, instapay: 0 };
+        const primary = finalSplit.cash >= finalSplit.visa && finalSplit.cash >= finalSplit.wallet && finalSplit.cash >= finalSplit.instapay ? 'cash'
+          : finalSplit.visa >= finalSplit.wallet && finalSplit.visa >= finalSplit.instapay ? 'visa'
+          : finalSplit.wallet >= finalSplit.instapay ? 'wallet' : 'instapay';
         await get().addExpense({
           category: 'تكاليف تصنيع',
           amount: extra_costs,
           note: `مصنعية: ${input.product_name}${input.notes ? ' — ' + input.notes : ''}`,
-          payment_method: 'cash',
-          paid_cash: extra_costs,
-          paid_visa: 0,
-          paid_wallet: 0,
-          paid_instapay: 0,
+          payment_method: primary,
+          paid_cash: finalSplit.cash || 0,
+          paid_visa: finalSplit.visa || 0,
+          paid_wallet: finalSplit.wallet || 0,
+          paid_instapay: finalSplit.instapay || 0,
         } as Omit<Expense, 'id' | 'date'>);
       }
 
