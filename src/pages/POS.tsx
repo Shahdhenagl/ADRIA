@@ -2251,7 +2251,7 @@ export default function POS() {
               id="pos-salesperson"
               value={salesperson?.id || ''}
               onChange={(e) => { const emp = employees.find((x) => x.id === e.target.value); setSalesperson(emp ? { id: emp.id, name: emp.name } : null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusById('pos-checkout-btn'); } }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); focusById('pos-checkout-print-btn'); } }}
               className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none"
             >
               <option value="">— بدون تحديد —</option>
@@ -2342,6 +2342,7 @@ export default function POS() {
               <span>تحصيل ودفع</span>
             </button>
             <button
+              id="pos-checkout-print-btn"
               onClick={() => { setShouldPrint(true); setShowCheckoutModal(true); }}
               disabled={cart.length === 0 || pricesHidden}
               className="flex-1 bg-gradient-to-r from-emerald-500 to-teal-500 disabled:from-gray-300 disabled:to-gray-300 text-white py-4 rounded-2xl font-black flex flex-col items-center justify-center gap-1 transition-all text-sm active:scale-95 shadow-lg shadow-emerald-500/20 disabled:shadow-none group"
