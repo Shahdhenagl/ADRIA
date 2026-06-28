@@ -287,7 +287,8 @@ export default function POS() {
   const sendOrderWhatsApp = (order: any) => {
     const invoiceLink = `${window.location.origin}/view-invoice/${order.id}`;
     const itemsText = (order.items || []).map((i: any) => `• ${i.name} (${formatQty(i.quantity, i.unit)}) - ${(i.sale_price * i.quantity).toFixed(2)} ${storeSettings.currency}`).join('\n');
-    const message = `*فاتورة من ${storeSettings.name}*\n\n*رقم الفاتورة:* #${order.id}\n*الإجمالي:* ${(order.total || 0).toFixed(2)} ${storeSettings.currency}\n\n*عرض الفاتورة بالتفاصيل:*\n${invoiceLink}\n\n*تفاصيل الطلب:*\n${itemsText}\n\n*شكراً لتعاملكم معنا!*`;
+    const spLine = order.salesperson_name ? `*مسؤول المبيعات:* ${order.salesperson_name}\n` : '';
+    const message = `*فاتورة من ${storeSettings.name}*\n\n*رقم الفاتورة:* #${order.id}\n${spLine}*الإجمالي:* ${(order.total || 0).toFixed(2)} ${storeSettings.currency}\n\n*عرض الفاتورة بالتفاصيل:*\n${invoiceLink}\n\n*تفاصيل الطلب:*\n${itemsText}\n\n*شكراً لتعاملكم معنا!*`;
     let phone = (order.customer?.phone || '').replace(/\D/g, '');
     const code = storeSettings.whatsappCountryCode || '2';
     if (phone.startsWith('0')) phone = code + phone.substring(1);
@@ -1227,6 +1228,7 @@ export default function POS() {
                         const message = `*فاتورة جديدة من ${storeSettings.name}*\n\n` +
                           `*رقم الفاتورة:* #${invId}\n` +
                           `*التاريخ:* ${new Date().toLocaleString('ar-SA')}\n` +
+                          (orderDetails.salesperson ? `*مسؤول المبيعات:* ${orderDetails.salesperson}\n` : '') +
                           `*الإجمالي:* ${orderDetails.total.toFixed(2)} ${storeSettings.currency}\n\n` +
                           `*عرض الفاتورة بالتفاصيل:*\n${invoiceLink}\n\n` +
                           `*تفاصيل الطلب:*\n${itemsText}\n\n` +

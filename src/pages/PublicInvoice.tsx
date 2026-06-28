@@ -111,6 +111,7 @@ export default function PublicInvoice() {
             date: o.created_at,
             items,
             cashier_name: o.cashier_name,
+            salesperson_name: o.salesperson_name,
             notes: o.notes,
             coupon_code: o.coupon_code,
             discount_amount: o.discount || 0,
@@ -365,6 +366,12 @@ export default function PublicInvoice() {
                 <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-black text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-full border border-indigo-100 shadow-sm">
                   <User size={12} className="opacity-70" />
                   <span>المحاسب: {order.cashier_name}</span>
+                </div>
+              )}
+              {(order as any).salesperson_name && (
+                <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] font-black text-purple-600 bg-purple-50 px-3 py-1.5 rounded-full border border-purple-100 shadow-sm">
+                  <User size={12} className="opacity-70" />
+                  <span>مسؤول المبيعات: {(order as any).salesperson_name}</span>
                 </div>
               )}
             </div>
