@@ -358,7 +358,7 @@ export default function Suppliers() {
   @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
   *{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo', sans-serif;}
   body{background:#fff;color:#000;margin:0;}
-  .invoice-container{width:80mm;margin:0 auto;padding:3mm 2mm;display:flex;flex-direction:column;}
+  .invoice-container{width:72mm;margin:0 auto;padding:2mm 1.5mm;display:flex;flex-direction:column;}
 
   .header-main{text-align:center;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;}
   .logo{max-height:55px;max-width:62mm;width:auto;object-fit:contain;display:block;margin:0 auto 4px;}
@@ -386,9 +386,9 @@ export default function Suppliers() {
   .qr-code{width:80px;height:80px;}
 
   @media print{
-    @page{size:80mm auto;margin:0;}
+    @page{size:72mm auto;margin:0;}
     body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-    .invoice-container{width:80mm;padding:3mm 2mm;}
+    .invoice-container{width:72mm;padding:2mm 1.5mm;}
   }
 </style>
 </head>

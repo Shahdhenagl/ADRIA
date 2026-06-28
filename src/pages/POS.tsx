@@ -279,6 +279,7 @@ export default function POS() {
       totalDebt: Math.max(0, (order.total || 0) - (order.paid_amount || 0)),
       couponCode: order.coupon_code,
       couponDiscountAmount: order.discount_amount || 0,
+      salesperson: order.salesperson_name || '',
     };
     printInvoice(order.id, details);
   };
@@ -746,42 +747,42 @@ export default function POS() {
   @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
   *{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo', sans-serif;}
   body{background:#fff;color:#000;margin:0;}
-  .invoice-container{width:80mm;margin:0 auto;padding:3mm 2mm;display:flex;flex-direction:column;}
+  .invoice-container{width:72mm;margin:0 auto;padding:2mm 1.5mm;display:flex;flex-direction:column;}
 
   .header-main{text-align:center;border-bottom:1px dashed #000;padding-bottom:6px;margin-bottom:6px;}
-  .logo{max-height:55px;max-width:62mm;width:auto;object-fit:contain;display:block;margin:0 auto 4px;}
-  .store-name{font-size:17px;font-weight:900;color:#000;line-height:1.2;}
-  .store-details{font-size:9px;color:#333;margin-top:2px;line-height:1.4;font-weight:bold;}
+  .logo{max-height:55px;max-width:55mm;width:auto;object-fit:contain;display:block;margin:0 auto 4px;}
+  .store-name{font-size:19px;font-weight:900;color:#000;line-height:1.2;}
+  .store-details{font-size:11px;color:#000;margin-top:2px;line-height:1.45;font-weight:bold;}
 
-  .customer-info-grid{display:flex;flex-direction:column;gap:2px;margin-bottom:6px;font-size:10px;}
+  .customer-info-grid{display:flex;flex-direction:column;gap:3px;margin-bottom:6px;font-size:12px;}
   .info-item{display:flex;justify-content:space-between;gap:6px;}
-  .info-item strong{color:#444;white-space:nowrap;}
+  .info-item strong{color:#000;white-space:nowrap;}
   .info-item span{color:#000;font-weight:700;}
 
   table{width:100%;border-collapse:collapse;margin-bottom:5px;}
-  thead th{font-size:9px;padding:4px 1px;border-bottom:1px solid #000;font-weight:900;}
+  thead th{font-size:12px;padding:5px 1px;border-bottom:1.5px solid #000;font-weight:900;}
   thead th:nth-child(2){text-align:right;}
   thead th:last-child{text-align:left;}
-  tbody td{font-size:9px;padding:3px 1px;border-bottom:1px dotted #bbb;vertical-align:top;}
+  tbody td{font-size:12px;padding:4px 1px;border-bottom:1px dotted #999;vertical-align:top;font-weight:600;}
 
   .summary-section{width:100%;margin-top:4px;}
-  .summary-row{display:flex;justify-content:space-between;padding:2px 0;font-size:10px;}
-  .summary-row.total{border-top:1px solid #000;border-bottom:1px solid #000;margin-top:3px;padding:4px 0;font-size:15px;font-weight:900;color:#000;}
+  .summary-row{display:flex;justify-content:space-between;padding:3px 0;font-size:12px;font-weight:700;}
+  .summary-row.total{border-top:1.5px solid #000;border-bottom:1.5px solid #000;margin-top:3px;padding:5px 0;font-size:18px;font-weight:900;color:#000;}
 
-  .payment-status{margin-top:6px;padding:5px;border-radius:5px;text-align:center;font-weight:bold;font-size:11px;}
+  .payment-status{margin-top:6px;padding:6px;border-radius:5px;text-align:center;font-weight:900;font-size:13px;}
   .status-paid{background:#e8f5e9;color:#1b5e20;border:1px solid #a5d6a7;}
   .status-debt{background:#ffebee;color:#b71c1c;border:1px solid #ef9a9a;}
 
   .qr-code-container{display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:8px;}
   .qr-code-img{width:90px;height:90px;}
-  .qr-label{font-size:9px;font-weight:900;color:#000;}
+  .qr-label{font-size:10px;font-weight:900;color:#000;}
 
-  .footer{text-align:center;margin-top:8px;padding-top:6px;border-top:1px dashed #000;font-size:9px;color:#333;font-weight:bold;}
+  .footer{text-align:center;margin-top:8px;padding-top:6px;border-top:1px dashed #000;font-size:11px;color:#000;font-weight:bold;}
 
   @media print{
-    @page{size:80mm auto;margin:0;}
+    @page{size:72mm auto;margin:0;}
     body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-    .invoice-container{width:80mm;padding:3mm 2mm;}
+    .invoice-container{width:72mm;padding:2mm 1.5mm;}
   }
 </style>
 </head>
