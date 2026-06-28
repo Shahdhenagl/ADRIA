@@ -13,7 +13,7 @@ interface EditInvoiceModalProps {
 }
 
 export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }: EditInvoiceModalProps) {
-  const { products, editOrder, storeSettings, activeCashier } = useStore();
+  const { products, editOrder, storeSettings, activeCashier, addExpense, markOrderExchanged } = useStore();
 
   // لقطة من أصناف الفاتورة قبل الاستبدال (للطباعة قبل/بعد)
   const [originalItems] = useState<OrderItem[]>(invoice.items.map(i => ({ ...i })));
@@ -165,11 +165,11 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
 
     let updatedData;
     if (exchangeMode) {
-      // الاستبدال: الفاتورة تتسوّى بالكامل، والفرق يُحصَّل/يُرَدّ على الوسيلة المختارة.
+      // الاستبدال: نُبقي تقسيمة الدفع الأصلية كما هي (مسجّلة في يومها)، ونسجّل الفرق
+      // كمعاملة مالية منفصلة بتاريخ اليوم → لا ازدواج في الحسابات.
       const base: Record<string, number> = { cash: invoice.paid_cash || 0, visa: invoice.paid_visa || 0, wallet: invoice.paid_wallet || 0, instapay: invoice.paid_instapay || 0 };
       if (base.cash + base.visa + base.wallet + base.instapay === 0) base[invoice.payment_method || 'cash'] = oldPaid;
-      base[settleMethod] = Math.max(0, (base[settleMethod] || 0) + settleAmount);
-      updatedData = { total, paid_amount: total, paid_cash: base.cash, paid_visa: base.visa, paid_wallet: base.wallet, paid_instapay: base.instapay, payment_method: settleMethod as any };
+      updatedData = { total, paid_amount: total, paid_cash: base.cash, paid_visa: base.visa, paid_wallet: base.wallet, paid_instapay: base.instapay, payment_method: invoice.payment_method as any };
     } else {
       updatedData = { total, paid_amount: paidAmount, paid_cash: paidCash, paid_visa: paidVisa, paid_wallet: paidWallet, paid_instapay: paidInstapay, payment_method: paymentMethod as any };
     }
@@ -177,7 +177,27 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
     const success = await editOrder(invoice.id, updatedData, cart, reason);
 
     if (success) {
-      if (exchangeMode) printExchangeReceipt();
+      if (exchangeMode) {
+        // سجّل فرق الاستبدال كمعاملة مالية مرئية برقم الفاتورة
+        if (Math.abs(settleAmount) >= 0.01) {
+          const m = settleMethod;
+          const amt = Math.abs(settleAmount);
+          const sp = { cash: m === 'cash' ? amt : 0, visa: m === 'visa' ? amt : 0, wallet: m === 'wallet' ? amt : 0, instapay: m === 'instapay' ? amt : 0 };
+          await addExpense({
+            category: 'فرق استبدال مبيعات',
+            amount: settleAmount > 0 ? -amt : amt, // تحصيل = إيراد (سالب) / رد = مصروف (موجب)
+            note: `فرق استبدال ${settleAmount > 0 ? '(تحصيل لينا)' : '(مصروف رد للعميل)'} — فاتورة #${invoice.id}`,
+            payment_method: m,
+            paid_cash: sp.cash, paid_visa: sp.visa, paid_wallet: sp.wallet, paid_instapay: sp.instapay,
+          } as any);
+        }
+        await markOrderExchanged(invoice.id, {
+          before: originalItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
+          after: cart.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
+          oldTotal, newTotal: total, diff: settleAmount, method: settleMethod, date: new Date().toISOString(),
+        });
+        printExchangeReceipt();
+      }
       onClose();
     } else {
       setError('حدث خطأ أثناء حفظ التعديلات');

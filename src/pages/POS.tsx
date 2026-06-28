@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, type Product } from '../store/useStore';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2 } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
@@ -59,7 +59,11 @@ export default function POS() {
   const [posSeason, setPosSeason] = useState<'all' | 'summer' | 'winter'>('all');
   const [historyToday, setHistoryToday] = useState(true);
   const [editingOrder, setEditingOrder] = useState<any>(null);
-  const openEditOrder = (o: any) => { setEditingOrder(o); setShowHistory(false); };
+  const [viewExchange, setViewExchange] = useState<any>(null);
+  const openEditOrder = (o: any) => {
+    if (o.exchange_data) { setViewExchange(o); return; }
+    setEditingOrder(o); setShowHistory(false);
+  };
 
   // تنقّل بالكيبورد (Enter) بين الحقول وقت الزحمة من غير ماوس
   const focusById = (id: string) => { setTimeout(() => { const el = document.getElementById(id) as HTMLElement | null; el?.focus(); }, 0); };
@@ -1686,7 +1690,11 @@ export default function POS() {
                         <button onClick={() => window.open(`/view-invoice/${o.id}`, '_blank')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300">عرض</button>
                         <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
                         <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
-                        <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال</button>
+                        {o.exchange_data ? (
+                          <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تم الاستبدال</button>
+                        ) : (
+                          <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال</button>
+                        )}
                         <button onClick={() => deleteOrderWithOtp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
                       </div>
                     </div>
@@ -1701,6 +1709,43 @@ export default function POS() {
       {editingOrder && (
         <EditInvoiceModal invoice={editingOrder} onClose={() => setEditingOrder(null)} requireOtp exchangeMode />
       )}
+
+      {viewExchange && (() => {
+        const ex = viewExchange.exchange_data || {};
+        const cur = storeSettings.currency;
+        const list = (arr: any[]) => (arr || []).map((i: any, idx: number) => (
+          <div key={idx} className="flex justify-between text-sm py-1 border-b border-slate-100 dark:border-slate-700/50">
+            <span className="font-bold text-slate-700 dark:text-slate-200">{i.name} ×{i.quantity}</span>
+            <span>{((Number(i.sale_price) || 0) * (Number(i.quantity) || 0)).toFixed(2)}</span>
+          </div>
+        ));
+        const diff = Number(ex.diff) || 0;
+        return (
+          <div className="fixed inset-0 bg-black/50 z-[160] flex items-center justify-center p-3" onClick={() => setViewExchange(null)}>
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+              <div className="bg-slate-700 text-white px-5 py-4 flex items-center justify-between">
+                <h2 className="text-lg font-black flex items-center gap-2"><RefreshCcw size={18} /> تفاصيل استبدال #{viewExchange.id}</h2>
+                <button onClick={() => setViewExchange(null)} className="hover:bg-white/20 p-1.5 rounded-lg"><X size={22} /></button>
+              </div>
+              <div className="p-4 overflow-y-auto space-y-4">
+                <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 border border-red-100 dark:border-red-800">
+                  <div className="text-xs font-black text-red-600 mb-1">قبل الاستبدال — الإجمالي: {(Number(ex.oldTotal) || 0).toFixed(2)} {cur}</div>
+                  {list(ex.before)}
+                </div>
+                <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 border border-emerald-100 dark:border-emerald-800">
+                  <div className="text-xs font-black text-emerald-700 mb-1">بعد الاستبدال — الإجمالي: {(Number(ex.newTotal) || 0).toFixed(2)} {cur}</div>
+                  {list(ex.after)}
+                </div>
+                <div className={`rounded-xl p-3 text-center font-black ${Math.abs(diff) < 0.01 ? 'bg-slate-100 dark:bg-slate-900/40 text-slate-600' : diff > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                  {Math.abs(diff) < 0.01 ? 'لا يوجد فرق' : `${diff > 0 ? 'تم تحصيل' : 'تم رد'}: ${Math.abs(diff).toFixed(2)} ${cur}`}
+                  {ex.date ? <div className="text-[11px] font-bold text-slate-500 mt-1">{new Date(ex.date).toLocaleString('ar-EG')}</div> : null}
+                </div>
+                <button onClick={() => reprintOrder(viewExchange)} className="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2"><Printer size={16} /> طباعة الفاتورة الحالية</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {showDebtModal && (
         <div className="fixed inset-0 bg-black/50 z-[150] flex items-center justify-center p-3" onClick={() => setShowDebtModal(false)}>

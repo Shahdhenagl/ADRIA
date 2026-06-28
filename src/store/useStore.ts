@@ -169,6 +169,7 @@ export interface Order {
   coupon_code?: string | null;
   discount_amount?: number;
   car_id?: string;
+  exchange_data?: any; // بيانات الاستبدال: { before, after, oldTotal, newTotal, diff, method, date }
 }
 
 export interface Expense {
@@ -412,6 +413,7 @@ interface CashierStore {
   processReturn: (orderId: string, returns: { productId: string, returnQty: number, refundAmount: number, debtDeduction?: number }[], refundMethod?: string) => Promise<boolean>;
   deleteOrder: (orderId: string, reason?: string) => Promise<boolean>;
   editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string) => Promise<boolean>;
+  markOrderExchanged: (orderId: string, exchangeData: any) => Promise<boolean>;
 
 
   // Admin
@@ -863,6 +865,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           cashier_name: (o.cashier_name as string) ?? undefined,
           salesperson_id: (o.salesperson_id as string) ?? undefined,
           salesperson_name: (o.salesperson_name as string) ?? undefined,
+          exchange_data: (o.exchange_data as any) ?? undefined,
           is_deleted: Boolean(o.is_deleted),
           deleted_at: (o.deleted_at as string) ?? null,
           deletion_reason: (o.deletion_reason as string) ?? null,
@@ -2013,6 +2016,13 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
   },
 
+  // يسجّل بيانات الاستبدال على الفاتورة (قبل/بعد) لمنع تكراره وعرضه لاحقاً.
+  markOrderExchanged: async (orderId, exchangeData) => {
+    const { error } = await supabase.from('orders').update({ exchange_data: exchangeData }).eq('id', orderId);
+    if (error) { console.error('markOrderExchanged:', error); return false; }
+    set((state) => ({ orders: state.orders.map((o) => (o.id === orderId ? { ...o, exchange_data: exchangeData } : o)) }));
+    return true;
+  },
 
   syncOfflineReturnsQueue: async () => {
     const state = get();

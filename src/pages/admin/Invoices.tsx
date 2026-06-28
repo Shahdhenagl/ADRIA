@@ -16,6 +16,7 @@ export default function Invoices() {
   const { orders, storeSettings, deleteOrder } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [showReturnsOnly, setShowReturnsOnly] = useState(false);
+  const [showExchangeOnly, setShowExchangeOnly] = useState(false);
   const [showDeferredOnly, setShowDeferredOnly] = useState(false);
   const [viewMode, setViewMode] = useState<'active' | 'deleted'>('active');
   const [selectedDay, setSelectedDay] = useState<string>('');
@@ -385,6 +386,7 @@ export default function Invoices() {
       const matchesMonth = selectedMonth === 'all' || (orderDate.getMonth() + 1).toString() === selectedMonth;
       const matchesYear = selectedYear === 'all' || orderDate.getFullYear().toString() === selectedYear;
       const matchesReturns = showReturnsOnly ? o.items.some(i => i.returned_quantity > 0) : true;
+      const matchesExchange = showExchangeOnly ? !!(o as any).exchange_data : true;
       const matchesDeferred = showDeferredOnly ? (o.type !== 'payment' && (o.total - (o.paid_amount || 0)) > 0.009) : true;
 
       const searchStr = searchQuery.toLowerCase();
@@ -396,9 +398,11 @@ export default function Invoices() {
       const matchesCashier = selectedCashier === 'all' || o.cashier_name === selectedCashier;
       const matchesSalesperson = selectedSalesperson === 'all' || (o as any).salesperson_name === selectedSalesperson;
 
-      return matchesDay && matchesMonth && matchesYear && matchesReturns && matchesDeferred && matchesSearch && matchesCashier && matchesSalesperson;
+      return matchesDay && matchesMonth && matchesYear && matchesReturns && matchesExchange && matchesDeferred && matchesSearch && matchesCashier && matchesSalesperson;
     });
-  }, [visibleOrders, searchQuery, showReturnsOnly, showDeferredOnly, selectedDay, selectedMonth, selectedYear, selectedCashier, selectedSalesperson]);
+  }, [visibleOrders, searchQuery, showReturnsOnly, showExchangeOnly, showDeferredOnly, selectedDay, selectedMonth, selectedYear, selectedCashier, selectedSalesperson]);
+
+  const exchangeInvoicesCount = useMemo(() => visibleOrders.filter(o => (o as any).exchange_data).length, [visibleOrders]);
 
   const totalInvoiceProfit = useMemo(() => {
     return filteredOrders.reduce((sum, order) => sum + calculateInvoiceProfit(order), 0);
@@ -591,6 +595,22 @@ export default function Invoices() {
               </button>
               <button
                 type="button"
+                onClick={() => setShowExchangeOnly((current) => !current)}
+                className={`rounded-2xl border p-4 text-right transition-all ${
+                  showExchangeOnly
+                    ? 'border-amber-300 bg-amber-100 text-amber-800 shadow-sm ring-2 ring-amber-200'
+                    : 'border-amber-100 bg-amber-50 text-amber-700 hover:border-amber-200 hover:bg-amber-100/60'
+                }`}
+                title={showExchangeOnly ? 'عرض كل الفواتير' : 'إظهار فواتير الاستبدال فقط'}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[11px] font-black text-amber-600">فواتير استبدال</p>
+                  <ArrowRightLeft size={18} />
+                </div>
+                <p className="text-2xl font-black mt-2">{exchangeInvoicesCount}</p>
+              </button>
+              <button
+                type="button"
                 onClick={() => setShowDeferredOnly((current) => !current)}
                 className={`rounded-2xl border p-4 text-right transition-all ${
                   showDeferredOnly
@@ -700,7 +720,10 @@ export default function Invoices() {
                       </td>
                       <td className="p-4 text-slate-500">{new Date(order.date).toLocaleString('ar-SA')}</td>
                       <td className="p-4 text-center font-bold text-indigo-600">{order.cashier_name || 'غير معروف'}</td>
-                      <td className="p-4 text-center font-bold text-purple-600">{(order as any).salesperson_name || '—'}</td>
+                      <td className="p-4 text-center font-bold text-purple-600">
+                        {(order as any).salesperson_name || '—'}
+                        {(order as any).exchange_data && <div className="mt-1"><span className="text-[10px] font-black bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">↺ استبدال</span></div>}
+                      </td>
                       <td className="p-4 text-right">
                         {order.is_deleted ? (
                           <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 px-3 py-1 rounded-lg text-xs font-bold">
