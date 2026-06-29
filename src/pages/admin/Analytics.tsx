@@ -11,7 +11,8 @@ import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
-import html2canvas from 'html2canvas';
+// html2canvas-pro supports Tailwind v4's oklch() colors (the original html2canvas throws on them).
+import html2canvas from 'html2canvas-pro';
 import { allocatePayment } from '../../utils/paymentAllocator';
 
 // Fix for jspdf-autotable typing
@@ -29,17 +30,24 @@ export default function Analytics() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<'today' | '7d' | '30d' | 'thisMonth' | 'thisYear' | 'all'>('30d');
+  // فلتر يوم محدد: لو متعبّى، يتجاهل أزرار الفترة ويعرض هذا اليوم فقط.
+  const [customDay, setCustomDay] = useState('');
 
   useEffect(() => {
     fetchData();
-  }, [timeRange]);
+  }, [timeRange, customDay]);
 
   const fetchData = async () => {
     setLoading(true);
     let start: string | undefined;
+    let end: string | undefined;
     const now = new Date();
 
-    if (timeRange === 'today') {
+    if (customDay) {
+      // يوم محدد: من بداية اليوم إلى نهايته.
+      start = new Date(`${customDay}T00:00:00`).toISOString();
+      end = new Date(`${customDay}T23:59:59.999`).toISOString();
+    } else if (timeRange === 'today') {
       start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
     } else if (timeRange === '7d') {
       const d = new Date();
@@ -55,7 +63,7 @@ export default function Analytics() {
       start = new Date(now.getFullYear(), 0, 1).toISOString();
     }
 
-    const data = await loadAnalyticsData(start);
+    const data = await loadAnalyticsData(start, end);
     setOrders(data);
     setLoading(false);
   };
@@ -163,8 +171,12 @@ export default function Analytics() {
 
     // Calculate time-filtered expenses
     let startLimit: Date | null = null;
+    let endLimit: Date | null = null;
     const now = new Date();
-    if (timeRange === 'today') {
+    if (customDay) {
+      startLimit = new Date(`${customDay}T00:00:00`);
+      endLimit = new Date(`${customDay}T23:59:59.999`);
+    } else if (timeRange === 'today') {
       startLimit = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     } else if (timeRange === '7d') {
       startLimit = new Date();
@@ -179,9 +191,10 @@ export default function Analytics() {
     }
 
     const filteredExpenses = expenses.filter(exp => {
-      if (!startLimit) return true;
       const expDate = new Date(exp.date);
-      return expDate >= startLimit;
+      if (startLimit && expDate < startLimit) return false;
+      if (endLimit && expDate > endLimit) return false;
+      return true;
     });
 
     const extraIncomes = filteredExpenses.filter(e => e.amount < 0 && !e.car_id).reduce((sum, e) => sum + Math.abs(e.amount), 0);
@@ -209,7 +222,7 @@ export default function Analytics() {
       totalCustomerDebt,
       totalSupplierDebt
     };
-  }, [orders, expenses, purchaseInvoices, products, timeRange, globalOrders]);
+  }, [orders, expenses, purchaseInvoices, products, timeRange, customDay, globalOrders]);
 
   // ── Export Logic ─────────────────────────────────────────────
   const exportExcel = () => {
@@ -300,16 +313,36 @@ export default function Analytics() {
             ].map((btn) => (
               <button
                 key={btn.id}
-                onClick={() => setTimeRange(btn.id as any)}
+                onClick={() => { setCustomDay(''); setTimeRange(btn.id as any); }}
                 className={`px-4 py-2 rounded-lg text-sm font-bold transition-all ${
-                  timeRange === btn.id 
-                    ? 'bg-slate-900 text-white shadow-md' 
+                  !customDay && timeRange === btn.id
+                    ? 'bg-slate-900 text-white shadow-md'
                     : 'text-slate-500 hover:bg-slate-50'
                 }`}
               >
                 {btn.label}
               </button>
             ))}
+          </div>
+
+          {/* فلتر يوم محدد */}
+          <div className={`bg-white p-1.5 rounded-xl shadow-sm border flex items-center gap-2 transition-colors ${customDay ? 'border-slate-900 ring-1 ring-slate-900' : 'border-slate-200'}`}>
+            <span className="text-xs font-bold text-slate-500 pr-2">يوم محدد:</span>
+            <input
+              type="date"
+              value={customDay}
+              onChange={(e) => setCustomDay(e.target.value)}
+              className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300"
+            />
+            {customDay && (
+              <button
+                onClick={() => setCustomDay('')}
+                className="text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg w-7 h-7 flex items-center justify-center font-black transition"
+                title="إلغاء فلتر اليوم"
+              >
+                ✕
+              </button>
+            )}
           </div>
 
           <div className="flex gap-2">
