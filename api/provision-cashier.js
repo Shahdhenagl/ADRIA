@@ -44,7 +44,11 @@ export default async function handler(req, res) {
   const { id, password } = body || {};
   if (!id || !password) { res.status(400).json({ error: 'missing id or password' }); return; }
 
-  const email = `cashier-${id}@cashier.local`;
+  // Supports cashiers (default) and admin-panel users.
+  const table = body.table === 'admin_users' ? 'admin_users' : 'cashiers';
+  const prefix = table === 'admin_users' ? 'admin' : 'cashier';
+  const domain = table === 'admin_users' ? 'admin.local' : 'cashier.local';
+  const email = `${prefix}-${id}@${domain}`;
 
   const { error: createErr } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
   if (createErr && !/already (been )?registered|already exists/i.test(createErr.message || '')) {
@@ -58,7 +62,7 @@ export default async function handler(req, res) {
     if (existing) await admin.auth.admin.updateUserById(existing.id, { password });
   }
 
-  const { error: upErr } = await admin.from('cashiers').update({ email }).eq('id', id);
+  const { error: upErr } = await admin.from(table).update({ email }).eq('id', id);
   if (upErr) { res.status(500).json({ error: upErr.message }); return; }
 
   res.status(200).json({ ok: true, email });

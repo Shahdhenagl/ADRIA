@@ -5,7 +5,9 @@ import { useEffect, useState } from 'react';
 
 export default function AdminLayout() {
   const navigate = useNavigate();
-  const { storeSettings, logout, maintenanceAppointments, carSubscriptions, updateMaintenanceReminded } = useStore();
+  const { storeSettings, logout, maintenanceAppointments, carSubscriptions, updateMaintenanceReminded, adminPermissions } = useStore();
+  const isOwner = adminPermissions === null;
+  const canSee = (path: string) => isOwner || (adminPermissions || []).includes(path);
   const [hasCheckedReminders, setHasCheckedReminders] = useState(false);
 
   useEffect(() => {
@@ -83,6 +85,7 @@ export default function AdminLayout() {
     ]},
     { section: 'الإعدادات', items: [
       { name: 'إعدادات النظام', path: '/admin/settings', icon: Settings },
+      ...(isOwner ? [{ name: 'مستخدمو لوحة التحكم', path: '/admin/users', icon: Users }] : []),
     ]},
   ];
 
@@ -106,11 +109,14 @@ export default function AdminLayout() {
         </div>
 
         <nav className="flex-1 px-4 pb-4 overflow-y-auto">
-          {navGroups.map((group) => (
+          {navGroups.map((group) => {
+            const visible = group.items.filter((item) => canSee(item.path));
+            if (visible.length === 0) return null;
+            return (
             <div key={group.section} className="mb-3">
               <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider px-4 mb-1.5">{group.section}</p>
               <div className="space-y-1">
-                {group.items.map((item) => (
+                {visible.map((item) => (
                   <NavLink
                     key={item.path}
                     to={item.path}
@@ -129,7 +135,8 @@ export default function AdminLayout() {
                 ))}
               </div>
             </div>
-          ))}
+            );
+          })}
         </nav>
 
         <div className="p-4 border-t border-slate-800">

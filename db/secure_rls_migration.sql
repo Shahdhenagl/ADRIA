@@ -42,7 +42,7 @@ declare
     'cashiers','employees','employee_transactions','employee_leaves',
     'product_suggestions','cashier_notes','coupons','deleted_invoices',
     'materials','production_orders','production_materials','managers',
-    'partners','partner_transactions','savings_transactions','stock_adjustments'
+    'partners','partner_transactions','savings_transactions','stock_adjustments','admin_users'
   ];
 begin
   foreach t in array tables loop

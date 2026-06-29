@@ -13,7 +13,7 @@ function priceForType(product: any, type: string): number {
 // endpoint (which holds the service-role key), so a cashier added from the
 // admin panel can log in immediately. Best-effort: in local dev (no /api) or on
 // failure it silently no-ops, and you can still run the provisioning script.
-async function provisionCashierAuth(id: string, password: string): Promise<{ ok: boolean; error?: string }> {
+async function provisionCashierAuth(id: string, password: string, table?: string): Promise<{ ok: boolean; error?: string }> {
   try {
     const { data: sess } = await supabase.auth.getSession();
     const token = sess?.session?.access_token;
@@ -21,7 +21,7 @@ async function provisionCashierAuth(id: string, password: string): Promise<{ ok:
     const res = await fetch('/api/provision-cashier', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ id, password }),
+      body: JSON.stringify({ id, password, table }),
     });
     if (res.ok) return { ok: true };
     let msg = 'HTTP ' + res.status;
@@ -342,6 +342,15 @@ export interface CashierNote {
   created_at: string;
 }
 
+export interface AdminUser {
+  id: string;
+  name: string;
+  password?: string;
+  email?: string;
+  permissions: string[]; // مسارات الصفحات المسموح بها
+  created_at?: string;
+}
+
 // ─── Store Interface ──────────────────────────────────────────
 interface CashierStore {
   storeSettings: StoreSettings;
@@ -557,10 +566,19 @@ interface CashierStore {
   // Auth
   isAdminAuthenticated: boolean;
   isPOSAuthenticated: boolean;
+  adminPermissions: string[] | null; // null = صلاحيات كاملة (المدير العام)
   login: (pin: string) => Promise<boolean>;
+  loginAdminUser: (user: { email?: string; permissions?: string[] }, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   loginPOS: (name: string, password?: string) => Promise<boolean>;
   logoutPOS: () => Promise<void>;
+
+  // Admin users (لوحة التحكم)
+  adminUsers: AdminUser[];
+  loadAdminUsers: () => Promise<void>;
+  addAdminUser: (u: { name: string; password: string; permissions: string[] }) => Promise<void>;
+  updateAdminUser: (id: string, u: Partial<AdminUser> & { password?: string }) => Promise<void>;
+  deleteAdminUser: (id: string) => Promise<void>;
 }
 
 // ─── Helpers ─────────────────────────────────────────────────
@@ -727,6 +745,8 @@ export const useStore = create<CashierStore>((set, get) => ({
   isSyncing: false,
   activeCashier: null,
   isAdminAuthenticated: !!sessionStorage.getItem('cashier_admin_auth'),
+  adminPermissions: (() => { try { const v = sessionStorage.getItem('admin_permissions'); return v ? JSON.parse(v) : null; } catch { return null; } })(),
+  adminUsers: [],
   isPOSAuthenticated: !!sessionStorage.getItem('cashier_pos_auth'),
 
   // Admin login: authenticates against Supabase Auth using a fixed admin
@@ -742,17 +762,61 @@ export const useStore = create<CashierStore>((set, get) => ({
     const { error } = await supabase.auth.signInWithPassword({ email: adminEmail, password: pin });
     if (error) return false;
     sessionStorage.setItem('cashier_admin_auth', 'true');
-    set({ isAdminAuthenticated: true });
+    sessionStorage.removeItem('admin_permissions'); // المدير العام = صلاحيات كاملة
+    set({ isAdminAuthenticated: true, adminPermissions: null });
     // Reload data now that we have an authenticated session (under RLS, the
     // initial anon load returns nothing).
     await get().loadAll(true);
     return true;
   },
 
+  // دخول مستخدم لوحة تحكم بصلاحيات محددة
+  loginAdminUser: async (user, password) => {
+    if (!user?.email) return false;
+    const { error } = await supabase.auth.signInWithPassword({ email: user.email, password });
+    if (error) return false;
+    const perms = Array.isArray(user.permissions) ? user.permissions : [];
+    sessionStorage.setItem('cashier_admin_auth', 'true');
+    sessionStorage.setItem('admin_permissions', JSON.stringify(perms));
+    set({ isAdminAuthenticated: true, adminPermissions: perms });
+    await get().loadAll(true);
+    return true;
+  },
+
+  loadAdminUsers: async () => {
+    const { data } = await supabase.from('admin_users').select('*').order('name');
+    if (data) set({ adminUsers: (data as unknown as AdminUser[]) });
+  },
+
+  addAdminUser: async ({ name, password, permissions }) => {
+    const { data, error } = await supabase.from('admin_users').insert({ name, password, permissions }).select().single();
+    if (error) { alert('تعذّر حفظ المستخدم: ' + error.message); return; }
+    const row = data as unknown as AdminUser;
+    const r = await provisionCashierAuth(row.id, password, 'admin_users');
+    if (r.ok) row.email = `admin-${row.id}@admin.local`;
+    else alert('تم حفظ المستخدم، لكن تعذّر إنشاء حساب الدخول:\n' + (r.error || '') + '\nتأكد من SUPABASE_SERVICE_ROLE_KEY على Vercel ثم عدّل الباسورد.');
+    set((s) => ({ adminUsers: [row, ...s.adminUsers] }));
+  },
+
+  updateAdminUser: async (id, u) => {
+    await supabase.from('admin_users').update({ name: u.name, password: u.password, permissions: u.permissions }).eq('id', id);
+    if (u.password) {
+      const r = await provisionCashierAuth(id, u.password, 'admin_users');
+      if (!r.ok) alert('تم التعديل، لكن تعذّر تحديث حساب الدخول: ' + (r.error || ''));
+    }
+    set((s) => ({ adminUsers: s.adminUsers.map((x) => (x.id === id ? { ...x, ...u } : x)) }));
+  },
+
+  deleteAdminUser: async (id) => {
+    await supabase.from('admin_users').delete().eq('id', id);
+    set((s) => ({ adminUsers: s.adminUsers.filter((x) => x.id !== id) }));
+  },
+
   logout: async () => {
     await supabase.auth.signOut();
     sessionStorage.removeItem('cashier_admin_auth');
-    set({ isAdminAuthenticated: false });
+    sessionStorage.removeItem('admin_permissions');
+    set({ isAdminAuthenticated: false, adminPermissions: null });
   },
 
   // Cashier login: each cashier is a Supabase Auth user (email set by the

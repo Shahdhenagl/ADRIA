@@ -27,6 +27,7 @@ import Partners from './pages/admin/Partners';
 import Savings from './pages/admin/Savings';
 import StockTake from './pages/admin/StockTake';
 import Reports from './pages/admin/Reports';
+import AdminUsers from './pages/admin/AdminUsers';
 import PublicInvoice from './pages/PublicInvoice';
 import { useStore } from './store/useStore';
 
@@ -194,6 +195,7 @@ function App() {
             <Route path="savings" element={<Savings />} />
             <Route path="stocktake" element={<StockTake />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="users" element={<AdminUsers />} />
           </Route>
           <Route path="/view-invoice/:id" element={<PublicInvoice />} />
         </Routes>
