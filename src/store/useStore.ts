@@ -421,6 +421,7 @@ interface CashierStore {
   updateSettings: (settings: Partial<StoreSettings>) => Promise<void>;
   addProduct: (product: Omit<Product, 'id'>) => Promise<Product | undefined>;
   updateProduct: (id: string, product: Partial<Product>) => Promise<void>;
+  adjustStock: (items: { product_id: string; counted_qty: number }[], note?: string) => Promise<number>;
   deleteProduct: (id: string) => Promise<void>;
   
   // Expenses
@@ -3115,6 +3116,31 @@ setupRealtime: () => {
   deleteProduct: async (id) => {
     // Realtime subscription handles the live DELETE — no need to broadcast
     await supabase.from('products').delete().eq('id', id);
+  },
+
+  // تسوية الجرد: تحديث مخزون المنتجات للكمية المجرودة وتسجيل الفروق.
+  adjustStock: async (items, note) => {
+    const state = get();
+    const rows: any[] = [];
+    const updatedProducts = [...state.products];
+    for (const it of items) {
+      const p = state.products.find((x) => x.id === it.product_id);
+      if (!p) continue;
+      const system = Number(p.stock_quantity) || 0;
+      const counted = Number(it.counted_qty);
+      if (isNaN(counted) || Math.abs(counted - system) < 0.0001) continue; // تجاهل غير المتغيّر
+      const diff = counted - system;
+      const cost = Number(p.average_purchase_price ?? p.purchase_price) || 0;
+      const { error } = await supabase.from('products').update({ stock_quantity: counted }).eq('id', it.product_id);
+      if (error) continue;
+      rows.push({ product_id: it.product_id, product_name: p.name, system_qty: system, counted_qty: counted, diff, cost, note: note || null });
+      const idx = updatedProducts.findIndex((x) => x.id === it.product_id);
+      if (idx >= 0) updatedProducts[idx] = { ...updatedProducts[idx], stock_quantity: counted };
+    }
+    if (rows.length) await supabase.from('stock_adjustments').insert(rows);
+    set({ products: updatedProducts });
+    new BroadcastChannel('cashier-sync').postMessage('sync_products');
+    return rows.length;
   },
 
   // ── Expenses ──────────────────────────────────────────────
