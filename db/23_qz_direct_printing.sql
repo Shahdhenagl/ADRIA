@@ -1,5 +1,4 @@
--- ADRIA — الطباعة المباشرة عبر QZ Tray. شغّله مرة واحدة.
--- يخزّن تفعيل الطباعة المباشرة واسم طابعة الفواتير وطابعة الباركود.
-alter table store_settings add column if not exists qz_enabled boolean default false;
-alter table store_settings add column if not exists qz_invoice_printer text default '';
-alter table store_settings add column if not exists qz_barcode_printer text default '';
+-- ADRIA — الطباعة المباشرة عبر QZ Tray.
+-- لا حاجة لقاعدة البيانات: إعداد الطابعات أصبح محلياً على كل جهاز (localStorage)
+-- لأن أسماء الطابعات تختلف من جهاز لآخر. هذا الملف مُبقى فارغاً للتوثيق فقط.
+-- (لو سبق وأضفت الأعمدة qz_* فهي غير مستخدمة ولا ضرر منها.)

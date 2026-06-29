@@ -20,13 +20,31 @@ export interface QzConfig {
   barcodePrinter: string; // printer name for barcode labels
 }
 
-// Module-level config, kept in sync by the store whenever settings load/change.
-let cfg: QzConfig = { enabled: false, invoicePrinter: '', barcodePrinter: '' };
-export function setQzConfig(next: Partial<QzConfig>) {
-  cfg = { ...cfg, ...next };
+// Per-device config: printer names differ from machine to machine, so this is
+// stored locally on each device (localStorage), NOT in the shared database.
+const STORAGE_KEY = 'adria_qz_config';
+
+function readStorage(): QzConfig {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      const p = JSON.parse(raw);
+      return { enabled: !!p.enabled, invoicePrinter: p.invoicePrinter || '', barcodePrinter: p.barcodePrinter || '' };
+    }
+  } catch { /* ignore */ }
+  return { enabled: false, invoicePrinter: '', barcodePrinter: '' };
 }
+
+let cfg: QzConfig = readStorage();
+
 export function getQzConfig(): QzConfig {
   return cfg;
+}
+
+/** Persist this device's QZ config locally and apply it immediately. */
+export function saveQzConfig(next: Partial<QzConfig>) {
+  cfg = { ...cfg, ...next };
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch { /* ignore */ }
 }
 
 // Lazy-loaded qz-tray module + a single shared connection promise.

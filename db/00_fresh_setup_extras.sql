@@ -31,9 +31,6 @@ create index if not exists idx_orders_deleted_at on orders(deleted_at);
 -- Store settings: opening balance ------------------------------------------
 alter table store_settings add column if not exists initial_balance numeric default 0;
 alter table store_settings add column if not exists allow_cashier_employee_advance boolean default false;
-alter table store_settings add column if not exists qz_enabled boolean default false;
-alter table store_settings add column if not exists qz_invoice_printer text default '';
-alter table store_settings add column if not exists qz_barcode_printer text default '';
 
 -- Purchase invoices: payment method ----------------------------------------
 alter table purchase_invoices add column if not exists payment_method text default 'cash';

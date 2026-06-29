@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '../../store/useStore';
-import { listPrinters } from '../../utils/qzPrint';
+import { listPrinters, getQzConfig, saveQzConfig } from '../../utils/qzPrint';
 
 export default function Settings() {
   const { storeSettings, updateSettings } = useStore();
@@ -8,6 +8,13 @@ export default function Settings() {
   const [printers, setPrinters] = useState<string[]>([]);
   const [printerStatus, setPrinterStatus] = useState('');
   const [discovering, setDiscovering] = useState(false);
+  // QZ Tray config is per-device (printer names differ per machine) → localStorage, not DB.
+  const [qz, setQz] = useState(getQzConfig());
+  const updateQz = (patch: Partial<ReturnType<typeof getQzConfig>>) => {
+    const next = { ...qz, ...patch };
+    setQz(next);
+    saveQzConfig(next);
+  };
 
   const discoverPrinters = async () => {
     setDiscovering(true);
@@ -289,14 +296,15 @@ export default function Settings() {
         {/* ── الطباعة المباشرة (QZ Tray) ── */}
         <div className="pt-6 border-t border-slate-100">
           <h2 className="text-lg font-black text-slate-800 mb-1">الطباعة المباشرة (QZ Tray)</h2>
-          <p className="text-slate-500 text-sm mb-4">طباعة الفواتير والباركود مباشرةً على الطابعة المحددة بدون نافذة طباعة. يتطلّب تثبيت برنامج <a href="https://qz.io/download/" target="_blank" rel="noreferrer" className="text-indigo-600 font-bold underline">QZ Tray</a> (مجاني) مرة واحدة على جهاز الكاشير وتشغيله.</p>
+          <p className="text-slate-500 text-sm mb-2">طباعة الفواتير والباركود مباشرةً على الطابعة المحددة بدون نافذة طباعة. يتطلّب تثبيت برنامج <a href="https://qz.io/download/" target="_blank" rel="noreferrer" className="text-indigo-600 font-bold underline">QZ Tray</a> (مجاني) مرة واحدة على جهاز الكاشير وتشغيله.</p>
+          <p className="text-[12px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4">⚙️ هذا الإعداد خاص بهذا الجهاز فقط ويُحفظ تلقائياً عليه — اضبطه على كل جهاز كاشير على حدة باسم طابعته.</p>
 
           <label className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 cursor-pointer mb-3">
-            <span className="text-sm font-bold text-slate-700">تفعيل الطباعة المباشرة عبر QZ Tray</span>
-            <input type="checkbox" checked={!!formData.qzEnabled} onChange={(e) => setFormData({ ...formData, qzEnabled: e.target.checked })} className="w-5 h-5 accent-indigo-600" />
+            <span className="text-sm font-bold text-slate-700">تفعيل الطباعة المباشرة عبر QZ Tray (هذا الجهاز)</span>
+            <input type="checkbox" checked={!!qz.enabled} onChange={(e) => updateQz({ enabled: e.target.checked })} className="w-5 h-5 accent-indigo-600" />
           </label>
 
-          {formData.qzEnabled && (
+          {qz.enabled && (
             <div className="space-y-3">
               <div className="flex items-center gap-3 flex-wrap">
                 <button type="button" onClick={discoverPrinters} disabled={discovering} className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white px-5 py-2.5 rounded-xl font-bold transition text-sm">
@@ -310,8 +318,8 @@ export default function Settings() {
                   <label className="block text-sm font-bold text-slate-700 mb-2">🧾 طابعة الفواتير (الحرارية)</label>
                   <input
                     list="qz-printers"
-                    value={formData.qzInvoicePrinter || ''}
-                    onChange={(e) => setFormData({ ...formData, qzInvoicePrinter: e.target.value })}
+                    value={qz.invoicePrinter || ''}
+                    onChange={(e) => updateQz({ invoicePrinter: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none transition font-bold"
                     placeholder="اختر أو اكتب اسم الطابعة"
                   />
@@ -320,8 +328,8 @@ export default function Settings() {
                   <label className="block text-sm font-bold text-slate-700 mb-2">🔳 طابعة الباركود (الملصقات)</label>
                   <input
                     list="qz-printers"
-                    value={formData.qzBarcodePrinter || ''}
-                    onChange={(e) => setFormData({ ...formData, qzBarcodePrinter: e.target.value })}
+                    value={qz.barcodePrinter || ''}
+                    onChange={(e) => updateQz({ barcodePrinter: e.target.value })}
                     className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none transition font-bold"
                     placeholder="اختر أو اكتب اسم الطابعة"
                   />
