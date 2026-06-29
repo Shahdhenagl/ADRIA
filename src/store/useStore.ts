@@ -264,6 +264,8 @@ export interface StoreSettings {
   whatsappCountryCode: string;
   initial_balance: number;
   locationUrl?: string;
+  cashierPermissions?: Record<string, boolean>; // صلاحيات الكاشير (إظهار/إخفاء مميزات)
+  paymentLabels?: Record<string, string>; // تسميات وسائل الدفع (كاش/فيزا/محفظة/انستا)
 }
 
 export interface Employee {
@@ -575,6 +577,8 @@ function mapSettings(row: Record<string, unknown>): StoreSettings {
     whatsappCountryCode: (row.whatsapp_country_code as string) ?? '2',
     initial_balance: (row.initial_balance as number) ?? 0,
     locationUrl: (row.location_url as string) ?? '',
+    cashierPermissions: (row.cashier_permissions as Record<string, boolean>) ?? undefined,
+    paymentLabels: (row.payment_labels as Record<string, string>) ?? undefined,
   };
 }
 
@@ -2499,6 +2503,8 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.whatsappCountryCode !== undefined) mapped.whatsapp_country_code = newSettings.whatsappCountryCode;
     if (newSettings.initial_balance !== undefined) mapped.initial_balance = newSettings.initial_balance;
     if (newSettings.locationUrl !== undefined) mapped.location_url = newSettings.locationUrl;
+    if (newSettings.cashierPermissions !== undefined) mapped.cashier_permissions = newSettings.cashierPermissions;
+    if (newSettings.paymentLabels !== undefined) mapped.payment_labels = newSettings.paymentLabels;
 
     const { data: existing } = await supabase.from('store_settings').select('id').limit(1).maybeSingle();
     

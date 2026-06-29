@@ -164,6 +164,12 @@ export default function POS() {
   const [otpBusy, setOtpBusy] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
   const pricesHidden = invoiceType !== 'retail' && !wholesaleUnlocked;
+  // صلاحيات الكاشير (المدير يرى الكل؛ غيره حسب الإعدادات)
+  const isMaster = activeCashier?.id === 'master';
+  const perm = (k: string) => isMaster || ((storeSettings as any).cashierPermissions?.[k] !== false);
+  // تسميات وسائل الدفع
+  const PAY_DEFAULTS: Record<string, string> = { cash: 'كاش', visa: 'فيزا', wallet: 'محفظة', instapay: 'انستا باي' };
+  const payLabel = (m: string) => ((storeSettings as any).paymentLabels?.[m] || PAY_DEFAULTS[m] || m);
   useEffect(() => { setWholesaleUnlocked(false); setOtpInput(''); setOtpSent(false); }, [invoiceType]);
 
   const requestOtp = async () => {
@@ -1594,7 +1600,7 @@ export default function POS() {
                         const net = dayBudget.dayIn[k] - dayBudget.dayOut[k];
                         return (
                           <div key={k} className="bg-slate-50 dark:bg-slate-900/40 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
-                            <div className="text-[11px] font-bold text-slate-500">{label}</div>
+                            <div className="text-[11px] font-bold text-slate-500">{payLabel(k)}</div>
                             <div className={`text-lg font-black ${bal < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100'}`}>{bal.toFixed(2)} {storeSettings.currency}</div>
                             <div className="text-[10px] text-slate-400">صافي اليوم: {net.toFixed(2)} (داخل {dayBudget.dayIn[k].toFixed(2)} · خارج {dayBudget.dayOut[k].toFixed(2)})</div>
                           </div>
@@ -1605,6 +1611,7 @@ export default function POS() {
                   <p className="text-[11px] text-slate-400 text-center">اليوم من 12 منتصف الليل إلى 12 منتصف الليل.</p>
 
                   {/* Transfer to savings */}
+                  {perm('savings') && (
                   <div className="border-t border-slate-100 dark:border-slate-700 pt-3">
                     {!showSaveXfer ? (
                       <button onClick={() => { setShowSaveXfer(true); const a = dayBudget.shopAvail || {}; setSaveXfer({ cash: String(Math.max(0, a.cash || 0) || ''), visa: String(Math.max(0, a.visa || 0) || ''), wallet: String(Math.max(0, a.wallet || 0) || ''), instapay: String(Math.max(0, a.instapay || 0) || '') }); }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2">🏦 تحويل لخزنة الادخار</button>
@@ -1618,7 +1625,7 @@ export default function POS() {
                         <div className="grid grid-cols-2 gap-2">
                           {PAY_KEYS.map(([k, label]) => (
                             <div key={k}>
-                              <label className="text-[11px] font-bold text-slate-500">{label} <span className="text-slate-400">(متاح {((dayBudget.shopAvail?.[k]) || 0).toFixed(0)})</span></label>
+                              <label className="text-[11px] font-bold text-slate-500">{payLabel(k)} <span className="text-slate-400">(متاح {((dayBudget.shopAvail?.[k]) || 0).toFixed(0)})</span></label>
                               <input className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-bold" type="number" min="0" value={saveXfer[k]} onChange={(e) => { setSaveXfer((s) => ({ ...s, [k]: e.target.value })); setSaveXferSent(false); }} />
                             </div>
                           ))}
@@ -1638,6 +1645,7 @@ export default function POS() {
                       </div>
                     )}
                   </div>
+                  )}
                 </>
               )}
             </div>
@@ -1692,10 +1700,12 @@ export default function POS() {
                         <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
                         {o.exchange_data ? (
                           <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تم الاستبدال</button>
-                        ) : (
+                        ) : perm('editDelete') && (
                           <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال</button>
                         )}
-                        <button onClick={() => deleteOrderWithOtp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
+                        {perm('editDelete') && (
+                          <button onClick={() => deleteOrderWithOtp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1785,7 +1795,7 @@ export default function POS() {
                   <div>
                     <label className="text-xs font-bold text-slate-500 block mb-1">طريقة الدفع</label>
                     <select value={debtMethod} onChange={(e) => setDebtMethod(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl py-2.5 px-3 text-sm font-bold outline-none">
-                      <option value="cash">كاش</option><option value="visa">فيزا</option><option value="wallet">محفظة</option><option value="instapay">انستا باي</option>
+                      <option value="cash">{payLabel('cash')}</option><option value="visa">{payLabel('visa')}</option><option value="wallet">{payLabel('wallet')}</option><option value="instapay">{payLabel('instapay')}</option>
                     </select>
                   </div>
                   <div className="bg-slate-100 dark:bg-slate-900 rounded-xl p-3 text-center">
@@ -2110,18 +2120,26 @@ export default function POS() {
             </div>
 
             {/* Left: Invoices history + Returns Button */}
+            {perm('invoices') && (
             <button onClick={() => setShowHistory(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 rounded-2xl font-bold transition border border-indigo-100 dark:border-indigo-900/30 whitespace-nowrap shadow-sm shrink-0">
               <FileText size={18} /> <span className="text-sm">الفواتير</span>
             </button>
+            )}
+            {perm('debt') && (
             <button onClick={() => setShowDebtModal(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 rounded-2xl font-bold transition border border-amber-100 dark:border-amber-900/30 whitespace-nowrap shadow-sm shrink-0">
               <CreditCard size={18} /> <span className="text-sm">سداد آجل</span>
             </button>
+            )}
+            {perm('dayClosing') && (
             <button onClick={() => setShowDayBudget(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100 rounded-2xl font-bold transition border border-emerald-100 dark:border-emerald-900/30 whitespace-nowrap shadow-sm shrink-0">
               <Banknote size={18} /> <span className="text-sm">تقفيل اليوم</span>
             </button>
+            )}
+            {perm('returns') && (
             <button onClick={() => setShowReturnsModal(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 hover:bg-red-100 rounded-2xl font-bold transition border border-red-100 dark:border-red-900/30 whitespace-nowrap shadow-sm shrink-0">
               <RefreshCcw size={18} /> <span className="text-sm">مرتجع</span>
             </button>
+            )}
           </div>
         </header>
 
@@ -2129,7 +2147,7 @@ export default function POS() {
         <div className="flex flex-col lg:flex-row lg:items-center gap-2 lg:gap-5 px-3 py-2 border-b border-gray-100 dark:border-slate-800">
           <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar">
             <span className="text-[11px] font-bold text-slate-400 shrink-0">الفاتورة</span>
-            {([['retail', 'قطاعي'], ['half', 'نص جملة'], ['wholesale', 'جملة']] as const).map(([k, label]) => (
+            {([['retail', 'قطاعي'], ['half', 'نص جملة'], ['wholesale', 'جملة']] as const).filter(([k]) => k === 'retail' || perm('wholesale')).map(([k, label]) => (
               <button key={k} onClick={() => setInvoiceType(k)}
                 className={`shrink-0 px-4 py-2 rounded-xl text-xs font-black transition ${invoiceType === k ? 'bg-purple-600 text-white shadow-md' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
                 {label}

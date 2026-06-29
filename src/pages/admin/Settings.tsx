@@ -211,6 +211,49 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* ── صلاحيات الكاشير ── */}
+        <div className="pt-6 border-t border-slate-100">
+          <h2 className="text-lg font-black text-slate-800 mb-1">صلاحيات الكاشير</h2>
+          <p className="text-slate-500 text-sm mb-4">تحكّم في المميزات اللي تظهر للكاشير (إخفاء أي بند يخفيه من شاشة الكاشير).</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {([
+              ['invoices', 'عرض الفواتير السابقة'],
+              ['editDelete', 'تعديل / حذف / استبدال الفواتير'],
+              ['returns', 'المرتجعات'],
+              ['debt', 'سداد آجل للعملاء'],
+              ['dayClosing', 'تقفيل اليوم'],
+              ['wholesale', 'أسعار الجملة / نص الجملة'],
+              ['savings', 'تحويل لخزنة الادخار'],
+            ] as const).map(([k, label]) => {
+              const perms = formData.cashierPermissions || {};
+              const enabled = perms[k] !== false; // الافتراضي مسموح
+              return (
+                <label key={k} className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 cursor-pointer">
+                  <span className="text-sm font-bold text-slate-700">{label}</span>
+                  <input type="checkbox" checked={enabled} onChange={(e) => setFormData({ ...formData, cashierPermissions: { ...perms, [k]: e.target.checked } })} className="w-5 h-5 accent-indigo-600" />
+                </label>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── تسميات وسائل الدفع / المحافظ ── */}
+        <div className="pt-6 border-t border-slate-100">
+          <h2 className="text-lg font-black text-slate-800 mb-1">تسميات وسائل الدفع (المحافظ)</h2>
+          <p className="text-slate-500 text-sm mb-4">سمِّ كل وسيلة بالاسم اللي تحبيه (مثلاً المحفظة → «فودافون كاش»). يظهر في الكاشير والإيصالات.</p>
+          <div className="grid grid-cols-2 gap-3">
+            {([['cash', 'كاش'], ['visa', 'فيزا'], ['wallet', 'محفظة'], ['instapay', 'انستا باي']] as const).map(([k, def]) => {
+              const labels = formData.paymentLabels || {};
+              return (
+                <div key={k}>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">{def}</label>
+                  <input value={labels[k] ?? ''} placeholder={def} onChange={(e) => setFormData({ ...formData, paymentLabels: { ...labels, [k]: e.target.value } })} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="pt-6 border-t border-slate-100 flex justify-end">
           <button type="submit" style={{ backgroundColor: formData.themeColor, boxShadow: `0 4px 12px ${formData.themeColor}40` }} className="text-white px-8 py-3 rounded-xl font-bold transition hover:opacity-90">
             حفظ التغييرات
