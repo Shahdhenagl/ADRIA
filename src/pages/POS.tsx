@@ -2510,7 +2510,7 @@ export default function POS() {
                 <span className="text-3xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter">
                   {pricesHidden ? '🔒' : total.toFixed(2)} <span className="text-xs text-slate-400 font-bold tracking-normal">{storeSettings.currency}</span>
                 </span>
-                {cart.length > 0 && !pricesHidden && (
+                {cart.length > 0 && !pricesHidden && ((storeSettings as any).showInvoiceProfit !== false) && (
                   <span className={`text-[10px] font-black px-2 py-0.5 rounded-md mt-1 border ${
                     profit >= 0 
                       ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-800' 

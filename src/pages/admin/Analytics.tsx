@@ -28,7 +28,7 @@ export default function Analytics() {
   const { storeSettings, loadAnalyticsData, purchaseInvoices, products, expenses, orders: globalOrders } = useStore();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [timeRange, setTimeRange] = useState<'7d' | '30d' | 'thisMonth' | 'thisYear' | 'all'>('30d');
+  const [timeRange, setTimeRange] = useState<'today' | '7d' | '30d' | 'thisMonth' | 'thisYear' | 'all'>('30d');
 
   useEffect(() => {
     fetchData();
@@ -39,7 +39,9 @@ export default function Analytics() {
     let start: string | undefined;
     const now = new Date();
 
-    if (timeRange === '7d') {
+    if (timeRange === 'today') {
+      start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+    } else if (timeRange === '7d') {
       const d = new Date();
       d.setDate(d.getDate() - 7);
       start = d.toISOString();
@@ -162,7 +164,9 @@ export default function Analytics() {
     // Calculate time-filtered expenses
     let startLimit: Date | null = null;
     const now = new Date();
-    if (timeRange === '7d') {
+    if (timeRange === 'today') {
+      startLimit = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    } else if (timeRange === '7d') {
       startLimit = new Date();
       startLimit.setDate(startLimit.getDate() - 7);
     } else if (timeRange === '30d') {
@@ -287,6 +291,7 @@ export default function Analytics() {
         <div className="flex flex-wrap items-center gap-3">
           <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-200 flex gap-1">
             {[
+              { id: 'today', label: 'اليوم' },
               { id: '7d', label: '7 أيام' },
               { id: '30d', label: '30 يوم' },
               { id: 'thisMonth', label: 'هذا الشهر' },

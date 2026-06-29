@@ -237,6 +237,15 @@ export default function Settings() {
           </div>
         </div>
 
+        {/* ── إعدادات العرض ── */}
+        <div className="pt-6 border-t border-slate-100">
+          <h2 className="text-lg font-black text-slate-800 mb-3">إعدادات العرض</h2>
+          <label className="flex items-center justify-between gap-2 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 cursor-pointer">
+            <span className="text-sm font-bold text-slate-700">إظهار «ربح الفاتورة» في شاشة الكاشير</span>
+            <input type="checkbox" checked={formData.showInvoiceProfit !== false} onChange={(e) => setFormData({ ...formData, showInvoiceProfit: e.target.checked })} className="w-5 h-5 accent-indigo-600" />
+          </label>
+        </div>
+
         {/* ── تسميات وسائل الدفع / المحافظ ── */}
         <div className="pt-6 border-t border-slate-100">
           <h2 className="text-lg font-black text-slate-800 mb-1">تسميات وسائل الدفع (المحافظ)</h2>

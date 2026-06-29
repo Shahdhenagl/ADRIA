@@ -7,8 +7,6 @@ import { escapeHtml } from '../../utils/escapeHtml';
 import { openPrintWindow } from '../../utils/printWindow';
 import * as XLSX from 'xlsx';
 
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 import { printPaymentReceipt } from '../../utils/printPaymentReceipt';
 
 export default function Customers() {
@@ -106,28 +104,25 @@ export default function Customers() {
     XLSX.writeFile(wb, `customers_report_${new Date().toLocaleDateString()}.xlsx`);
   };
 
-  const exportPDF = async () => {
-    const element = document.getElementById('customers-table');
-    if (!element) return;
-    const canvas = await html2canvas(element, { scale: 2 });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save(`customers_report_${new Date().toLocaleDateString()}.pdf`);
+  const reportShell = (title: string, body: string) => `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"/><title>${title}</title><style>
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+    *{font-family:'Cairo',sans-serif;box-sizing:border-box;} body{padding:12mm;color:#000;}
+    h1{font-size:22px;text-align:center;margin:0;} h2{font-size:13px;text-align:center;color:#555;margin:4px 0 12px;font-weight:700;}
+    table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;} th,td{border:1px solid #ccc;padding:5px 7px;text-align:right;} thead th{background:#f1f5f9;font-weight:900;}
+    @media print{@page{size:A4;margin:8mm;}}
+  </style></head><body><h1>${escapeHtml(storeSettings.name)}</h1>${body}
+    <p style="margin-top:16px;font-size:11px;color:#888;text-align:center;">تم الإصدار: ${new Date().toLocaleString('ar-EG')}</p>
+    <script>window.onload=()=>{setTimeout(()=>{window.print();},400);}</script></body></html>`;
+
+  const exportPDF = () => {
+    const rows = filteredCustomers.map((c: any) => { const m = getCustomerMetrics(c.id); return `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.phone || '')}</td><td>${(m.totalSpent || 0).toFixed(2)}</td><td>${(m.totalDebt || 0).toFixed(2)}</td></tr>`; }).join('');
+    openPrintWindow(reportShell('كشف العملاء', `<h2>كشف العملاء (${filteredCustomers.length})</h2><table><thead><tr><th>الاسم</th><th>الهاتف</th><th>إجمالي المشتريات</th><th>المديونية</th></tr></thead><tbody>${rows}</tbody></table>`));
   };
 
-  const exportCustomerStatementPDF = async () => {
-    const element = document.getElementById('customer-profile-modal');
-    if (!element) return;
-    const canvas = await html2canvas(element, { scale: 2, useCORS: true });
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save(`statement_${selectedCustomer.name}_${new Date().toLocaleDateString()}.pdf`);
+  const exportCustomerStatementPDF = () => {
+    const c = selectedCustomer; if (!c) return;
+    const rows = (c.customerOrders || []).map((o: any) => `<tr><td>#${o.id}</td><td>${new Date(o.date).toLocaleString('ar-EG')}</td><td>${o.type === 'payment' ? 'تحصيل' : 'فاتورة'}</td><td>${(o.total || 0).toFixed(2)}</td><td>${(o.paid_amount || 0).toFixed(2)}</td><td>${((o.type === 'payment' ? 0 : (o.total || 0)) - (o.paid_amount || 0)).toFixed(2)}</td></tr>`).join('');
+    openPrintWindow(reportShell(`كشف حساب ${c.name}`, `<h2>كشف حساب العميل: ${escapeHtml(c.name)} — ${escapeHtml(c.phone || '')}</h2><table><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>النوع</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقّي</th></tr></thead><tbody>${rows}</tbody></table>`));
   };
 
   const handleOpenProfile = (customer: any) => {

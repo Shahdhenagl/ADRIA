@@ -6,8 +6,6 @@ import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { openPrintWindow } from '../../utils/printWindow';
-import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
 
 function ProductSearchSelect({ 
   value, 
@@ -130,6 +128,8 @@ export default function Suppliers() {
   const [editingPurchaseInvoice, setEditingPurchaseInvoice] = useState<any>(null);
   const [selectedSupplierProfile, setSelectedSupplierProfile] = useState<any>(null);
   const [showSupplierProfile, setShowSupplierProfile] = useState(false);
+  const [supFrom, setSupFrom] = useState('');
+  const [supTo, setSupTo] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [isPayingDebt, setIsPayingDebt] = useState(false);
   const [debtPaidCash, setDebtPaidCash] = useState('');
@@ -836,7 +836,10 @@ export default function Suppliers() {
 
       {/* ── Supplier Profile Modal ── */}
       {showSupplierProfile && selectedSupplierProfile && (() => {
-        const supplierInvoices = purchaseInvoices.filter(inv => inv.supplier_id === selectedSupplierProfile.id);
+        const _start = supFrom ? new Date(`${supFrom}T00:00:00`) : null;
+        const _end = supTo ? (() => { const d = new Date(`${supTo}T00:00:00`); d.setDate(d.getDate() + 1); return d; })() : null;
+        const inRange = (dt: any) => { const d = new Date(dt); return (!_start || d >= _start) && (!_end || d < _end); };
+        const supplierInvoices = purchaseInvoices.filter(inv => inv.supplier_id === selectedSupplierProfile.id && inRange(inv.created_at));
         const totalPurchases = supplierInvoices.reduce((sum, inv) => sum + inv.total, 0);
         const totalPaid = supplierInvoices.reduce((sum, inv) => sum + inv.paid_amount, 0);
         const totalDebt = totalPurchases - totalPaid;
@@ -905,26 +908,36 @@ export default function Suppliers() {
           }
         };
 
-        const exportSupplierPDF = async () => {
-          const el = document.getElementById('supplier-profile-pdf');
-          if (!el) return;
-          const canvas = await html2canvas(el, { scale: 2, useCORS: true, backgroundColor: '#f8fafc', windowWidth: el.scrollWidth, height: el.scrollHeight, windowHeight: el.scrollHeight });
-          const imgData = canvas.toDataURL('image/png');
-          const pdf = new jsPDF('p', 'mm', 'a4');
-          const pageW = pdf.internal.pageSize.getWidth();
-          const pageH = pdf.internal.pageSize.getHeight();
-          const imgH = (canvas.height * pageW) / canvas.width;
-          let heightLeft = imgH;
-          let position = 0;
-          pdf.addImage(imgData, 'PNG', 0, position, pageW, imgH);
-          heightLeft -= pageH;
-          while (heightLeft > 0) {
-            position -= pageH;
-            pdf.addPage();
-            pdf.addImage(imgData, 'PNG', 0, position, pageW, imgH);
-            heightLeft -= pageH;
-          }
-          pdf.save(`مورد_${selectedSupplierProfile.name}_${new Date().toLocaleDateString('en-CA')}.pdf`);
+        const exportSupplierPDF = () => {
+          const cur = storeSettings.currency;
+          const period = (supFrom || supTo) ? `الفترة: ${supFrom || '...'} ← ${supTo || '...'}` : 'كل الفترات';
+          const prodRows = productStats.map((s: any) => `<tr><td>${escapeHtml(s.name)}</td><td>${formatQty(s.totalQty, s.unit)}</td><td>${s.avgPrice.toFixed(2)}</td><td>${s.lastPrice.toFixed(2)}</td><td>${formatQty(s.currentStock, s.unit)}</td><td>${formatQty(s.sold, s.unit)}</td></tr>`).join('');
+          const invRows = [...supplierInvoices].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map((inv) => `<tr><td>${escapeHtml(String(inv.invoice_number))}</td><td>${new Date(inv.created_at).toLocaleString('ar-EG')}</td><td>${(inv.total || 0).toFixed(2)}</td><td>${(inv.paid_amount || 0).toFixed(2)}</td><td>${((inv.total || 0) - (inv.paid_amount || 0)).toFixed(2)}</td></tr>`).join('');
+          const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"/><title>كشف حساب مورد - ${escapeHtml(selectedSupplierProfile.name)}</title><style>
+            @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+            *{font-family:'Cairo',sans-serif;box-sizing:border-box;} body{padding:12mm;color:#000;}
+            h1{font-size:22px;text-align:center;margin:0;} h2{font-size:13px;text-align:center;color:#555;margin:4px 0;font-weight:700;}
+            h3{font-size:14px;margin:16px 0 6px;} .sum{display:flex;gap:10px;justify-content:center;margin:10px 0;flex-wrap:wrap;}
+            .card{border:1px solid #ccc;border-radius:8px;padding:8px 14px;text-align:center;} .card b{display:block;font-size:16px;}
+            table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;} th,td{border:1px solid #ccc;padding:5px 7px;text-align:right;} thead th{background:#f1f5f9;font-weight:900;}
+            @media print{@page{size:A4;margin:8mm;}}
+          </style></head><body>
+            <h1>${escapeHtml(storeSettings.name)}</h1>
+            <h2>كشف حساب المورد: ${escapeHtml(selectedSupplierProfile.name)} — ${escapeHtml(selectedSupplierProfile.phone || '')}</h2>
+            <h2>${period}</h2>
+            <div class="sum">
+              <div class="card">إجمالي المشتريات<b>${totalPurchases.toFixed(2)} ${cur}</b></div>
+              <div class="card">المدفوع<b>${totalPaid.toFixed(2)} ${cur}</b></div>
+              <div class="card">المتبقّي (مديونية)<b>${totalDebt.toFixed(2)} ${cur}</b></div>
+            </div>
+            <h3>الأصناف المشتراة</h3>
+            <table><thead><tr><th>المنتج</th><th>الكمية</th><th>متوسط الشراء</th><th>آخر شراء</th><th>المتاح بالمخزون</th><th>المباع</th></tr></thead><tbody>${prodRows || '<tr><td colspan=6>لا يوجد</td></tr>'}</tbody></table>
+            <h3>الفواتير</h3>
+            <table><thead><tr><th>رقم</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقّي</th></tr></thead><tbody>${invRows || '<tr><td colspan=5>لا يوجد</td></tr>'}</tbody></table>
+            <p style="margin-top:16px;font-size:11px;color:#888;text-align:center;">تم الإصدار: ${new Date().toLocaleString('ar-EG')}</p>
+            <script>window.onload=()=>{setTimeout(()=>{window.print();},400);}</script>
+          </body></html>`;
+          openPrintWindow(html);
         };
 
         return (
@@ -940,7 +953,14 @@ export default function Suppliers() {
                     <p className="text-slate-500 font-bold mt-1 flex items-center gap-2"><Phone size={14} /> {selectedSupplierProfile.phone}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
+                  <div className="flex items-center gap-1 text-xs">
+                    <span className="text-slate-400 font-bold">من</span>
+                    <input type="date" value={supFrom} onChange={(e) => setSupFrom(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold" />
+                    <span className="text-slate-400 font-bold">إلى</span>
+                    <input type="date" value={supTo} onChange={(e) => setSupTo(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold" />
+                    {(supFrom || supTo) && <button onClick={() => { setSupFrom(''); setSupTo(''); }} className="text-slate-400 hover:text-red-500 px-1">✕</button>}
+                  </div>
                   <button onClick={exportSupplierPDF} style={{ backgroundColor: tc }} className="text-white px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 hover:opacity-90 transition"><Download size={16} /> تصدير PDF</button>
                   <button onClick={() => setShowSupplierProfile(false)} className="p-2 rounded-2xl hover:bg-slate-100 transition"><X size={24} /></button>
                 </div>

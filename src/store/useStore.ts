@@ -266,6 +266,7 @@ export interface StoreSettings {
   locationUrl?: string;
   cashierPermissions?: Record<string, boolean>; // صلاحيات الكاشير (إظهار/إخفاء مميزات)
   paymentLabels?: Record<string, string>; // تسميات وسائل الدفع (كاش/فيزا/محفظة/انستا)
+  showInvoiceProfit?: boolean; // إظهار ربح الفاتورة في شاشة الكاشير
 }
 
 export interface Employee {
@@ -597,6 +598,7 @@ function mapSettings(row: Record<string, unknown>): StoreSettings {
     locationUrl: (row.location_url as string) ?? '',
     cashierPermissions: (row.cashier_permissions as Record<string, boolean>) ?? undefined,
     paymentLabels: (row.payment_labels as Record<string, string>) ?? undefined,
+    showInvoiceProfit: (row.show_invoice_profit as boolean) ?? true,
   };
 }
 
@@ -2569,6 +2571,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.locationUrl !== undefined) mapped.location_url = newSettings.locationUrl;
     if (newSettings.cashierPermissions !== undefined) mapped.cashier_permissions = newSettings.cashierPermissions;
     if (newSettings.paymentLabels !== undefined) mapped.payment_labels = newSettings.paymentLabels;
+    if (newSettings.showInvoiceProfit !== undefined) mapped.show_invoice_profit = newSettings.showInvoiceProfit;
 
     const { data: existing } = await supabase.from('store_settings').select('id').limit(1).maybeSingle();
     
