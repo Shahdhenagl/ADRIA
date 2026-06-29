@@ -8,9 +8,11 @@ import { openPrintWindow } from '../../utils/printWindow';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
 import { printPaymentReceipt } from '../../utils/printPaymentReceipt';
 import { printMaintenanceInvoice } from '../../utils/printMaintenanceInvoice';
+import PaymentSplitInputs from '../../components/PaymentSplitInputs';
+import { formToSplit, sumSplit, activePaymentKeys, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 
 export default function DeferredAccounts() {
   const { customers, orders, suppliers, purchaseInvoices, storeSettings, checkout, payInvoiceDebt, addPurchaseInvoice, addSupplier, carSubscriptions } = useStore();
@@ -144,16 +146,6 @@ export default function DeferredAccounts() {
     const totalDebt = Math.max(0, supplierInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0));
     return { ...s, totalDebt, invoices: supplierInvoices.filter(inv => inv.total - inv.paid_amount > 0) };
   }).filter(s => s.totalDebt > 0).sort((a, b) => b.totalDebt - a.totalDebt);
-
-  const getPrimaryPaymentMethod = (cash: number, visa: number, wallet: number, instapay: number) => {
-    const methods: { method: 'cash' | 'visa' | 'wallet' | 'instapay'; amount: number }[] = [
-      { method: 'cash', amount: cash },
-      { method: 'visa', amount: visa },
-      { method: 'wallet', amount: wallet },
-      { method: 'instapay', amount: instapay }
-    ];
-    return methods.sort((a, b) => b.amount - a.amount)[0].method;
-  };
 
   // Filtered lists for table
   const displayList = activeTab === 'customers' 
@@ -580,12 +572,9 @@ export default function DeferredAccounts() {
   };
 
   const handleProcessPayment = async () => {
-    const cash = parseFloat(paymentForm.cash) || 0;
-    const visa = parseFloat(paymentForm.visa) || 0;
-    const wallet = parseFloat(paymentForm.wallet) || 0;
-    const insta = parseFloat(paymentForm.instapay) || 0;
+    const split = formToSplit(paymentForm);
     const discount = activeTab === 'customers' ? (parseFloat(paymentForm.discount) || 0) : 0;
-    const totalPaid = cash + visa + wallet + insta;
+    const totalPaid = sumSplit(split);
     const totalReduction = totalPaid + discount;
 
     if (totalReduction <= 0 || !selectedEntity) {
@@ -606,8 +595,8 @@ export default function DeferredAccounts() {
               selectedInvoice.id,
               selectedEntity.id,
               totalPaid,
-              { cash, visa, wallet, instapay: insta },
-              getPrimaryPaymentMethod(cash, visa, wallet, insta),
+              split as any,
+              primaryMethod_(split),
               discount
             );
             alert('تم تسجيل سداد للفاتورة بنجاح!');
@@ -623,34 +612,36 @@ export default function DeferredAccounts() {
             if (pendingOrders.length > 0) {
               let remainingPayment = totalPaid;
               let remainingDiscount = discount;
-              let remainingCash = cash;
-              let remainingVisa = visa;
-              let remainingWallet = wallet;
-              let remainingInstapay = insta;
+              const remaining: Record<string, number> = { ...split };
+              const payKeys = activePaymentKeys(storeSettings as any);
               let lastPaymentId = null;
- 
+
               for (const order of pendingOrders) {
                 if (remainingPayment <= 0.009 && remainingDiscount <= 0.009) break;
-                
+
                 const appliedDiscount = Math.min(order.current_debt, remainingDiscount);
                 remainingDiscount -= appliedDiscount;
 
                 const debtAfterDiscount = order.current_debt - appliedDiscount;
                 const appliedPayment = Math.min(debtAfterDiscount, remainingPayment);
-                
-                let payCash = Math.min(remainingCash, appliedPayment); remainingCash -= payCash;
-                let payVisa = Math.min(remainingVisa, appliedPayment - payCash); remainingVisa -= payVisa;
-                let payWallet = Math.min(remainingWallet, appliedPayment - payCash - payVisa); remainingWallet -= payWallet;
-                let payInstapay = Math.min(remainingInstapay, appliedPayment - payCash - payVisa - payWallet); remainingInstapay -= payInstapay;
-                
-                const actualPaid = payCash + payVisa + payWallet + payInstapay;
+
+                // وزّع المبلغ على الطرق المتاحة بالترتيب
+                const paySplit: Record<string, number> = {};
+                let left = appliedPayment;
+                for (const k of payKeys) {
+                  const take = Math.min(remaining[k] || 0, left);
+                  paySplit[k] = take;
+                  remaining[k] -= take;
+                  left -= take;
+                }
+                const actualPaid = payKeys.reduce((s, k) => s + (paySplit[k] || 0), 0);
                 if (actualPaid > 0.009 || appliedDiscount > 0.009) {
                   const paymentId = await payInvoiceDebt(
                     order.id,
                     selectedEntity.id,
                     actualPaid,
-                    { cash: payCash, visa: payVisa, wallet: payWallet, instapay: payInstapay },
-                    getPrimaryPaymentMethod(payCash, payVisa, payWallet, payInstapay),
+                    paySplit as any,
+                    primaryMethod_(paySplit),
                     appliedDiscount
                   );
                   if (paymentId) lastPaymentId = paymentId;
@@ -666,12 +657,12 @@ export default function DeferredAccounts() {
               }
             } else {
               const invoiceId = await checkout(
-                0, 
-                { name: selectedEntity.name, phone: selectedEntity.phone, custom_id: selectedEntity.custom_id }, 
-                totalPaid, 
+                0,
+                { name: selectedEntity.name, phone: selectedEntity.phone, custom_id: selectedEntity.custom_id },
+                totalPaid,
                 'payment',
-                getPrimaryPaymentMethod(cash, visa, wallet, insta),
-                { cash, visa, wallet, instapay: insta }
+                primaryMethod_(split),
+                split as any
               );
               alert(`تم تسجيل تحصيل عام من العميل بنجاح!\nرقم الإيصال: ${invoiceId}`);
               
@@ -689,13 +680,8 @@ export default function DeferredAccounts() {
            supplier_id: selectedEntity.id,
            total: 0,
            paid_amount: totalPaid,
-           payment_method: getPrimaryPaymentMethod(cash, visa, wallet, insta)
-         }, [], {
-           cash,
-           visa,
-           wallet,
-           instapay: insta
-         });
+           payment_method: primaryMethod_(split)
+         }, [], split as any);
          alert(`تم تسجيل سداد للمورد بنجاح!\nرقم الإيصال: ${invoiceNum}`);
        }
        
@@ -909,40 +895,12 @@ export default function DeferredAccounts() {
                 <div className="col-span-2 text-center py-2 bg-indigo-50 rounded-xl mb-2">
                   <span className="text-xs font-bold text-indigo-400">{activeTab === 'customers' ? 'توزيع مبلغ التحصيل' : 'توزيع مبلغ السداد'}</span>
                 </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase text-right">💵 كاش</label>
-                  <input
-                    type="number" dir="ltr"
-                    className="w-full border border-slate-200 rounded-xl py-3 px-3 text-lg font-black text-center focus:ring-2 focus:ring-indigo-500"
-                    value={paymentForm.cash}
-                    onChange={(e) => setPaymentForm({...paymentForm, cash: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase text-right">💳 فيزا</label>
-                  <input
-                    type="number" dir="ltr"
-                    className="w-full border border-slate-200 rounded-xl py-3 px-3 text-lg font-black text-center focus:ring-2 focus:ring-indigo-500"
-                    value={paymentForm.visa}
-                    onChange={(e) => setPaymentForm({...paymentForm, visa: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase text-right">📱 محفظة</label>
-                  <input
-                    type="number" dir="ltr"
-                    className="w-full border border-slate-200 rounded-xl py-3 px-3 text-lg font-black text-center focus:ring-2 focus:ring-indigo-500"
-                    value={paymentForm.wallet}
-                    onChange={(e) => setPaymentForm({...paymentForm, wallet: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase text-right">⚡ انستا باي</label>
-                  <input
-                    type="number" dir="ltr"
-                    className="w-full border border-slate-200 rounded-xl py-3 px-3 text-lg font-black text-center focus:ring-2 focus:ring-indigo-500"
-                    value={paymentForm.instapay}
-                    onChange={(e) => setPaymentForm({...paymentForm, instapay: e.target.value})}
+                <div className="col-span-2">
+                  <PaymentSplitInputs
+                    value={paymentForm}
+                    onChange={(k, v) => setPaymentForm({ ...paymentForm, [k]: v })}
+                    labelClassName="block text-[10px] font-bold text-slate-400 mb-1 uppercase text-right"
+                    inputClassName="w-full border border-slate-200 rounded-xl py-3 px-3 text-lg font-black text-center focus:ring-2 focus:ring-indigo-500"
                   />
                 </div>
                 {activeTab === 'customers' && (
@@ -963,7 +921,7 @@ export default function DeferredAccounts() {
                 <div className="flex justify-between items-center text-xs font-bold text-slate-400 px-2">
                   <span>{activeTab === 'customers' ? 'المبلغ المحصل فعلياً:' : 'المبلغ المدفوع فعلياً:'}</span>
                   <span className="text-white text-sm">
-                    {((parseFloat(paymentForm.cash) || 0) + (parseFloat(paymentForm.visa) || 0) + (parseFloat(paymentForm.wallet) || 0) + (parseFloat(paymentForm.instapay) || 0)).toLocaleString()} {storeSettings.currency}
+                    {sumSplit(formToSplit(paymentForm)).toLocaleString()} {storeSettings.currency}
                   </span>
                 </div>
                 {activeTab === 'customers' && (parseFloat(paymentForm.discount) || 0) > 0 && (
@@ -977,7 +935,7 @@ export default function DeferredAccounts() {
                 <div className="flex justify-between items-center text-sm font-black text-white px-2 border-t border-slate-800 pt-2">
                   <span>إجمالي الخصم من الدين:</span>
                   <span className="text-xl text-yellow-400">
-                    {(((parseFloat(paymentForm.cash) || 0) + (parseFloat(paymentForm.visa) || 0) + (parseFloat(paymentForm.wallet) || 0) + (parseFloat(paymentForm.instapay) || 0)) + (activeTab === 'customers' ? (parseFloat(paymentForm.discount) || 0) : 0)).toLocaleString()} {storeSettings.currency}
+                    {(sumSplit(formToSplit(paymentForm)) + (activeTab === 'customers' ? (parseFloat(paymentForm.discount) || 0) : 0)).toLocaleString()} {storeSettings.currency}
                   </span>
                 </div>
               </div>

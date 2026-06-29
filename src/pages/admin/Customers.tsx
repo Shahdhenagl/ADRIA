@@ -8,6 +8,8 @@ import { openPrintWindow } from '../../utils/printWindow';
 import * as XLSX from 'xlsx';
 
 import { printPaymentReceipt } from '../../utils/printPaymentReceipt';
+import PaymentSplitInputs from '../../components/PaymentSplitInputs';
+import { formToSplit, sumSplit, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 
 export default function Customers() {
   const { customers, orders, storeSettings } = useStore();
@@ -175,30 +177,21 @@ export default function Customers() {
   };
 
   const handlePayDebt = async () => {
-    const cash = parseFloat(paymentForm.cash) || 0;
-    const visa = parseFloat(paymentForm.visa) || 0;
-    const wallet = parseFloat(paymentForm.wallet) || 0;
-    const insta = parseFloat(paymentForm.instapay) || 0;
-    const totalPaid = cash + visa + wallet + insta;
+    const split = formToSplit(paymentForm);
+    const totalPaid = sumSplit(split);
 
     if (totalPaid <= 0) return alert("يرجى إدخال مبلغ التحصيل");
 
-    const methods: { method: 'cash' | 'visa' | 'wallet' | 'instapay'; amount: number }[] = [
-      { method: 'cash', amount: cash },
-      { method: 'visa', amount: visa },
-      { method: 'wallet', amount: wallet },
-      { method: 'instapay', amount: insta }
-    ];
-    const primaryMethod = methods.sort((a, b) => b.amount - a.amount)[0].method;
+    const primaryMethod = primaryMethod_(split);
 
     try {
       const invoiceId = await checkout(
-        0, 
+        0,
         { name: selectedCustomer.name, phone: selectedCustomer.phone, custom_id: selectedCustomer.custom_id },
         totalPaid,
         'payment',
         primaryMethod,
-        { cash, visa, wallet, instapay: insta }
+        split as any
       );
       
       alert("تم تسجيل التحصيل بنجاح");
@@ -616,50 +609,20 @@ export default function Customers() {
                     </button>
                   </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider text-right">💵 كاش</label>
-                      <input 
-                        type="number" dir="ltr" placeholder="0.00"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
-                        value={paymentForm.cash}
-                        onChange={e => setPaymentForm({...paymentForm, cash: e.target.value})}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider text-right">💳 فيزا</label>
-                      <input 
-                        type="number" dir="ltr" placeholder="0.00"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
-                        value={paymentForm.visa}
-                        onChange={e => setPaymentForm({...paymentForm, visa: e.target.value})}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider text-right">📱 محفظة</label>
-                      <input 
-                        type="number" dir="ltr" placeholder="0.00"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
-                        value={paymentForm.wallet}
-                        onChange={e => setPaymentForm({...paymentForm, wallet: e.target.value})}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider text-right">⚡ انستا باي</label>
-                      <input 
-                        type="number" dir="ltr" placeholder="0.00"
-                        className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
-                        value={paymentForm.instapay}
-                        onChange={e => setPaymentForm({...paymentForm, instapay: e.target.value})}
-                      />
-                    </div>
+                  <div className="mb-6">
+                    <PaymentSplitInputs
+                      value={paymentForm}
+                      onChange={(k, v) => setPaymentForm({ ...paymentForm, [k]: v })}
+                      labelClassName="block text-[10px] font-bold text-slate-400 mb-1 uppercase tracking-wider text-right"
+                      inputClassName="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
+                    />
                   </div>
 
                   <div className="flex items-center justify-between bg-slate-50 p-4 rounded-2xl border border-slate-100">
                     <div className="flex flex-col">
                       <span className="text-xs font-bold text-slate-400">إجمالي المبلغ المدفوع</span>
                       <span className="text-2xl font-black text-indigo-600">
-                        {((parseFloat(paymentForm.cash) || 0) + (parseFloat(paymentForm.visa) || 0) + (parseFloat(paymentForm.wallet) || 0) + (parseFloat(paymentForm.instapay) || 0)).toLocaleString()} {storeSettings.currency}
+                        {sumSplit(formToSplit(paymentForm)).toLocaleString()} {storeSettings.currency}
                       </span>
                     </div>
                     <button 

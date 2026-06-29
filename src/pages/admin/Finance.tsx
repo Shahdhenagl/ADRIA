@@ -9,7 +9,8 @@ import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { calculateOrderReturnValue, calculateCashRefunded } from '../../utils/returns';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+import html2canvas from 'html2canvas-pro';
+import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
 
 export default function Finance() {
@@ -60,10 +61,12 @@ export default function Finance() {
     transaction_type: 'expense',
     category: 'عام', 
     amount: '', 
-    paid_cash: '', 
-    paid_visa: '', 
-    paid_wallet: '', 
-    paid_instapay: '', 
+    paid_cash: '',
+    paid_visa: '',
+    paid_wallet: '',
+    paid_instapay: '',
+    paid_method5: '',
+    paid_method6: '',
     note: '',
     transfer_from: 'instapay',
     transfer_to: 'cash',
@@ -113,7 +116,7 @@ export default function Finance() {
   const openingBalance = initialBalance + totalsBefore;
 
   const getPrimaryMethod = (item: any) => {
-    if (typeof item.payment_method === 'string' && ['visa', 'wallet', 'instapay'].includes(item.payment_method)) {
+    if (typeof item.payment_method === 'string' && ['visa', 'wallet', 'instapay', 'method5', 'method6'].includes(item.payment_method)) {
       return item.payment_method;
     }
     return 'cash';
@@ -129,7 +132,9 @@ export default function Finance() {
     const visa = Math.abs(item.paid_visa || 0);
     const wallet = Math.abs(item.paid_wallet || 0);
     const instapay = Math.abs(item.paid_instapay || 0);
-    const splitsSum = cash + visa + wallet + instapay;
+    const m5 = Math.abs(item.paid_method5 || 0);
+    const m6 = Math.abs(item.paid_method6 || 0);
+    const splitsSum = cash + visa + wallet + instapay + m5 + m6;
 
     if (splitsSum > 0) {
       // Transfer case: amount=0 but splits have real values (positive/negative)
@@ -272,12 +277,10 @@ export default function Finance() {
     return inc - returnsOut - outExp - outPur;
   };
 
-  const methodsBreakdown = {
-    cash: getDailyByMethod('cash') + getOpeningBalanceByMethod('cash'),
-    visa: getDailyByMethod('visa') + getOpeningBalanceByMethod('visa'),
-    wallet: getDailyByMethod('wallet') + getOpeningBalanceByMethod('wallet'),
-    instapay: getDailyByMethod('instapay') + getOpeningBalanceByMethod('instapay'),
-  };
+  const methodsBreakdown: Record<string, number> = {};
+  activePaymentKeys(storeSettings as any).forEach((m) => {
+    methodsBreakdown[m] = getDailyByMethod(m) + getOpeningBalanceByMethod(m);
+  });
 
   // 4. Combined Transaction List for the table
   const allDailyTransactions = useMemo(() => {
@@ -433,6 +436,8 @@ export default function Finance() {
         paid_visa: Math.abs(expense.paid_visa || 0).toString(),
         paid_wallet: Math.abs(expense.paid_wallet || 0).toString(),
         paid_instapay: Math.abs(expense.paid_instapay || 0).toString(),
+        paid_method5: Math.abs((expense as any).paid_method5 || 0).toString(),
+        paid_method6: Math.abs((expense as any).paid_method6 || 0).toString(),
         note: expense.note,
         transfer_from: 'instapay',
         transfer_to: 'cash',
@@ -444,10 +449,12 @@ export default function Finance() {
         transaction_type: 'expense',
         category: 'عام', 
         amount: '', 
-        paid_cash: '', 
-        paid_visa: '', 
-        paid_wallet: '', 
-        paid_instapay: '', 
+        paid_cash: '',
+        paid_visa: '',
+        paid_wallet: '',
+        paid_instapay: '',
+        paid_method5: '',
+        paid_method6: '',
         note: '',
         transfer_from: 'instapay',
         transfer_to: 'cash',
@@ -469,6 +476,8 @@ export default function Finance() {
       paid_visa: (order.paid_visa || 0).toString(),
       paid_wallet: (order.paid_wallet || 0).toString(),
       paid_instapay: (order.paid_instapay || 0).toString(),
+      paid_method5: ((order as any).paid_method5 || 0).toString(),
+      paid_method6: ((order as any).paid_method6 || 0).toString(),
       note: order.notes || '',
       transfer_from: 'instapay',
       transfer_to: 'cash',
@@ -490,6 +499,8 @@ export default function Finance() {
       paid_visa: (purchase.paid_visa || 0).toString(),
       paid_wallet: (purchase.paid_wallet || 0).toString(),
       paid_instapay: (purchase.paid_instapay || 0).toString(),
+      paid_method5: ((purchase as any).paid_method5 || 0).toString(),
+      paid_method6: ((purchase as any).paid_method6 || 0).toString(),
       note: '',
       transfer_from: 'instapay',
       transfer_to: 'cash',
@@ -498,10 +509,7 @@ export default function Finance() {
     setShowModal(true);
   };
 
-  const getMethodLabel = (method: string) => {
-    const labels: Record<string, string> = { cash: 'كاش', visa: 'فيزا', wallet: 'محفظة', instapay: 'انستاباي' };
-    return labels[method] || method;
-  };
+  const getMethodLabel = (method: string) => payLabelOf(storeSettings as any, method);
 
   const handleSubmit = async () => {
     // Handle transfer type separately
@@ -518,17 +526,20 @@ export default function Finance() {
 
       setLoading(true);
       try {
-        const splits = { cash: 0, visa: 0, wallet: 0, instapay: 0 };
-        splits[formData.transfer_from as keyof typeof splits] = -transferAmt;
-        splits[formData.transfer_to as keyof typeof splits] = transferAmt;
-        
+        const splits: Record<string, number> = {};
+        activePaymentKeys(storeSettings as any).forEach((k) => { splits[k] = 0; });
+        splits[formData.transfer_from] = -transferAmt;
+        splits[formData.transfer_to] = transferAmt;
+
         await addExpense({
           category: 'تحويل داخلي',
           amount: 0,
-          paid_cash: splits.cash,
-          paid_visa: splits.visa,
-          paid_wallet: splits.wallet,
-          paid_instapay: splits.instapay,
+          paid_cash: splits.cash || 0,
+          paid_visa: splits.visa || 0,
+          paid_wallet: splits.wallet || 0,
+          paid_instapay: splits.instapay || 0,
+          paid_method5: splits.method5 || 0,
+          paid_method6: splits.method6 || 0,
           note: formData.note || `تحويل ${transferAmt} من ${getMethodLabel(formData.transfer_from)} إلى ${getMethodLabel(formData.transfer_to)}`,
           payment_method: 'cash'
         } as any);
@@ -557,12 +568,16 @@ export default function Finance() {
       return;
     }
 
-    const cash = parseFloat(formData.paid_cash) || 0;
-    const visa = parseFloat(formData.paid_visa) || 0;
-    const wallet = parseFloat(formData.paid_wallet) || 0;
-    const insta = parseFloat(formData.paid_instapay) || 0;
-    
-    const amountNum = cash + visa + wallet + insta;
+    const split: Record<string, number> = {};
+    activePaymentKeys(storeSettings as any).forEach((k) => { split[k] = parseFloat((formData as any)['paid_' + k]) || 0; });
+    const cash = split.cash || 0;
+    const visa = split.visa || 0;
+    const wallet = split.wallet || 0;
+    const insta = split.instapay || 0;
+    const m5 = split.method5 || 0;
+    const m6 = split.method6 || 0;
+    const amountNum = cash + visa + wallet + insta + m5 + m6;
+    const primaryM = primaryMethod_(split);
     if (amountNum <= 0) return alert('يرجى إدخال مبالغ الدفع أولاً');
 
     const isAddingNew = !editingExpense && !editingOrder && !editingPurchase;
@@ -581,10 +596,10 @@ export default function Finance() {
           paid_visa: visa * multiplier,
           paid_wallet: wallet * multiplier,
           paid_instapay: insta * multiplier,
+          paid_method5: m5 * multiplier,
+          paid_method6: m6 * multiplier,
           note: formData.note,
-          payment_method: [
-            { name: 'cash', amount: cash }, { name: 'visa', amount: visa }, { name: 'wallet', amount: wallet }, { name: 'instapay', amount: insta }
-          ].sort((a, b) => b.amount - a.amount)[0].name
+          payment_method: primaryM
         };
         await updateExpense(editingExpense.id, expenseData as any);
       } else if (editingOrder) {
@@ -593,10 +608,10 @@ export default function Finance() {
           paid_visa: visa,
           paid_wallet: wallet,
           paid_instapay: insta,
+          paid_method5: m5,
+          paid_method6: m6,
           paid_amount: amountNum,
-          payment_method: [
-            { name: 'cash', amount: cash }, { name: 'visa', amount: visa }, { name: 'wallet', amount: wallet }, { name: 'instapay', amount: insta }
-          ].sort((a, b) => b.amount - a.amount)[0].name as any
+          payment_method: primaryM as any
         };
         await editOrder(editingOrder.id, updatedData, editingOrder.items || [], formData.note || 'تعديل من شاشة الميزانية');
       } else if (editingPurchase) {
@@ -605,15 +620,13 @@ export default function Finance() {
           supplier_id: editingPurchase.supplier_id,
           total: editingPurchase.total,
           paid_amount: amountNum,
-          payment_method: [
-            { name: 'cash', amount: cash }, { name: 'visa', amount: visa }, { name: 'wallet', amount: wallet }, { name: 'instapay', amount: insta }
-          ].sort((a, b) => b.amount - a.amount)[0].name as any
+          payment_method: primaryM as any
         };
         await updatePurchaseInvoice(
           editingPurchase.id,
           updatedInvoice,
           editingPurchase.items || [],
-          { cash, visa, wallet, instapay: insta }
+          split as any
         );
       } else {
         const multiplier = formData.transaction_type === 'income' ? -1 : 1;
@@ -624,10 +637,10 @@ export default function Finance() {
           paid_visa: visa * multiplier,
           paid_wallet: wallet * multiplier,
           paid_instapay: insta * multiplier,
+          paid_method5: m5 * multiplier,
+          paid_method6: m6 * multiplier,
           note: formData.note,
-          payment_method: [
-            { name: 'cash', amount: cash }, { name: 'visa', amount: visa }, { name: 'wallet', amount: wallet }, { name: 'instapay', amount: insta }
-          ].sort((a, b) => b.amount - a.amount)[0].name
+          payment_method: primaryM
         };
         await addExpense(expenseData as any);
       }
@@ -1080,12 +1093,10 @@ export default function Finance() {
 
       {/* Payment Methods Breakdown */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        {[
-          { id: 'cash', label: 'كاش', icon: <Landmark size={18} />, color: 'emerald', value: methodsBreakdown.cash },
-          { id: 'visa', label: 'فيزا', icon: <CreditCard size={18} />, color: 'blue', value: methodsBreakdown.visa },
-          { id: 'wallet', label: 'محفظة', icon: <Smartphone size={18} />, color: 'purple', value: methodsBreakdown.wallet },
-          { id: 'instapay', label: 'انستاباي', icon: <Zap size={18} />, color: 'amber', value: methodsBreakdown.instapay },
-        ].map(m => (
+        {activePaymentKeys(storeSettings as any).map((mk) => {
+          const iconMap: Record<string, any> = { cash: <Landmark size={18} />, visa: <CreditCard size={18} />, wallet: <Smartphone size={18} />, instapay: <Zap size={18} /> };
+          const m = { id: mk, label: payLabelOf(storeSettings as any, mk), icon: iconMap[mk] || <Wallet size={18} />, color: 'slate', value: methodsBreakdown[mk] || 0 };
+          return (
           <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center gap-4">
             <div className={`w-10 h-10 rounded-xl bg-${m.color}-50 text-${m.color}-600 flex items-center justify-center`}>
               {m.icon}
@@ -1100,7 +1111,8 @@ export default function Finance() {
               </p>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* Daily Transactions Table */}
@@ -1157,10 +1169,9 @@ export default function Finance() {
                             {Object.entries(t.split || {}).map(([key, val]: [string, any]) => {
                               if (val === 0) return null;
                               const icons: Record<string, any> = { cash: <Landmark size={12} />, visa: <CreditCard size={12} />, wallet: <Smartphone size={12} />, instapay: <Zap size={12} /> };
-                              const labels: Record<string, string> = { cash: 'كاش', visa: 'فيزا', wallet: 'محفظة', instapay: 'انستا' };
                               return (
                                 <span key={key} className={`text-[10px] font-black flex items-center gap-1 ${val < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                                  {icons[key]} {labels[key]}: {val > 0 ? '+' : ''}{val.toLocaleString()}
+                                  {icons[key] || <Wallet size={12} />} {payLabelOf(storeSettings as any, key)}: {val > 0 ? '+' : ''}{val.toLocaleString()}
                                 </span>
                               );
                             })}
@@ -1311,10 +1322,9 @@ export default function Finance() {
                           value={formData.transfer_from}
                           onChange={e => setFormData({...formData, transfer_from: e.target.value})}
                         >
-                          <option value="cash">كاش ({methodsBreakdown.cash.toLocaleString()})</option>
-                          <option value="visa">فيزا ({methodsBreakdown.visa.toLocaleString()})</option>
-                          <option value="wallet">محفظة ({methodsBreakdown.wallet.toLocaleString()})</option>
-                          <option value="instapay">انستاباي ({methodsBreakdown.instapay.toLocaleString()})</option>
+                          {activePaymentKeys(storeSettings as any).map((k) => (
+                            <option key={k} value={k}>{payLabelOf(storeSettings as any, k)} ({(methodsBreakdown[k] || 0).toLocaleString()})</option>
+                          ))}
                         </select>
                       </div>
                       <div>
@@ -1324,10 +1334,9 @@ export default function Finance() {
                           value={formData.transfer_to}
                           onChange={e => setFormData({...formData, transfer_to: e.target.value})}
                         >
-                          <option value="cash">كاش</option>
-                          <option value="visa">فيزا</option>
-                          <option value="wallet">محفظة</option>
-                          <option value="instapay">انستاباي</option>
+                          {activePaymentKeys(storeSettings as any).map((k) => (
+                            <option key={k} value={k}>{payLabelOf(storeSettings as any, k)}</option>
+                          ))}
                         </select>
                       </div>
                       <div>
@@ -1381,42 +1390,17 @@ export default function Finance() {
               )}
 
               {formData.transaction_type !== 'transfer' && <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right">كاش</label>
-                  <input 
-                    type="number" dir="ltr" placeholder="0.00"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
-                    value={formData.paid_cash}
-                    onChange={e => setFormData({...formData, paid_cash: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right">فيزا</label>
-                  <input 
-                    type="number" dir="ltr" placeholder="0.00"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
-                    value={formData.paid_visa}
-                    onChange={e => setFormData({...formData, paid_visa: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right">محفظة</label>
-                  <input 
-                    type="number" dir="ltr" placeholder="0.00"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
-                    value={formData.paid_wallet}
-                    onChange={e => setFormData({...formData, paid_wallet: e.target.value})}
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right">انستا باي</label>
-                  <input 
-                    type="number" dir="ltr" placeholder="0.00"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
-                    value={formData.paid_instapay}
-                    onChange={e => setFormData({...formData, paid_instapay: e.target.value})}
-                  />
-                </div>
+                {activePaymentKeys(storeSettings as any).map((k) => (
+                  <div key={k}>
+                    <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right">{payLabelOf(storeSettings as any, k)}</label>
+                    <input
+                      type="number" dir="ltr" placeholder="0.00"
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 focus:outline-none font-bold text-right"
+                      value={(formData as any)['paid_' + k] || ''}
+                      onChange={e => setFormData({ ...formData, ['paid_' + k]: e.target.value } as any)}
+                    />
+                  </div>
+                ))}
               </div>}
 
               <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 flex justify-between items-center">
@@ -1426,7 +1410,7 @@ export default function Finance() {
                 }`}>
                   {formData.transaction_type === 'transfer'
                     ? (parseFloat(formData.transfer_amount) || 0).toLocaleString()
-                    : ((parseFloat(formData.paid_cash) || 0) + (parseFloat(formData.paid_visa) || 0) + (parseFloat(formData.paid_wallet) || 0) + (parseFloat(formData.paid_instapay) || 0)).toLocaleString()
+                    : activePaymentKeys(storeSettings as any).reduce((s, k) => s + (parseFloat((formData as any)['paid_' + k]) || 0), 0).toLocaleString()
                   } {storeSettings.currency}
                 </span>
               </div>

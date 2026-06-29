@@ -66,6 +66,13 @@ export function splitFromRow(row: Record<string, any> | undefined | null): Recor
   return out;
 }
 
+/** Build a full split (all 6 keys, numeric) from a form object keyed by method name. */
+export function formToSplit(form: Record<string, any> | undefined | null): Record<PaymentKey, number> {
+  const out = {} as Record<PaymentKey, number>;
+  for (const k of ALL_PAYMENT_KEYS) out[k] = parseFloat(form?.[k]) || 0;
+  return out;
+}
+
 /** The dominant method in a split (largest amount), defaulting to cash. */
 export function primaryMethod(split: PaymentSplit | undefined): PaymentKey {
   let best: PaymentKey = 'cash';
