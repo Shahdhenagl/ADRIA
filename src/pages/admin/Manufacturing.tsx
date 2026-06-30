@@ -155,7 +155,7 @@ export default function Manufacturing() {
             <h2 className="text-base font-black text-amber-800 dark:text-amber-300">شراء خامة</h2>
           </div>
           <div className="p-5">
-            <div className="grid grid-cols-2 gap-3 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <Field label="اسم الخامة"><input className={input} placeholder="مثال: قماش قطن" value={mName} onChange={(e) => setMName(e.target.value)} /></Field>
               <Field label="الوحدة"><input className={input} placeholder="متر / كيلو" value={mUnit} onChange={(e) => setMUnit(e.target.value)} /></Field>
               <Field label={`سعر الوحدة (${cur})`}><input className={input} type="number" placeholder="0" value={mCost} onChange={(e) => setMCost(e.target.value)} /></Field>
@@ -174,7 +174,7 @@ export default function Manufacturing() {
                 <span className="text-sm font-black text-slate-700 dark:text-slate-200">الدفع</span>
                 <button type="button" onClick={() => setMSplit({ cash: String(mTotal || ''), visa: '', wallet: '', instapay: '' })} className="text-[11px] font-bold text-amber-700 bg-amber-50 dark:bg-amber-900/30 px-2 py-1 rounded-lg">الكل كاش</button>
               </div>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {PAY_METHODS.map((p) => (
                   <div key={p.value}>
                     <label className="text-[11px] font-bold text-slate-500">{p.label}</label>
@@ -182,7 +182,7 @@ export default function Manufacturing() {
                   </div>
                 ))}
               </div>
-              <div className="grid grid-cols-3 gap-2 mt-3 text-center text-xs">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-3 text-center text-xs">
                 <div className="bg-white dark:bg-slate-800 rounded-lg p-2"><div className="text-slate-400 font-bold">الإجمالي</div><div className="font-black text-slate-800 dark:text-slate-100">{mTotal.toFixed(2)}</div></div>
                 <div className="bg-white dark:bg-slate-800 rounded-lg p-2"><div className="text-slate-400 font-bold">المدفوع</div><div className="font-black text-emerald-600">{mPaid.toFixed(2)}</div></div>
                 <div className="bg-white dark:bg-slate-800 rounded-lg p-2"><div className="text-slate-400 font-bold">آجل (متبقّي)</div><div className={`font-black ${mRemaining > 0.01 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100'}`}>{mRemaining.toFixed(2)}</div></div>
@@ -220,7 +220,7 @@ export default function Manufacturing() {
             <h2 className="text-base font-black text-indigo-800 dark:text-indigo-300">أمر تصنيع جديد</h2>
           </div>
           <div className="p-5 space-y-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <Field label="اسم المنتج"><input className={input} placeholder="مثال: تيشيرت" value={pName} onChange={(e) => setPName(e.target.value)} /></Field>
               <Field label="اللون"><input className={input} placeholder="أبيض" value={pColor} onChange={(e) => setPColor(e.target.value)} /></Field>
               <Field label="الكود / الباركود (يتولّد تلقائياً لو فاضي)"><input className={input} placeholder="اختياري" value={pCode} onChange={(e) => setPCode(e.target.value)} /></Field>
@@ -231,11 +231,11 @@ export default function Manufacturing() {
             {/* Distribution to warehouses */}
             <div className="bg-purple-50 dark:bg-purple-900/20 rounded-xl p-3 border border-purple-200 dark:border-purple-800">
               <label className="text-sm font-black text-purple-800 dark:text-purple-300 flex items-center gap-2 mb-2"><Warehouse size={16} /> توزيع القطع</label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <Field label="للعرض (المحل)"><input className={input} type="number" placeholder="0" value={pDisplay} onChange={(e) => setPDisplay(e.target.value)} /></Field>
                 <Field label="للمستودع"><input className={input} type="number" placeholder="0" value={pWarehouse} onChange={(e) => setPWarehouse(e.target.value)} /></Field>
               </div>
-              <div className="grid grid-cols-3 gap-2 mt-3 text-center text-xs">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-3 text-center text-xs">
                 <div className="bg-white dark:bg-slate-800 rounded-lg p-2"><div className="text-emerald-600 font-bold">متاح للبيع</div><div className="font-black text-slate-800 dark:text-slate-100">{sellableNum}</div></div>
                 <div className="bg-white dark:bg-slate-800 rounded-lg p-2"><div className="text-slate-400 font-bold">منها عرض</div><div className="font-black text-slate-800 dark:text-slate-100">{Math.min(dispNum, qtyNum)}</div></div>
                 <div className="bg-white dark:bg-slate-800 rounded-lg p-2"><div className="text-purple-600 font-bold">مخزن المصنع</div><div className="font-black text-purple-700">{factoryNum}</div></div>
@@ -297,7 +297,7 @@ export default function Manufacturing() {
             <Field label="ملاحظات (اختياري)"><input className={input} value={pNotes} onChange={(e) => setPNotes(e.target.value)} /></Field>
 
             {/* Live cost summary */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="bg-slate-100 dark:bg-slate-900/40 rounded-xl p-3 text-center">
                 <div className="text-[10px] font-bold text-slate-500">تكلفة الخامات</div>
                 <div className="font-black text-slate-800 dark:text-slate-100">{materialsCost.toFixed(2)}</div>

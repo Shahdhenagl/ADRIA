@@ -114,10 +114,10 @@ export default function Cashiers() {
   };
 
   return (
-    <div className="p-8 font-sans" dir="rtl">
-      <div className="flex justify-between items-center mb-8">
+    <div className="p-4 md:p-8 font-sans" dir="rtl">
+      <div className="flex flex-wrap justify-between items-center gap-3 mb-8">
         <div>
-          <h1 className="text-3xl font-black text-slate-800">إدارة محاسبين الكاشير</h1>
+          <h1 className="text-2xl md:text-3xl font-black text-slate-800">إدارة محاسبين الكاشير</h1>
           <p className="text-slate-500 mt-2">إضافة وتعديل بيانات الموظفين المسؤولين عن البيع</p>
         </div>
         <button 
@@ -242,7 +242,7 @@ export default function Cashiers() {
                     />
                   </div>
                   
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <label className="text-xs font-black text-slate-400 uppercase tracking-widest mr-1">كلمة المرور (Password)</label>
                       <input 

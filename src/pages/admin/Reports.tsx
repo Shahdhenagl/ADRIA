@@ -130,7 +130,7 @@ export default function Reports() {
   return (
     <div className="p-6 md:p-8 space-y-5 animate-fade-in">
       <div>
-        <h1 className="text-3xl font-black text-slate-800 dark:text-white flex items-center gap-3"><FileBarChart className="text-indigo-600" size={30} /> التقارير وكشوف الحساب</h1>
+        <h1 className="text-2xl md:text-3xl font-black text-slate-800 dark:text-white flex items-center gap-3"><FileBarChart className="text-indigo-600" size={30} /> التقارير وكشوف الحساب</h1>
         <p className="text-slate-500 mt-1 text-sm font-medium">كشوف المبيعات ووسائل الدفع والخزينة بفلتر الفترة وتصديرها PDF/طباعة</p>
       </div>
 

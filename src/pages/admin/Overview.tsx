@@ -60,10 +60,10 @@ export default function Overview() {
   const lowStockProducts = products.filter((p) => p.stock_quantity < 5).length;
 
   return (
-    <div className="p-8">
-      <div className="flex justify-between items-end mb-8">
+    <div className="p-4 md:p-8">
+      <div className="flex flex-wrap gap-3 justify-between items-end mb-8">
         <div>
-          <h1 className="text-3xl font-black text-slate-800">نظرة عامة</h1>
+          <h1 className="text-2xl md:text-3xl font-black text-slate-800">نظرة عامة</h1>
           <p className="text-slate-500 mt-2">إحصائيات المبيعات والأداء</p>
         </div>
       </div>
@@ -119,6 +119,7 @@ export default function Overview() {
       {/* Recent Orders Table */}
       <h3 className="text-xl font-bold text-slate-800 mb-4">أحدث الفواتير</h3>
       <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+        <div className="overflow-x-auto">
         <table className="w-full text-right">
           <thead className="bg-slate-50 border-b border-slate-100 text-slate-500 text-sm">
             <tr>
@@ -146,6 +147,7 @@ export default function Overview() {
             )}
           </tbody>
         </table>
+        </div>
       </div>
     </div>
   );

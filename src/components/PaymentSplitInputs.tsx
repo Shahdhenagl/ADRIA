@@ -21,7 +21,7 @@ export default function PaymentSplitInputs({ value, onChange, cols = 2, inputCla
   const { storeSettings } = useStore();
   const keys = activePaymentKeys(storeSettings as any);
   return (
-    <div className={`grid ${cols === 3 ? 'grid-cols-3' : 'grid-cols-2'} gap-3`}>
+    <div className={`grid ${cols === 3 ? 'grid-cols-2 md:grid-cols-3' : 'grid-cols-1 sm:grid-cols-2'} gap-3`}>
       {keys.map((k) => (
         <div key={k}>
           <label className={labelClassName || 'block text-[11px] font-bold text-slate-500 mb-1'}>{payLabelOf(storeSettings as any, k)}</label>

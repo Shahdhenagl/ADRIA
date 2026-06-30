@@ -138,7 +138,7 @@ export default function Managers() {
               {managers.map((m) => <option key={m.id} value={m.name}>{m.name}</option>)}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {METHODS.map((m) => (
               <div key={m.key}>
                 <label className="text-[11px] font-bold text-slate-500">{m.label} <span className="text-slate-400">(متاح {(avail[m.key] || 0).toFixed(0)})</span></label>

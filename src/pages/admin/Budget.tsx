@@ -436,7 +436,7 @@ export default function Budget() {
         </div>
 
         {/* Filters and Actions */}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="export-hide">
             <button 
               onClick={exportToPDF}

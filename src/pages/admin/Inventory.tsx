@@ -346,8 +346,8 @@ export default function Inventory() {
   };
 
   return (
-    <div className="p-8 relative">
-      
+    <div className="p-4 md:p-8 relative">
+
       {/* STATS CARDS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-100 flex items-center gap-6 group hover:border-indigo-200 transition-all">
@@ -423,12 +423,12 @@ export default function Inventory() {
               </button>
             </div>
             <form onSubmit={submitProduct} className="p-6 space-y-4 overflow-y-auto">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="sm:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-1">اسم المنتج <span className="text-red-500">*</span></label>
                   <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none" />
                 </div>
-                <div className="col-span-2 relative group">
+                <div className="sm:col-span-2 relative group">
                   <div className="flex justify-between items-end mb-1">
                     <label className="block text-sm font-bold text-slate-700">الباركود</label>
                     <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md flex items-center gap-1 opacity-0 group-focus-within:opacity-100 transition-opacity">
@@ -478,7 +478,7 @@ export default function Inventory() {
                   <label className="block text-sm font-bold text-slate-700 mb-1">سعر الجملة <span className="text-[10px] text-slate-400">(اختياري)</span></label>
                   <input type="number" min="0" step="0.01" value={formData.wholesale_price} onChange={e => setFormData({...formData, wholesale_price: parseFloat(e.target.value) || 0})} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-purple-500" />
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-1">الموسم</label>
                   <div className="flex gap-2">
                     {([['summer','صيفي'],['winter','شتوي']] as const).map(([k,label]) => (
@@ -532,10 +532,10 @@ export default function Inventory() {
                     className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-amber-500"
                   />
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <p className="text-xs text-slate-400 -mt-1">ℹ️ هذه كمية وتكلفة المخزون الافتتاحي — بعدها يتم التحديث تلقائياً عبر فواتير المشتريات. يمكن تعديل سعر البيع لاحقاً.</p>
                 </div>
-                <div className="col-span-2">
+                <div className="sm:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-1">التصنيف</label>
                   <select value={formData.category_id} onChange={e => setFormData({...formData, category_id: e.target.value})} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500">
                     {categories.map(c => (
@@ -614,11 +614,11 @@ export default function Inventory() {
       </div>
 
       {/* DASHBOARD CONTENT */}
-      <div className="flex justify-between items-end mb-6">
+      <div className="flex flex-wrap gap-3 justify-between items-end mb-6">
         <div>
           <h2 className="text-xl font-black text-slate-800">المنتجات</h2>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex gap-2">
             <button 
               onClick={exportExcel}
@@ -643,7 +643,7 @@ export default function Inventory() {
 
       <div id="inventory-table" className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[500px]">
         <div className="p-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between gap-3 flex-wrap">
-          <div className="relative w-1/3 min-w-[300px]">
+          <div className="relative w-full md:w-1/3 md:min-w-[300px]">
             <Search className="absolute right-4 top-3 text-slate-400" size={20} />
               <input
                 type="text"

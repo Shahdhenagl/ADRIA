@@ -908,7 +908,7 @@ export default function Finance() {
   const tc = storeSettings.themeColor;
 
   return (
-    <div id="finance-report" className="p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] overflow-y-auto relative" dir="rtl">
+    <div id="finance-report" className="p-4 md:p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] overflow-y-auto relative" dir="rtl">
       {/* Loading Overlay for Export */}
       {loading && (
         <div className="fixed inset-0 z-[100] bg-white/60 backdrop-blur-md flex flex-col items-center justify-center gap-4 animate-in fade-in duration-300">
@@ -1389,7 +1389,7 @@ export default function Finance() {
                 </>
               )}
 
-              {formData.transaction_type !== 'transfer' && <div className="grid grid-cols-2 gap-4">
+              {formData.transaction_type !== 'transfer' && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {activePaymentKeys(storeSettings as any).map((k) => (
                   <div key={k}>
                     <label className="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right">{payLabelOf(storeSettings as any, k)}</label>

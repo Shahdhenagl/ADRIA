@@ -82,7 +82,7 @@ export default function AdminUsers() {
               <button onClick={() => setShowForm(false)} className="hover:bg-white/20 p-1.5 rounded-lg"><X size={22} /></button>
             </div>
             <div className="p-5 overflow-y-auto space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div><label className="text-xs font-bold text-slate-500 block mb-1">اسم المستخدم</label><input value={name} onChange={(e) => setName(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold" /></div>
                 <div><label className="text-xs font-bold text-slate-500 block mb-1">{editing ? 'كلمة سر جديدة (اختياري)' : 'كلمة السر'}</label><input type="text" dir="ltr" value={password} onChange={(e) => setPassword(e.target.value)} placeholder={editing ? '••••' : ''} className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2.5 text-sm font-bold" /></div>
               </div>

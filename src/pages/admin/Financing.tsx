@@ -235,7 +235,7 @@ export default function Financing() {
           </span>
         </div>
 
-        <div className="grid grid-cols-3 gap-2 mt-5">
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-5">
           <div className="bg-emerald-50 rounded-xl p-3">
             <p className="text-[10px] font-black text-emerald-600">التحصيل</p>
             <p className="font-black text-emerald-800 mt-1">{money(account.collection_amount, storeSettings.currency)}</p>
@@ -274,7 +274,7 @@ export default function Financing() {
   });
 
   return (
-    <div className="p-8 space-y-6" dir="rtl">
+    <div className="p-4 md:p-8 space-y-6" dir="rtl">
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-black text-slate-800">السلف والجمعيات</h1>

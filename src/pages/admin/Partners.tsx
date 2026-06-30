@@ -118,7 +118,7 @@ export default function Partners() {
             <button onClick={() => setTxType('deposit')} className={`py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1 ${txType === 'deposit' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}><ArrowDownCircle size={16} /> إيداع</button>
             <button onClick={() => setTxType('withdraw')} className={`py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1 ${txType === 'withdraw' ? 'bg-red-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}><ArrowUpCircle size={16} /> سحب</button>
           </div>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div><label className="text-[11px] font-bold text-slate-500">المبلغ</label><input className={input} type="number" placeholder="0" value={txAmount} onChange={(e) => setTxAmount(e.target.value)} /></div>
             <div><label className="text-[11px] font-bold text-slate-500">الخزنة</label><select className={input} value={txTreasury} onChange={(e) => setTxTreasury(e.target.value)}>{TREASURIES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></div>
             <div><label className="text-[11px] font-bold text-slate-500">الطريقة</label><select className={input} value={txMethod} onChange={(e) => setTxMethod(e.target.value)}>{METHODS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}</select></div>
@@ -133,7 +133,7 @@ export default function Partners() {
           <h2 className="text-base font-black text-slate-800 dark:text-white">إضافة شريك</h2>
           <div className="grid grid-cols-1 gap-2">
             <input className={input} placeholder="اسم الشريك" value={pName} onChange={(e) => setPName(e.target.value)} />
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div><label className="text-[11px] font-bold text-slate-500">النسبة %</label><input className={input} type="number" placeholder="0" value={pShare} onChange={(e) => setPShare(e.target.value)} /></div>
               <div><label className="text-[11px] font-bold text-slate-500">رصيد افتتاحي</label><input className={input} type="number" placeholder="0" value={pOpening} onChange={(e) => setPOpening(e.target.value)} /></div>
             </div>

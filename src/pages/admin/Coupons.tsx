@@ -106,7 +106,7 @@ export default function Coupons() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="bg-gradient-to-r from-pink-600 to-rose-600 rounded-[32px] p-8 text-white shadow-lg relative overflow-hidden">
+      <div className="bg-gradient-to-r from-pink-600 to-rose-600 rounded-[32px] p-4 md:p-8 text-white shadow-lg relative overflow-hidden">
         <div className="absolute top-0 right-0 w-64 h-64 bg-white/10 rounded-full blur-3xl -translate-y-1/2 translate-x-1/2"></div>
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
           <div>

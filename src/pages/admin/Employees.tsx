@@ -517,7 +517,7 @@ export default function Employees() {
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] overflow-y-auto" dir="rtl">
+    <div className="p-4 md:p-8 max-w-7xl mx-auto h-[calc(100vh-2rem)] overflow-y-auto" dir="rtl">
       {/* Header */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-8 bg-white p-6 rounded-[32px] shadow-sm border border-slate-100">
         <div>
@@ -1060,7 +1060,7 @@ export default function Employees() {
                   placeholder="01xxxxxxxxx"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">المسمى الوظيفي</label>
                   <input 
@@ -1090,7 +1090,7 @@ export default function Employees() {
                   placeholder="0.00"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">رصيد الإجازات السنوي</label>
                   <input 
@@ -1182,7 +1182,7 @@ export default function Employees() {
                   <p className="text-sm font-bold text-slate-700 flex items-center gap-2">
                     <Trash2 size={16} className="text-red-500" /> تطبيق خصومات إضافية
                   </p>
-                  <div className="grid grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
                       <label className="block text-[10px] font-bold text-slate-500 mb-1">بعدد الأيام</label>
                       <input 
@@ -1233,7 +1233,7 @@ export default function Employees() {
                 </div>
               )}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 mb-1">الشهر المستهدف</label>
                   <input 
@@ -1304,7 +1304,7 @@ export default function Employees() {
 
               <div className="space-y-4">
                 <p className="text-sm font-bold text-slate-700 border-b border-slate-100 pb-2">تفاصيل الدفع (طرق الدفع)</p>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {payKeys.map((k) => (
                     <div key={k}>
                       <label className="block text-[10px] font-bold text-slate-500 mb-1">{payLabelOf(storeSettings as any, k)}</label>
@@ -1354,7 +1354,7 @@ export default function Employees() {
                 const unpaidDays = leaveFormData.leave_type === 'paid' ? daysCount - paidDays : daysCount;
                 const deduction = unpaidDays * (selectedEmployee.monthly_salary / 30);
                 return (
-                  <div className="bg-sky-50 rounded-2xl p-4 border border-sky-100 grid grid-cols-3 gap-3">
+                  <div className="bg-sky-50 rounded-2xl p-4 border border-sky-100 grid grid-cols-2 md:grid-cols-3 gap-3">
                     <div>
                       <p className="text-[10px] font-bold text-sky-500">الرصيد المتبقي</p>
                       <p className="text-lg font-black text-sky-700">{balance.remaining} يوم</p>
@@ -1374,7 +1374,7 @@ export default function Employees() {
                 );
               })()}
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">من تاريخ</label>
                   <input
