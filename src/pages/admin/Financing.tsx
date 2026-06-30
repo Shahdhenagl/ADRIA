@@ -514,7 +514,7 @@ export default function Financing() {
 
       {paymentTarget && (
         <div className="fixed inset-0 bg-slate-900/50 z-[60] flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto p-5">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-black text-slate-800">
                 {paymentTarget.payment_type === 'collection' ? 'تحصيل' : 'سداد'} جزئي / كامل
