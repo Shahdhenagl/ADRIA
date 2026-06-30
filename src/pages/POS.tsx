@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, type Product } from '../store/useStore';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, Clock, PauseCircle, Undo2 } from 'lucide-react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { printBarcodeLabels, generateBarcode } from '../utils/printBarcodeLabels';
@@ -13,7 +13,7 @@ import { printDocument } from '../utils/printWindow';
 
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, addEmployeeTransaction, updateProduct } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -468,6 +468,8 @@ export default function POS() {
   const [lastOrderDetails, setLastOrderDetails] = useState<any>(null);
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  const [showHeldModal, setShowHeldModal] = useState(false);
+  const [holdBusy, setHoldBusy] = useState(false);
   const [shouldPrint, setShouldPrint] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [noteText, setNoteText] = useState('');
@@ -1158,6 +1160,53 @@ export default function POS() {
     setCouponInput('');
     setCustomerDebt(0);
     setShowCustomerSuggestions(false);
+  };
+
+  // ── فواتير معلقة (محجوزة) ──────────────────────────────────
+  // حفظ السلة الحالية كفاتورة معلقة (تحجز الكمية من المخزون).
+  const handleHoldInvoice = async () => {
+    if (cart.length === 0 || holdBusy) return;
+    setHoldBusy(true);
+    const ok = await holdInvoice({
+      customerName,
+      customerPhone,
+      customerCustomId: customerId,
+      notes: deferredNote,
+    });
+    setHoldBusy(false);
+    if (ok) {
+      setCustomerName('');
+      setCustomerPhone('');
+      setCustomerId('');
+      setPayInput({});
+      setDiscountStr('');
+      setCouponInput('');
+      setCustomerDebt(0);
+      setDeferredNote('');
+      setShowCustomerSuggestions(false);
+      alert('✅ تم حفظ الفاتورة في الفواتير المعلقة وحجز الكمية من المخزون.');
+    }
+  };
+
+  // تأكيد بيع فاتورة معلقة: تُحمَّل في الكاشير ليُكمل الكاشير التحصيل والطباعة.
+  const handleConfirmHeld = async (id: string) => {
+    if (cart.length > 0 && !window.confirm('يوجد أصناف في السلة الحالية وسيتم استبدالها بالفاتورة المعلقة. هل تريد المتابعة؟')) return;
+    const held = await confirmHeldInvoice(id);
+    if (held) {
+      setCustomerName(held.customer_name || '');
+      setCustomerPhone(held.customer_phone || '');
+      setCustomerId(held.customer_custom_id || '');
+      setDeferredNote(held.notes || '');
+      setPayInput({});
+      setShowHeldModal(false);
+      setMobileView('cart');
+      alert('✅ تم تحميل الفاتورة المعلقة. أكمل التحصيل والطباعة لإتمام البيع.');
+    }
+  };
+
+  const handleReturnHeld = async (id: string) => {
+    if (!window.confirm('سيتم إرجاع كمية هذه الفاتورة للمخزون وإلغاؤها. متابعة؟')) return;
+    await returnHeldInvoice(id);
   };
 
   const filteredCustomers = customerName.trim()
@@ -2349,6 +2398,14 @@ export default function POS() {
               <RefreshCcw size={18} /> <span className="text-sm">مرتجع</span>
             </button>
             )}
+            {perm('held') && (
+            <button onClick={() => setShowHeldModal(true)} className="relative flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 hover:bg-orange-100 rounded-2xl font-bold transition border border-orange-100 dark:border-orange-900/30 whitespace-nowrap shadow-sm shrink-0">
+              <Clock size={18} /> <span className="text-sm">فواتير معلقة</span>
+              {heldInvoices.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 flex items-center justify-center text-[10px] font-black text-white bg-orange-500 rounded-full shadow">{heldInvoices.length}</span>
+              )}
+            </button>
+            )}
           </div>
         </header>
 
@@ -2753,6 +2810,15 @@ export default function POS() {
               <span>دفع وطباعة</span>
             </button>
           </div>
+          {perm('held') && (
+          <button
+            onClick={handleHoldInvoice}
+            disabled={cart.length === 0 || pricesHidden || holdBusy}
+            className="w-full mt-2 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed py-3 rounded-2xl font-black flex items-center justify-center gap-2 transition-all text-sm active:scale-95 border border-orange-100 dark:border-orange-900/30"
+          >
+            <PauseCircle size={18} /> {holdBusy ? 'جاري الحفظ...' : 'حفظ كفاتورة معلقة'}
+          </button>
+          )}
           <button onClick={clearCart} className="w-full text-slate-400 hover:text-red-500 text-xs font-bold py-3 transition-colors">
             إلغاء الطلب والتفريغ
           </button>
@@ -2863,6 +2929,85 @@ export default function POS() {
                 {shouldPrint ? <Printer size={20} /> : <Banknote size={20} />}
                 تأكيد العملية وإنهاء الفاتورة
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Held / Reserved Invoices Modal */}
+      {showHeldModal && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-800 rounded-[32px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20">
+            <div className="p-6 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="flex items-center gap-3">
+                <div className="bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg shadow-orange-200">
+                  <Clock size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-800 dark:text-white">الفواتير المعلقة</h3>
+                  <p className="text-xs text-slate-400 font-bold">الكمية محجوزة من المخزون · تُرجَّع تلقائياً بعد أسبوع</p>
+                </div>
+              </div>
+              <button onClick={() => setShowHeldModal(false)} className="p-2 hover:bg-red-50 hover:text-red-500 rounded-xl transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-3 overflow-y-auto">
+              {heldInvoices.length === 0 ? (
+                <div className="text-center py-16 text-slate-400">
+                  <Clock size={48} className="mx-auto mb-3 opacity-30" />
+                  <p className="font-bold">لا توجد فواتير معلقة</p>
+                </div>
+              ) : (
+                heldInvoices.map((h) => {
+                  const created = new Date(h.created_at);
+                  const expires = new Date(h.expires_at);
+                  const daysLeft = Math.ceil((expires.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                  const itemsCount = h.items.reduce((s, i) => s + (i.quantity || 0), 0);
+                  return (
+                    <div key={h.id} className="border border-slate-200 dark:border-slate-700 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-900/40">
+                      <div className="flex justify-between items-start gap-3 mb-2">
+                        <div className="min-w-0">
+                          <div className="font-black text-slate-800 dark:text-white truncate">
+                            {h.customer_name?.trim() || 'عميل نقدي'}
+                            {h.customer_phone ? <span className="text-xs font-bold text-slate-400 mr-2">{h.customer_phone}</span> : null}
+                          </div>
+                          <div className="text-[11px] font-bold text-slate-400">
+                            {created.toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {h.cashier_name ? ` · ${h.cashier_name}` : ''}
+                          </div>
+                        </div>
+                        <div className="text-left shrink-0">
+                          <div className="text-lg font-black text-indigo-600 dark:text-indigo-400">{Number(h.total).toFixed(2)} <span className="text-[10px] text-slate-400">{storeSettings.currency}</span></div>
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${daysLeft <= 1 ? 'text-red-500 bg-red-50 border-red-100' : 'text-amber-600 bg-amber-50 border-amber-100'}`}>
+                            {daysLeft > 0 ? `يتبقى ${daysLeft} يوم` : 'منتهية'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-3 line-clamp-2">
+                        {itemsCount} قطعة · {h.items.map((i) => `${i.name}×${formatQty(i.quantity, i.unit || 'قطعة')}`).join(' ، ')}
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleConfirmHeld(h.id)}
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1.5 transition active:scale-95"
+                        >
+                          <Check size={16} /> تأكيد البيع
+                        </button>
+                        <button
+                          onClick={() => handleReturnHeld(h.id)}
+                          className="flex-1 bg-white dark:bg-slate-800 text-red-600 dark:text-red-400 border border-red-200 dark:border-red-900/40 hover:bg-red-50 py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1.5 transition active:scale-95"
+                        >
+                          <Undo2 size={16} /> إرجاع للمخزون
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         </div>
