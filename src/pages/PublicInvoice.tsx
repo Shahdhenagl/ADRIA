@@ -3,7 +3,8 @@ import { useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import type { Order, StoreSettings } from '../store/useStore';
 import { CheckCircle2, Printer, Download, Phone, User, MapPin } from 'lucide-react';
-import html2canvas from 'html2canvas';
+// html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها).
+import html2canvas from 'html2canvas-pro';
 import { calculateOrderReturnValue } from '../utils/returns';
 
 

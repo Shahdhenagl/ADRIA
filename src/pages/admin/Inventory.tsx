@@ -6,7 +6,8 @@ import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../
 import { generateBarcode, printBarcodeLabels } from '../../utils/printBarcodeLabels';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+// html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها وتكسر تصدير PDF).
+import html2canvas from 'html2canvas-pro';
 
 export default function Inventory() {
   const { products, categories, storeSettings, addProduct, updateProduct, orders } = useStore();

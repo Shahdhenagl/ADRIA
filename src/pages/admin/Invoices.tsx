@@ -9,7 +9,8 @@ import { printDocument } from '../../utils/printWindow';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
-import html2canvas from 'html2canvas';
+// html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها وتكسر تصدير PDF).
+import html2canvas from 'html2canvas-pro';
 import { EditInvoiceModal } from '../../components/EditInvoiceModal';
 
 export default function Invoices() {
