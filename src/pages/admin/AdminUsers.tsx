@@ -5,7 +5,7 @@ import { Users, Plus, Trash2, Edit3, Shield, X } from 'lucide-react';
 const PERM_GROUPS: { section: string; items: [string, string][] }[] = [
   { section: 'عام', items: [['/admin/overview', 'نظرة عامة'], ['/admin/analytics', 'التحليلات والتقارير'], ['/admin/reports', 'التقارير وكشوف الحساب']] },
   { section: 'المبيعات والفواتير', items: [['/admin/invoices', 'الفواتير والمرتجعات'], ['/admin/offline-invoices', 'الفواتير الأوفلاين'], ['/admin/coupons', 'كوبونات الخصم']] },
-  { section: 'المخزون والتصنيع', items: [['/admin/inventory', 'المخزون والمنتجات'], ['/admin/stocktake', 'الجرد والتسوية'], ['/admin/manufacturing', 'التصنيع'], ['/admin/stock-alerts', 'تنبيهات النواقص']] },
+  { section: 'المخزون والتصنيع', items: [['/admin/inventory', 'المخزون والمنتجات'], ['/admin/stocktake', 'الجرد والتسوية'], ['/admin/devo', 'الديڤو والتوالف'], ['/admin/manufacturing', 'التصنيع'], ['/admin/stock-alerts', 'تنبيهات النواقص']] },
   { section: 'العملاء', items: [['/admin/customers', 'قاعدة العملاء'], ['/admin/deferred', 'حسابات الآجل'], ['/admin/whatsapp-campaigns', 'حملات واتساب']] },
   { section: 'الموردين', items: [['/admin/suppliers', 'الموردين والمشتريات']] },
   { section: 'المالية والخزائن', items: [['/admin/finance', 'الخزينة والمصاريف'], ['/admin/savings', 'خزنة الادخار'], ['/admin/budget', 'الميزانية العامة'], ['/admin/financing', 'سلف وتمويل'], ['/admin/managers', 'المدراء والسحوبات'], ['/admin/partners', 'الشركاء']] },

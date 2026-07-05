@@ -278,8 +278,10 @@ export default function PublicInvoice() {
   let displayVisa = order.paid_visa || 0;
   let displayWallet = order.paid_wallet || 0;
   let displayInstapay = order.paid_instapay || 0;
+  let displayMethod5 = order.paid_method5 || 0;
+  let displayMethod6 = order.paid_method6 || 0;
 
-  if (displayCash === 0 && displayVisa === 0 && displayWallet === 0 && displayInstapay === 0 && order.paid_amount > 0) {
+  if (displayCash === 0 && displayVisa === 0 && displayWallet === 0 && displayInstapay === 0 && displayMethod5 === 0 && displayMethod6 === 0 && order.paid_amount > 0) {
     const method = (order.payment_method || 'cash').toLowerCase();
     if (method === 'visa') {
       displayVisa = order.paid_amount;
@@ -287,6 +289,10 @@ export default function PublicInvoice() {
       displayWallet = order.paid_amount;
     } else if (method === 'instapay') {
       displayInstapay = order.paid_amount;
+    } else if (method === 'method5') {
+      displayMethod5 = order.paid_amount;
+    } else if (method === 'method6') {
+      displayMethod6 = order.paid_amount;
     } else {
       displayCash = order.paid_amount;
     }
@@ -534,6 +540,8 @@ export default function PublicInvoice() {
                 {displayVisa > 0 && <div className="flex justify-between p-2 bg-slate-50 rounded-lg text-[11px] font-black text-slate-700"><span>💳 فيزا</span><span>{displayVisa.toFixed(2)}</span></div>}
                 {displayWallet > 0 && <div className="flex justify-between p-2 bg-slate-50 rounded-lg text-[11px] font-black text-slate-700"><span>📱 محفظة</span><span>{displayWallet.toFixed(2)}</span></div>}
                 {displayInstapay > 0 && <div className="flex justify-between p-2 bg-slate-50 rounded-lg text-[11px] font-black text-slate-700"><span>⚡ انستا</span><span>{displayInstapay.toFixed(2)}</span></div>}
+                {displayMethod5 > 0 && <div className="flex justify-between p-2 bg-slate-50 rounded-lg text-[11px] font-black text-slate-700"><span>{settings.paymentLabels?.method5 || 'طريقة دفع 5'}</span><span>{displayMethod5.toFixed(2)}</span></div>}
+                {displayMethod6 > 0 && <div className="flex justify-between p-2 bg-slate-50 rounded-lg text-[11px] font-black text-slate-700"><span>{settings.paymentLabels?.method6 || 'طريقة دفع 6'}</span><span>{displayMethod6.toFixed(2)}</span></div>}
               </div>
             </div>
           </div>

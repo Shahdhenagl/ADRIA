@@ -2,13 +2,7 @@ import { useEffect, useState, Fragment } from 'react';
 import { useStore } from '../../store/useStore';
 import { Scissors, Plus, Trash2, Package, Factory, Warehouse } from 'lucide-react';
 import { generateBarcode, printBarcodeLabels } from '../../utils/printBarcodeLabels';
-
-const PAY_METHODS = [
-  { value: 'cash', label: 'كاش' },
-  { value: 'visa', label: 'فيزا' },
-  { value: 'wallet', label: 'محفظة' },
-  { value: 'instapay', label: 'انستا باي' },
-];
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, formToSplit } from '../../utils/paymentMethods';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -26,6 +20,8 @@ export default function Manufacturing() {
   } = useStore();
   const [transfer, setTransfer] = useState<{ id: string; display: string; warehouse: string } | null>(null);
   const cur = storeSettings.currency;
+  // وسائل الدفع الفعّالة (4 أساسية + أي طريقة إضافية 5/6 مفعّلة) بأسمائها المخصّصة
+  const PAY_METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ value: k as string, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none';
   const selectCls = input + ' cursor-pointer';
 
@@ -48,7 +44,7 @@ export default function Manufacturing() {
     if (mRemaining > 0.01 && !mSupplier) { alert('فيه مبلغ متبقّي — اختر مورد لتأجيله عليه، أو أكمل الدفع'); return; }
     await addMaterial(
       { name: mName.trim(), unit: mUnit || 'متر', cost_per_unit: Number(mCost) || 0, stock_quantity: Number(mStock) || 0 },
-      { supplierId: mSupplier || undefined, split: { cash: Number(mSplit.cash) || 0, visa: Number(mSplit.visa) || 0, wallet: Number(mSplit.wallet) || 0, instapay: Number(mSplit.instapay) || 0 } },
+      { supplierId: mSupplier || undefined, split: formToSplit(mSplit) },
     );
     setMName(''); setMCost(''); setMStock(''); setMSupplier(''); setMSplit({ cash: '', visa: '', wallet: '', instapay: '' });
   };
@@ -111,12 +107,7 @@ export default function Manufacturing() {
       extra_costs: extraCosts,
       display_quantity: dispNum,
       warehouse_quantity: whNum,
-      extra_costs_split: {
-        cash: pExtraPay === 'cash' ? extraCosts : 0,
-        visa: pExtraPay === 'visa' ? extraCosts : 0,
-        wallet: pExtraPay === 'wallet' ? extraCosts : 0,
-        instapay: pExtraPay === 'instapay' ? extraCosts : 0,
-      },
+      extra_costs_split: Object.fromEntries(ALL_PAYMENT_KEYS.map((k) => [k, pExtraPay === k ? extraCosts : 0])) as any,
       notes: notesAll,
       materials: rows.filter((r) => r.material_id && Number(r.quantity) > 0).map((r) => ({ material_id: r.material_id, quantity: Number(r.quantity) })),
     });

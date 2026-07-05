@@ -15,9 +15,10 @@ import {
   X,
 } from 'lucide-react';
 import { useStore, type FinancingAccount, type FinancingPayment } from '../../store/useStore';
+import { activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
 
 const today = new Date().toISOString().slice(0, 10);
-type PayMethod = 'cash' | 'visa' | 'wallet' | 'instapay';
+type PayMethod = 'cash' | 'visa' | 'wallet' | 'instapay' | 'method5' | 'method6';
 const inputClass = 'w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-100';
 
 function monthOffset(date: string, offset: number) {
@@ -55,9 +56,8 @@ function dateLabel(date?: string | null) {
   return isoToDisplay(date) || '-';
 }
 
-function methodLabel(method: string) {
-  const map: Record<string, string> = { cash: 'كاش', visa: 'فيزا', wallet: 'محفظة', instapay: 'انستاباي' };
-  return map[method] || method;
+function methodLabel(method: string, settings?: any) {
+  return payLabelOf(settings, method);
 }
 
 export default function Financing() {
@@ -419,7 +419,7 @@ export default function Financing() {
                           <p className={`font-black ${tx.transaction_type === 'collection' ? 'text-emerald-700' : 'text-red-700'}`}>
                             {tx.transaction_type === 'collection' ? 'تحصيل' : 'سداد'} {money(tx.amount, storeSettings.currency)}
                           </p>
-                          <p className="text-xs text-slate-400 mt-1">{new Date(tx.created_at).toLocaleString('ar-EG')} - {methodLabel(tx.payment_method)}</p>
+                          <p className="text-xs text-slate-400 mt-1">{new Date(tx.created_at).toLocaleString('ar-EG')} - {methodLabel(tx.payment_method, storeSettings)}</p>
                           {tx.note && <p className="text-xs text-slate-500 mt-1">{tx.note}</p>}
                         </div>
                         <span className="text-[11px] font-black text-slate-500 bg-slate-50 px-2 py-1 rounded-lg">
@@ -533,10 +533,9 @@ export default function Financing() {
               </FormField>
               <FormField label="طريقة الدفع">
                 <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value as PayMethod)} className={inputClass}>
-                  <option value="cash">كاش</option>
-                  <option value="visa">فيزا</option>
-                  <option value="wallet">محفظة</option>
-                  <option value="instapay">انستاباي</option>
+                  {activePaymentKeys(storeSettings as any).map((k) => (
+                    <option key={k} value={k}>{payLabelOf(storeSettings as any, k)}</option>
+                  ))}
                 </select>
               </FormField>
             </div>

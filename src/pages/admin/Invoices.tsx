@@ -6,6 +6,7 @@ import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { calculateOrderReturnValue } from '../../utils/returns';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { printDocument } from '../../utils/printWindow';
+import { EXTRA_PAYMENT_KEYS, isPaymentKeyEnabled, payLabelOf } from '../../utils/paymentMethods';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
@@ -194,6 +195,8 @@ export default function Invoices() {
       ${order.paid_visa > 0 ? `<div class="summary-row" style="font-size:12px;"><span>💳 فيزا:</span><span>${order.paid_visa.toFixed(2)}</span></div>` : ''}
       ${order.paid_wallet > 0 ? `<div class="summary-row" style="font-size:12px;"><span>📱 محفظة:</span><span>${order.paid_wallet.toFixed(2)}</span></div>` : ''}
       ${order.paid_instapay > 0 ? `<div class="summary-row" style="font-size:12px;"><span>⚡ انستا باي:</span><span>${order.paid_instapay.toFixed(2)}</span></div>` : ''}
+      ${order.paid_method5 > 0 ? `<div class="summary-row" style="font-size:12px;"><span>${escapeHtml(storeSettings.paymentLabels?.method5 || 'طريقة دفع 5')}:</span><span>${order.paid_method5.toFixed(2)}</span></div>` : ''}
+      ${order.paid_method6 > 0 ? `<div class="summary-row" style="font-size:12px;"><span>${escapeHtml(storeSettings.paymentLabels?.method6 || 'طريقة دفع 6')}:</span><span>${order.paid_method6.toFixed(2)}</span></div>` : ''}
     </div>
   </div>
 
@@ -297,11 +300,12 @@ export default function Invoices() {
   };
 
   const exportExcel = () => {
+    const extraCols = EXTRA_PAYMENT_KEYS.filter((k) => isPaymentKeyEnabled(storeSettings as any, k));
     const wsData = [
       ['تقرير الفواتير', '', '', '', '', '', '', ''],
       ['التاريخ', new Date().toLocaleDateString(), '', '', '', '', '', ''],
       [''],
-      ['رقم الفاتورة', 'العميل', 'التاريخ', 'الإجمالي', 'المدفوع', 'كاش', 'فيزا', 'محفظة', 'انستا', 'الباقي', 'النوع'],
+      ['رقم الفاتورة', 'العميل', 'التاريخ', 'الإجمالي', 'المدفوع', 'كاش', 'فيزا', 'محفظة', 'انستا', ...extraCols.map((k) => payLabelOf(storeSettings as any, k)), 'الباقي', 'النوع'],
       ...filteredOrders.map(o => [
         o.id,
         o.customer?.name || 'عميل نقدي',
@@ -312,6 +316,7 @@ export default function Invoices() {
         o.paid_visa,
         o.paid_wallet,
         o.paid_instapay,
+        ...extraCols.map((k) => (o as any)['paid_' + k] || 0),
         o.type === 'payment' ? 0 : Math.max(0, o.total - o.paid_amount),
         o.type === 'payment' ? 'سداد' : 'بيع'
       ])

@@ -109,6 +109,8 @@ export const printPaymentReceipt = (order: any, storeSettings: any) => {
       ${order.paid_visa > 0 ? `<div class="total-row" style="font-size:12px;border:none;"><span>فيزا:</span><span>${order.paid_visa.toFixed(2)}</span></div>` : ''}
       ${order.paid_wallet > 0 ? `<div class="total-row" style="font-size:12px;border:none;"><span>محفظة:</span><span>${order.paid_wallet.toFixed(2)}</span></div>` : ''}
       ${order.paid_instapay > 0 ? `<div class="total-row" style="font-size:12px;border:none;"><span>انستا باي:</span><span>${order.paid_instapay.toFixed(2)}</span></div>` : ''}
+      ${order.paid_method5 > 0 ? `<div class="total-row" style="font-size:12px;border:none;"><span>${escapeHtml(storeSettings.paymentLabels?.method5 || 'طريقة دفع 5')}:</span><span>${order.paid_method5.toFixed(2)}</span></div>` : ''}
+      ${order.paid_method6 > 0 ? `<div class="total-row" style="font-size:12px;border:none;"><span>${escapeHtml(storeSettings.paymentLabels?.method6 || 'طريقة دفع 6')}:</span><span>${order.paid_method6.toFixed(2)}</span></div>` : ''}
     </div>
     
     ${order.notes && order.notes.includes('المتبقي: ') ? `

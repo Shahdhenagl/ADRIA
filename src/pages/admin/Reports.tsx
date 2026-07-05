@@ -3,13 +3,15 @@ import { useStore } from '../../store/useStore';
 import { FileBarChart, Printer } from 'lucide-react';
 import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
 
-const METHODS = [['cash', 'كاش'], ['visa', 'فيزا'], ['wallet', 'محفظة'], ['instapay', 'انستا باي']] as const;
 const todayStr = () => { const d = new Date(); return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); };
 
 export default function Reports() {
   const { orders, storeSettings } = useStore();
   const cur = storeSettings.currency;
+  // الوسائل المعروضة = الأربع الأساسية + أي طريقة إضافية (5/6) مفعّلة في الإعدادات
+  const METHODS = activePaymentKeys(storeSettings as any).map((k) => [k, payLabelOf(storeSettings as any, k)] as const);
   const [from, setFrom] = useState(todayStr());
   const [to, setTo] = useState(todayStr());
   const [tab, setTab] = useState<'sales' | 'methods' | 'treasury'>('sales');
@@ -38,13 +40,14 @@ export default function Reports() {
 
   // ── per-method in/out (with manual-income handling) ──
   const computeMethods = (rangeOnly: boolean, beforeStart = false) => {
-    const inN: Record<string, number> = { cash: 0, visa: 0, wallet: 0, instapay: 0 };
-    const outN: Record<string, number> = { cash: 0, visa: 0, wallet: 0, instapay: 0 };
+    const inN: Record<string, number> = {}; ALL_PAYMENT_KEYS.forEach((k) => { inN[k] = 0; });
+    const outN: Record<string, number> = {}; ALL_PAYMENT_KEYS.forEach((k) => { outN[k] = 0; });
     const pass = (dt: any) => beforeStart ? new Date(dt) < start : (rangeOnly ? inRange(dt) : true);
     const add = (target: Record<string, number>, rec: any, field: string, methodOverride?: string) => {
-      const c = +rec.paid_cash || 0, v = +rec.paid_visa || 0, w = +rec.paid_wallet || 0, i = +rec.paid_instapay || 0;
-      if (c + v + w + i > 0) { target.cash += c; target.visa += v; target.wallet += w; target.instapay += i; return; }
-      const a = Math.abs(+rec[field] || 0); const m = methodOverride || (['cash', 'visa', 'wallet', 'instapay'].includes(rec.payment_method) ? rec.payment_method : 'cash');
+      const vals = ALL_PAYMENT_KEYS.map((k) => +rec['paid_' + k] || 0);
+      const total = vals.reduce((s, x) => s + x, 0);
+      if (total > 0) { ALL_PAYMENT_KEYS.forEach((k, idx) => { target[k] += vals[idx]; }); return; }
+      const a = Math.abs(+rec[field] || 0); const m = methodOverride || ((ALL_PAYMENT_KEYS as readonly string[]).includes(rec.payment_method) ? rec.payment_method : 'cash');
       target[m] += a;
     };
     orders.filter((o: any) => !o.is_deleted && pass(o.date)).forEach((o: any) => {
@@ -54,7 +57,7 @@ export default function Reports() {
     });
     extra.expenses.filter((e) => pass(e.created_at)).forEach((e) => {
       const amt = Number(e.amount) || 0;
-      if (amt < 0) add(inN, { ...e, amount: Math.abs(amt), paid_cash: Math.abs(+e.paid_cash || 0), paid_visa: Math.abs(+e.paid_visa || 0), paid_wallet: Math.abs(+e.paid_wallet || 0), paid_instapay: Math.abs(+e.paid_instapay || 0) }, 'amount');
+      if (amt < 0) { const absRec: any = { ...e, amount: Math.abs(amt) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(inN, absRec, 'amount'); }
       else add(outN, e, 'amount');
     });
     extra.purchases.filter((p) => pass(p.created_at)).forEach((p) => add(outN, p, 'paid_amount'));
@@ -63,7 +66,7 @@ export default function Reports() {
   };
 
   const rangeMethods = useMemo(() => computeMethods(true), [orders, extra, from, to]);
-  const sum = (o: Record<string, number>) => o.cash + o.visa + o.wallet + o.instapay;
+  const sum = (o: Record<string, number>) => ALL_PAYMENT_KEYS.reduce((s, k) => s + (o[k] || 0), 0);
 
   // ── treasury (opening before range + range movement) ──
   const opening = useMemo(() => {

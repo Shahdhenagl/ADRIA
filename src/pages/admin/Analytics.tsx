@@ -105,7 +105,7 @@ export default function Analytics() {
       }
 
       let initialPaid = order.paid_amount || 0;
-      const sumSplits = (order.paid_cash || 0) + (order.paid_visa || 0) + (order.paid_wallet || 0) + (order.paid_instapay || 0);
+      const sumSplits = (order.paid_cash || 0) + (order.paid_visa || 0) + (order.paid_wallet || 0) + (order.paid_instapay || 0) + (order.paid_method5 || 0) + (order.paid_method6 || 0);
       if (sumSplits > 0) {
         initialPaid = sumSplits;
       } else {

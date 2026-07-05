@@ -31,7 +31,7 @@ export default function Overview() {
     if (o.type === 'payment') return sum + (o.paid_amount || 0);
     
     let initialPaid = o.paid_amount || 0;
-    const sumSplits = (o.paid_cash || 0) + (o.paid_visa || 0) + (o.paid_wallet || 0) + (o.paid_instapay || 0);
+    const sumSplits = (o.paid_cash || 0) + (o.paid_visa || 0) + (o.paid_wallet || 0) + (o.paid_instapay || 0) + (o.paid_method5 || 0) + (o.paid_method6 || 0);
     if (sumSplits > 0) {
       initialPaid = sumSplits;
     } else {

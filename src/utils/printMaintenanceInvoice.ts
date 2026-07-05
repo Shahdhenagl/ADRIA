@@ -339,7 +339,9 @@ export const printMaintenanceInvoice = (
             order.payment_method === 'cash' ? 'نقدي (كاش)' :
             order.payment_method === 'visa' ? 'فيزا' :
             order.payment_method === 'wallet' ? 'محفظة إلكترونية' :
-            order.payment_method === 'instapay' ? 'انستا باي' : 'نقدي'
+            order.payment_method === 'instapay' ? 'انستا باي' :
+            order.payment_method === 'method5' ? escapeHtml(storeSettings?.paymentLabels?.method5 || 'طريقة دفع 5') :
+            order.payment_method === 'method6' ? escapeHtml(storeSettings?.paymentLabels?.method6 || 'طريقة دفع 6') : 'نقدي'
           }</strong></p>
           <p>الحالة: <strong style="color: #10b981;">مدفوعة بالكامل</strong></p>
         </div>

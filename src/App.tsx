@@ -26,6 +26,7 @@ import Managers from './pages/admin/Managers';
 import Partners from './pages/admin/Partners';
 import Savings from './pages/admin/Savings';
 import StockTake from './pages/admin/StockTake';
+import Devo from './pages/admin/Devo';
 import Reports from './pages/admin/Reports';
 import AdminUsers from './pages/admin/AdminUsers';
 import PublicInvoice from './pages/PublicInvoice';
@@ -194,6 +195,7 @@ function App() {
             <Route path="partners" element={<Partners />} />
             <Route path="savings" element={<Savings />} />
             <Route path="stocktake" element={<StockTake />} />
+            <Route path="devo" element={<Devo />} />
             <Route path="reports" element={<Reports />} />
             <Route path="users" element={<AdminUsers />} />
           </Route>

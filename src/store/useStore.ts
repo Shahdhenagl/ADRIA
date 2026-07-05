@@ -81,6 +81,37 @@ export interface ProductionOrder {
   created_at?: string;
 }
 
+// ── الديڤو (قطع راجعة للمصنع) والإهلاك (توالف) ────────────────
+export type DevoStatus = 'pending' | 'at_factory' | 'returned' | 'replaced' | 'closed';
+
+export interface DevoItem {
+  id: string;
+  product_id?: string | null;
+  product_name: string;
+  barcode?: string | null;
+  quantity: number;
+  unit_cost: number;
+  supplier_id?: string | null;
+  supplier_name?: string | null;
+  reason?: string | null;
+  status: DevoStatus;
+  note?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WriteOff {
+  id: string;
+  product_id?: string | null;
+  product_name: string;
+  barcode?: string | null;
+  quantity: number;
+  unit_cost: number;
+  total_cost: number;
+  reason?: string | null;
+  created_at?: string;
+}
+
 export interface Category {
   id: string;
   name: string;
@@ -425,6 +456,8 @@ interface CashierStore {
   cashierNotes: CashierNote[];
   carSubscriptions: CarSubscription[];
   maintenanceAppointments: MaintenanceAppointment[];
+  devoItems: DevoItem[];
+  writeOffs: WriteOff[];
 
   // Data loading
   loadAll: (silent?: boolean) => Promise<void>;
@@ -488,7 +521,16 @@ interface CashierStore {
   updateProduct: (id: string, product: Partial<Product>) => Promise<void>;
   adjustStock: (items: { product_id: string; counted_qty: number }[], note?: string) => Promise<number>;
   deleteProduct: (id: string) => Promise<void>;
-  
+
+  // الديڤو والإهلاك
+  _shiftProductStock: (productId: string, delta: number) => Promise<void>;
+  loadDevoAndWriteOffs: () => Promise<void>;
+  addDevo: (item: Omit<DevoItem, 'id' | 'created_at' | 'updated_at' | 'status'> & { status?: DevoStatus }) => Promise<void>;
+  updateDevoStatus: (id: string, status: DevoStatus) => Promise<void>;
+  deleteDevo: (id: string) => Promise<void>;
+  addWriteOff: (item: Omit<WriteOff, 'id' | 'created_at' | 'total_cost'>) => Promise<void>;
+  deleteWriteOff: (id: string) => Promise<void>;
+
   // Expenses
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<boolean>;
@@ -503,7 +545,7 @@ interface CashierStore {
     account: Omit<FinancingAccount, 'id' | 'status' | 'created_at'>,
     repayments: { due_date: string; amount: number; note?: string }[]
   ) => Promise<void>;
-  settleFinancingPayment: (paymentId: string, amount?: number, paymentMethod?: 'cash' | 'visa' | 'wallet' | 'instapay') => Promise<void>;
+  settleFinancingPayment: (paymentId: string, amount?: number, paymentMethod?: 'cash' | 'visa' | 'wallet' | 'instapay' | 'method5' | 'method6') => Promise<void>;
 
   // Suppliers
   addSupplier: (supplier: Omit<Supplier, 'id' | 'created_at'>) => Promise<Supplier | null>;
@@ -798,6 +840,8 @@ export const useStore = create<CashierStore>((set, get) => ({
   coupons: [],
   carSubscriptions: [],
   maintenanceAppointments: [],
+  devoItems: [],
+  writeOffs: [],
   heldInvoices: [],
   invoiceCounter: 1,
   activeInvoiceId: '1',
@@ -1091,6 +1135,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       get().loadCashierNotes();
       get().loadCoupons();
       get().loadHeldInvoices();
+      get().loadDevoAndWriteOffs();
       // إرجاع الفواتير المعلقة المنتهية (أكثر من أسبوع) للمخزون تلقائياً.
       get().sweepExpiredHeldInvoices();
 
@@ -3523,6 +3568,115 @@ setupRealtime: () => {
     return rows.length;
   },
 
+  // ── الديڤو (قطع راجعة للمصنع) والإهلاك (توالف) ─────────────
+  loadDevoAndWriteOffs: async () => {
+    try {
+      const { data } = await supabase.from('devo_items').select('*').order('created_at', { ascending: false });
+      if (data) set({ devoItems: data as DevoItem[] });
+    } catch (e) { console.error('devo_items table might not exist yet:', e); }
+    try {
+      const { data } = await supabase.from('write_offs').select('*').order('created_at', { ascending: false });
+      if (data) set({ writeOffs: data as WriteOff[] });
+    } catch (e) { console.error('write_offs table might not exist yet:', e); }
+  },
+
+  // خصم/إضافة كمية من مخزون منتج (للديڤو والإهلاك) في القاعدة والحالة المحلية.
+  _shiftProductStock: async (productId, delta) => {
+    if (!productId || !delta) return;
+    const st = get();
+    const p = st.products.find((x) => x.id === productId);
+    if (!p) return;
+    const newStock = Math.max(0, (Number(p.stock_quantity) || 0) + delta);
+    const patch: any = { stock_quantity: newStock };
+    // كمية العرض بالمحل يجب ألا تتجاوز الرصيد الكلي أبداً.
+    if (p.display_quantity !== undefined && p.display_quantity !== null) {
+      patch.display_quantity = Math.max(0, Math.min(Number(p.display_quantity) || 0, newStock));
+    }
+    const { error } = await supabase.from('products').update(patch).eq('id', productId);
+    if (error) { console.error('shift stock error', error); return; }
+    set((s) => ({ products: s.products.map((x) => (x.id === productId ? { ...x, ...patch } : x)) }));
+    new BroadcastChannel('cashier-sync').postMessage('sync_products');
+  },
+
+  addDevo: async (item) => {
+    const status: DevoStatus = item.status || 'pending';
+    const row = {
+      product_id: item.product_id || null,
+      product_name: item.product_name,
+      barcode: item.barcode || null,
+      quantity: Number(item.quantity) || 0,
+      unit_cost: Number(item.unit_cost) || 0,
+      supplier_id: item.supplier_id || null,
+      supplier_name: item.supplier_name || null,
+      reason: item.reason || null,
+      status,
+      note: item.note || null,
+    };
+    const { data, error } = await supabase.from('devo_items').insert(row).select().single();
+    if (error) { console.error('addDevo error', error); alert('تعذّر حفظ الديڤو. تأكد من تشغيل تحديث قاعدة البيانات (db/27).'); return; }
+    // القطعة خرجت من المحل → تُخصم من المخزون (إلا لو سُجّلت مباشرة كمُستبدَلة/راجعة).
+    const backInStock = status === 'returned' || status === 'replaced';
+    if (row.product_id && !backInStock) await (get() as any)._shiftProductStock(row.product_id, -row.quantity);
+    if (data) set((s) => ({ devoItems: [data as DevoItem, ...s.devoItems] }));
+  },
+
+  updateDevoStatus: async (id, status) => {
+    const st = get();
+    const current = st.devoItems.find((d) => d.id === id);
+    if (!current) return;
+    const wasBack = current.status === 'returned' || current.status === 'replaced';
+    const nowBack = status === 'returned' || status === 'replaced';
+    const { error } = await supabase.from('devo_items').update({ status, updated_at: new Date().toISOString() }).eq('id', id);
+    if (error) { console.error('updateDevoStatus error', error); return; }
+    // مزامنة المخزون: رجعت/استُبدلت → ترجع للمخزون. العكس → تُخصم ثانيةً.
+    if (current.product_id) {
+      if (!wasBack && nowBack) await (get() as any)._shiftProductStock(current.product_id, Number(current.quantity) || 0);
+      else if (wasBack && !nowBack) await (get() as any)._shiftProductStock(current.product_id, -(Number(current.quantity) || 0));
+    }
+    set((s) => ({ devoItems: s.devoItems.map((d) => (d.id === id ? { ...d, status } : d)) }));
+  },
+
+  deleteDevo: async (id) => {
+    const st = get();
+    const current = st.devoItems.find((d) => d.id === id);
+    if (!current) return;
+    const { error } = await supabase.from('devo_items').delete().eq('id', id);
+    if (error) { console.error('deleteDevo error', error); return; }
+    // لو القطعة لسه مخصومة من المخزون (pending/at_factory) والحذف = إلغاء → نرجّعها.
+    if (current.product_id && (current.status === 'pending' || current.status === 'at_factory')) {
+      await (get() as any)._shiftProductStock(current.product_id, Number(current.quantity) || 0);
+    }
+    set((s) => ({ devoItems: s.devoItems.filter((d) => d.id !== id) }));
+  },
+
+  addWriteOff: async (item) => {
+    const qty = Number(item.quantity) || 0;
+    const cost = Number(item.unit_cost) || 0;
+    const row = {
+      product_id: item.product_id || null,
+      product_name: item.product_name,
+      barcode: item.barcode || null,
+      quantity: qty,
+      unit_cost: cost,
+      total_cost: qty * cost,
+      reason: item.reason || null,
+    };
+    const { data, error } = await supabase.from('write_offs').insert(row).select().single();
+    if (error) { console.error('addWriteOff error', error); alert('تعذّر حفظ الإهلاك. تأكد من تشغيل تحديث قاعدة البيانات (db/27).'); return; }
+    if (row.product_id) await (get() as any)._shiftProductStock(row.product_id, -qty);
+    if (data) set((s) => ({ writeOffs: [data as WriteOff, ...s.writeOffs] }));
+  },
+
+  deleteWriteOff: async (id) => {
+    const st = get();
+    const current = st.writeOffs.find((w) => w.id === id);
+    if (!current) return;
+    const { error } = await supabase.from('write_offs').delete().eq('id', id);
+    if (error) { console.error('deleteWriteOff error', error); return; }
+    if (current.product_id) await (get() as any)._shiftProductStock(current.product_id, Number(current.quantity) || 0);
+    set((s) => ({ writeOffs: s.writeOffs.filter((w) => w.id !== id) }));
+  },
+
   // ── Expenses ──────────────────────────────────────────────
   addExpense: async (expense) => {
     const { data, error } = await supabase.from('expenses').insert({
@@ -3825,6 +3979,8 @@ setupRealtime: () => {
       paid_visa: paymentMethod === 'visa' ? signedAmount : 0,
       paid_wallet: paymentMethod === 'wallet' ? signedAmount : 0,
       paid_instapay: paymentMethod === 'instapay' ? signedAmount : 0,
+      paid_method5: paymentMethod === 'method5' ? signedAmount : 0,
+      paid_method6: paymentMethod === 'method6' ? signedAmount : 0,
     };
 
     const note = `${isCollection ? 'تحصيل' : 'سداد'} ${account?.type === 'association' ? 'جمعية' : 'سلفة'} - ${account?.lender_name || ''}${payment.note ? ` (${payment.note})` : ''}`;
