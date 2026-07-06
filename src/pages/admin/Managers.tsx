@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
-import { Briefcase, Plus, Banknote } from 'lucide-react';
+import { Briefcase, Plus, Banknote, Trash2 } from 'lucide-react';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
 
 export default function Managers() {
-  const { orders, storeSettings, managerWithdraw } = useStore();
+  const { orders, storeSettings, managerWithdraw, deleteExpense } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
 
@@ -96,6 +96,23 @@ export default function Managers() {
     }
   };
 
+  // حذف حركة سحب — بيمسح المصروف فيرجع المبلغ للخزنة تلقائياً.
+  const delWithdrawal = async (id: string) => {
+    if (!confirm('حذف حركة السحب دي؟ هيرجع مبلغها للخزنة.')) return;
+    await deleteExpense(id);
+    setWithdrawals((w) => w.filter((x) => x.id !== id));
+    load();
+  };
+
+  // حذف اسم مدير من جدول المدراء.
+  const delManager = async (id: string, name: string) => {
+    if (!confirm(`حذف المدير «${name}»؟ (لا يؤثر على السحوبات المسجّلة سابقاً)`)) return;
+    const { supabase } = await import('../../lib/supabase');
+    await supabase.from('managers').delete().eq('id', id);
+    setManagers((m) => m.filter((x) => x.id !== id));
+    if (selManager === name) setSelManager('');
+  };
+
   const inputCls = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
 
   return (
@@ -163,7 +180,12 @@ export default function Managers() {
           </div>
           <div className="space-y-1.5 max-h-48 overflow-y-auto">
             {managers.length === 0 ? <p className="text-center text-slate-400 text-sm py-4">لا يوجد مدراء</p>
-              : managers.map((m) => <div key={m.id} className="bg-slate-50 dark:bg-slate-900/40 rounded-lg px-3 py-2 font-bold text-slate-700 dark:text-slate-200">{m.name}</div>)}
+              : managers.map((m) => (
+                <div key={m.id} className="bg-slate-50 dark:bg-slate-900/40 rounded-lg px-3 py-2 font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between gap-2">
+                  <span>{m.name}</span>
+                  <button onClick={() => delManager(m.id, m.name)} title="حذف المدير" className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg shrink-0"><Trash2 size={15} /></button>
+                </div>
+              ))}
           </div>
         </div>
       </div>
@@ -175,20 +197,21 @@ export default function Managers() {
           <table className="w-full text-right text-sm">
             <thead>
               <tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700">
-                <th className="p-2">التاريخ</th><th className="p-2">المدير</th><th className="p-2">المبلغ</th><th className="p-2">الوسيلة</th>
+                <th className="p-2">التاريخ</th><th className="p-2">المدير</th><th className="p-2">المبلغ</th><th className="p-2">الوسيلة</th><th className="p-2 text-center">حذف</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={4} className="text-center text-slate-400 py-6">جاري التحميل...</td></tr>
+                <tr><td colSpan={5} className="text-center text-slate-400 py-6">جاري التحميل...</td></tr>
               ) : withdrawals.length === 0 ? (
-                <tr><td colSpan={4} className="text-center text-slate-400 py-6">لا توجد سحوبات</td></tr>
+                <tr><td colSpan={5} className="text-center text-slate-400 py-6">لا توجد سحوبات</td></tr>
               ) : withdrawals.map((w) => (
                 <tr key={w.id} className="border-b border-slate-100 dark:border-slate-700/50">
                   <td className="p-2">{new Date(w.created_at).toLocaleString('ar-EG')}</td>
                   <td className="p-2 font-bold text-slate-800 dark:text-slate-100">{w.note}</td>
                   <td className="p-2 font-black text-red-600">{Number(w.amount).toFixed(2)} {cur}</td>
                   <td className="p-2">{METHODS.find((m) => m.key === w.payment_method)?.label || w.payment_method}</td>
+                  <td className="p-2 text-center"><button onClick={() => delWithdrawal(w.id)} title="حذف السحب" className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg"><Trash2 size={15} /></button></td>
                 </tr>
               ))}
             </tbody>
