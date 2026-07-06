@@ -2926,13 +2926,18 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.allowCashierEmployeeAdvance !== undefined) mapped.allow_cashier_employee_advance = newSettings.allowCashierEmployeeAdvance;
 
     const { data: existing } = await supabase.from('store_settings').select('id').limit(1).maybeSingle();
-    
-    if (existing?.id) {
-      await supabase.from('store_settings').update(mapped).eq('id', existing.id);
-    } else {
-      await supabase.from('store_settings').insert(mapped);
+
+    const { error } = existing?.id
+      ? await supabase.from('store_settings').update(mapped).eq('id', existing.id)
+      : await supabase.from('store_settings').insert(mapped);
+
+    // مهم: نرمي الخطأ بدل ما نبلعه — عمود ناقص في store_settings بيفشّل الحفظ كله
+    // (زي تسميات المحافظ). كده الواجهة تعرض فشل حقيقي بدل نجاح كاذب.
+    if (error) {
+      console.error('updateSettings error:', error);
+      throw new Error(`فشل حفظ الإعدادات: ${error.message}. شغّل db/28_ensure_settings_columns.sql على قاعدة البيانات.`);
     }
-    
+
     set((state) => ({ storeSettings: { ...state.storeSettings, ...newSettings } }));
     new BroadcastChannel('cashier-sync').postMessage('sync_settings');
   },

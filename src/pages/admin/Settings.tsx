@@ -37,7 +37,7 @@ export default function Settings() {
       alert('تم حفظ الإعدادات بنجاح!');
     } catch (error) {
       console.error(error);
-      alert('حدث خطأ أثناء حفظ الإعدادات. تأكد من اتصال الإنترنت أو صلاحيات قاعدة البيانات.');
+      alert((error as Error)?.message || 'حدث خطأ أثناء حفظ الإعدادات. تأكد من اتصال الإنترنت أو صلاحيات قاعدة البيانات.');
     }
   };
 
