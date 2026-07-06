@@ -120,7 +120,9 @@ function ProductSearchSelect({
 }
 
 export default function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders } = useStore();
+  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders } = useStore();
+  const OPENING_MARK = 'رصيد افتتاحي';
+  const openingBalanceOf = (supplierId: string) => Number(purchaseInvoices.find((inv: any) => inv.supplier_id === supplierId && inv.invoice_number === OPENING_MARK)?.total) || 0;
   const [activeTab, setActiveTab] = useState<'suppliers' | 'invoices'>('suppliers');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchQueryInvoices, setSearchQueryInvoices] = useState('');
@@ -136,7 +138,7 @@ export default function Suppliers() {
   const [isPayingDebt, setIsPayingDebt] = useState(false);
   const [debtPay, setDebtPay] = useState<Record<string, string>>({});
 
-  const [formData, setFormData] = useState({ name: '', phone: '', address: '' });
+  const [formData, setFormData] = useState({ name: '', phone: '', address: '', openingBalance: '' });
 
   // Invoice form state
   const [invSupplierId, setInvSupplierId] = useState('');
@@ -169,14 +171,18 @@ export default function Suppliers() {
 
   const handleSupplierSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const { openingBalance, ...supplierData } = formData;
+    const openAmt = Number(openingBalance) || 0;
     if (editingSupplier) {
-      await updateSupplier(editingSupplier.id, formData);
+      await updateSupplier(editingSupplier.id, supplierData);
+      await setSupplierOpeningBalance(editingSupplier.id, openAmt);
     } else {
-      await addSupplier(formData);
+      const created = await addSupplier(supplierData);
+      if (created && openAmt > 0) await setSupplierOpeningBalance(created.id, openAmt);
     }
     setShowSupplierModal(false);
     setEditingSupplier(null);
-    setFormData({ name: '', phone: '', address: '' });
+    setFormData({ name: '', phone: '', address: '', openingBalance: '' });
   };
 
   const invTotal = invItems.reduce((sum, item) => {
@@ -472,7 +478,7 @@ export default function Suppliers() {
           onClick={() => {
             if (activeTab === 'suppliers') {
               setEditingSupplier(null);
-              setFormData({ name: '', phone: '', address: '' });
+              setFormData({ name: '', phone: '', address: '', openingBalance: '' });
               setShowSupplierModal(true);
             } else {
               setEditingPurchaseInvoice(null);
@@ -544,7 +550,7 @@ export default function Suppliers() {
                         title="ملف المورد"
                       ><Eye size={16} /></button>
                       <button
-                        onClick={() => { setEditingSupplier(supplier); setFormData({ name: supplier.name, phone: supplier.phone || '', address: supplier.address || '' }); setShowSupplierModal(true); }}
+                        onClick={() => { setEditingSupplier(supplier); setFormData({ name: supplier.name, phone: supplier.phone || '', address: supplier.address || '', openingBalance: openingBalanceOf(supplier.id) ? String(openingBalanceOf(supplier.id)) : '' }); setShowSupplierModal(true); }}
                         className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition"
                       ><Edit2 size={16} /></button>
                       <button
@@ -682,6 +688,11 @@ export default function Suppliers() {
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">العنوان</label>
                 <textarea value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition font-medium resize-none h-24" />
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">الرصيد الافتتاحي — المبلغ المستحق عليك للمورد ({storeSettings.currency})</label>
+                <input type="number" min="0" step="any" value={formData.openingBalance} onChange={e => setFormData({ ...formData, openingBalance: e.target.value })} placeholder="0" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition font-bold" />
+                <p className="text-[11px] text-slate-400 mt-1">دَينك للمورد قبل ما تبدأ على النظام. بيتضاف لمديونية المورد وبيظهر في كشف حسابه كبند «رصيد افتتاحي»، وبيتسدّد عادي.</p>
               </div>
               <div className="flex gap-3 pt-4 border-t border-slate-100">
                 <button type="submit" style={{ backgroundColor: tc }} className="flex-1 text-white py-3.5 rounded-xl font-bold shadow-lg hover:opacity-90 transition">حفظ البيانات</button>
