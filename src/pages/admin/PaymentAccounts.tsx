@@ -1,9 +1,11 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
-import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
+import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, type PaymentKey } from '../../utils/paymentMethods';
 import { buildPaymentLedger } from '../../utils/paymentLedger';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import html2canvas from 'html2canvas-pro';
 
 const METHOD_ICON: Record<string, any> = { cash: Banknote, visa: CreditCard, wallet: WalletIcon, instapay: Smartphone, method5: Zap, method6: Landmark };
 const KIND_LABEL: Record<string, string> = { sale: 'بيع', payment: 'سداد آجل', return: 'مرتجع', expense: 'مصروف', purchase: 'شراء', transfer: 'تحويل' };
@@ -104,7 +106,49 @@ export default function PaymentAccounts() {
     XLSX.writeFile(wb, `كشف_${payLabelOf(storeSettings as any, selected)}.xlsx`);
   };
 
+  const [exporting, setExporting] = useState(false);
+  const exportPDF = async () => {
+    const element = document.getElementById('pa-print');
+    if (!element) return;
+    setExporting(true);
+    try {
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        backgroundColor: '#ffffff',
+        windowWidth: element.scrollWidth,
+        windowHeight: element.scrollHeight,
+        onclone: (doc) => {
+          const el = doc.getElementById('pa-print');
+          if (el) { el.style.height = 'auto'; el.style.overflow = 'visible'; }
+          el?.querySelectorAll('.pa-scroll').forEach((d: any) => { d.style.maxHeight = 'none'; d.style.overflow = 'visible'; });
+        },
+      });
+      const imgData = canvas.toDataURL('image/png');
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const imgHeight = (canvas.height * pdfWidth) / canvas.width;
+      let heightLeft = imgHeight;
+      let position = 0;
+      pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+      heightLeft -= pdfHeight;
+      while (heightLeft > 0) {
+        position = heightLeft - imgHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
+        heightLeft -= pdfHeight;
+      }
+      pdf.save(`كشف_${payLabelOf(storeSettings as any, selected)}.pdf`);
+    } catch (e) {
+      console.error(e);
+      alert('تعذّر تصدير PDF');
+    }
+    setExporting(false);
+  };
+
   const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const periodLabel = `${from ? new Date(from).toLocaleDateString('ar-EG') : 'البداية'} — ${to ? new Date(to).toLocaleDateString('ar-EG') : 'الآن'}`;
 
   return (
     <div className="p-6 md:p-8 space-y-5 animate-fade-in">
@@ -155,11 +199,25 @@ export default function PaymentAccounts() {
           <div><label className="text-[11px] font-bold text-slate-500 block mb-1">من</label><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-bold outline-none" /></div>
           <div><label className="text-[11px] font-bold text-slate-500 block mb-1">إلى</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-bold outline-none" /></div>
           <button onClick={exportExcel} className="bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 text-slate-700 dark:text-slate-200 font-bold px-4 py-2 rounded-xl flex items-center gap-2 text-sm"><Download size={16} /> Excel</button>
+          <button onClick={exportPDF} disabled={exporting} className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-bold px-4 py-2 rounded-xl flex items-center gap-2 text-sm"><FileText size={16} /> {exporting ? 'جاري...' : 'PDF'}</button>
         </div>
       </div>
       <div className="relative max-w-md">
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="بحث في البيان..." className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl py-2 pr-9 pl-3 text-sm font-semibold outline-none focus:ring-2 focus:ring-indigo-500" />
+      </div>
+
+      {/* المنطقة القابلة للتصدير PDF */}
+      <div id="pa-print" className="space-y-5 bg-white dark:bg-slate-900 p-4 rounded-2xl">
+      {/* عنوان الكشف (يظهر في PDF) */}
+      <div className="flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
+        <div>
+          <div className="text-lg font-black text-slate-800 dark:text-white">{storeSettings.name}</div>
+          <div className="text-sm font-bold text-indigo-600">كشف حساب: {payLabelOf(storeSettings as any, selected)}</div>
+        </div>
+        <div className="text-left text-[11px] text-slate-500 font-semibold">
+          <div>الفترة: {periodLabel}</div>
+        </div>
       </div>
 
       {/* ملخص الكشف */}
@@ -172,7 +230,7 @@ export default function PaymentAccounts() {
 
       {/* جدول الكشف */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-        <div className="overflow-x-auto max-h-[60vh]">
+        <div className="overflow-x-auto max-h-[60vh] pa-scroll">
           <table className="w-full text-right text-sm">
             <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 sticky top-0">
               <tr>
@@ -210,6 +268,7 @@ export default function PaymentAccounts() {
           </table>
         </div>
       </div>
+      </div>{/* /pa-print */}
     </div>
   );
 }
