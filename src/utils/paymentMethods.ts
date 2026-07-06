@@ -73,6 +73,21 @@ export function formToSplit(form: Record<string, any> | undefined | null): Recor
   return out;
 }
 
+/**
+ * الرصيد الافتتاحي لوسيلة دفع: من paymentOpeningBalances لو موجود، وإلا صفر —
+ * ما عدا الكاش بيرجع للرصيد الافتتاحي القديم (initial_balance) للتوافق.
+ */
+export function openingBalanceOf(settings: any, k: string): number {
+  const ob = settings?.paymentOpeningBalances;
+  if (ob && ob[k] !== undefined && ob[k] !== null) return Number(ob[k]) || 0;
+  return k === 'cash' ? (Number(settings?.initial_balance) || 0) : 0;
+}
+
+/** مجموع الأرصدة الافتتاحية لكل الوسائل المفعّلة (إجمالي افتتاحي الخزنة). */
+export function totalOpeningBalance(settings: any): number {
+  return activePaymentKeys(settings).reduce((s, k) => s + openingBalanceOf(settings, k), 0);
+}
+
 /** The dominant method in a split (largest amount), defaulting to cash. */
 export function primaryMethod(split: PaymentSplit | undefined): PaymentKey {
   let best: PaymentKey = 'cash';

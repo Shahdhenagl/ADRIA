@@ -1,6 +1,7 @@
 import { useStore } from '../../store/useStore';
 import { Banknote, ShoppingBag, ReceiptText, DollarSign } from 'lucide-react';
 import { calculateCashRefunded } from '../../utils/returns';
+import { totalOpeningBalance } from '../../utils/paymentMethods';
 
 export default function Overview() {
   const { orders, products, expenses, storeSettings, purchaseInvoices } = useStore();
@@ -26,7 +27,7 @@ export default function Overview() {
   totalNetRevenue += extraIncomes;
 
   // Calculate Net Safe Balance
-  const initialBalance = storeSettings.initial_balance || 0;
+  const initialBalance = totalOpeningBalance(storeSettings as any);
   const ordersIn = activeOrders.reduce((sum, o) => {
     if (o.type === 'payment') return sum + (o.paid_amount || 0);
     

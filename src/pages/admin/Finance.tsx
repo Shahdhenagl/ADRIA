@@ -10,7 +10,7 @@ import { calculateOrderReturnValue, calculateCashRefunded } from '../../utils/re
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
-import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
+import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
 
 export default function Finance() {
@@ -75,7 +75,6 @@ export default function Finance() {
 
   // --- Calculations ---
 
-  const initialBalance = storeSettings.initial_balance || 0;
 
   // Helper to get date string without time
   const getDateStr = (date: string | Date) => new Date(date).toISOString().split('T')[0];
@@ -113,7 +112,7 @@ export default function Finance() {
     return (ordersIn - returnsOut - expensesOut - purchasesOut);
   }, [activeOrders, expenses, purchaseInvoices, selectedDate, filterType]);
 
-  const openingBalance = initialBalance + totalsBefore;
+  const openingBalance = totalOpeningBalance(storeSettings as any) + totalsBefore;
 
   const getPrimaryMethod = (item: any) => {
     if (typeof item.payment_method === 'string' && ['visa', 'wallet', 'instapay', 'method5', 'method6'].includes(item.payment_method)) {
@@ -185,7 +184,7 @@ export default function Finance() {
       .filter(inv => new Date(inv.created_at) < startOfPeriod)
       .reduce((sum, inv) => sum + getSafeMethodAmount(inv, method, 'paid_amount'), 0);
 
-    const initial = method === 'cash' ? initialBalance : 0;
+    const initial = openingBalanceOf(storeSettings as any, method);
 
     return initial + ordersIn - returnsOut - expensesOut - purchasesOut;
   };

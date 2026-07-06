@@ -3,7 +3,7 @@ import { useStore } from '../../store/useStore';
 import { FileBarChart, Printer } from 'lucide-react';
 import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } from '../../utils/paymentMethods';
 
 const todayStr = () => { const d = new Date(); return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); };
 
@@ -71,7 +71,7 @@ export default function Reports() {
   // ── treasury (opening before range + range movement) ──
   const opening = useMemo(() => {
     const b = computeMethods(false, true);
-    const init = Number((storeSettings as any).initialBalance ?? (storeSettings as any).initial_balance) || 0;
+    const init = totalOpeningBalance(storeSettings as any);
     return init + sum(b.inN) - sum(b.outN);
   }, [orders, extra, from]);
   const totalIn = sum(rangeMethods.inN), totalOut = sum(rangeMethods.outN);

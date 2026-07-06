@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { Briefcase, Plus, Banknote, Trash2 } from 'lucide-react';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf } from '../../utils/paymentMethods';
 
 export default function Managers() {
   const { orders, storeSettings, managerWithdraw, deleteExpense } = useStore();
@@ -59,7 +59,7 @@ export default function Managers() {
       });
       purRes.data?.forEach((p: any) => add(-1, p, 'paid_amount'));
       salRes.data?.forEach((s: any) => add(-1, s, 'amount'));
-      net.cash += Number((storeSettings as any).initialBalance ?? (storeSettings as any).initial_balance) || 0;
+      ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(storeSettings as any, k); });
       setAvail(net);
     } catch (e) { console.error(e); }
     setLoading(false);

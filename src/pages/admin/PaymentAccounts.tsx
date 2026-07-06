@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
-import { activePaymentKeys, payLabelOf, type PaymentKey } from '../../utils/paymentMethods';
+import { activePaymentKeys, payLabelOf, openingBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
 import { buildPaymentLedger } from '../../utils/paymentLedger';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -15,11 +15,7 @@ export default function PaymentAccounts() {
   const cur = storeSettings.currency;
   const methods = activePaymentKeys(storeSettings as any);
 
-  const openingOf = (k: string): number => {
-    const ob = storeSettings.paymentOpeningBalances;
-    if (ob && ob[k] !== undefined && ob[k] !== null) return Number(ob[k]) || 0;
-    return k === 'cash' ? Number(storeSettings.initial_balance) || 0 : 0; // توافق مع الرصيد الافتتاحي القديم للكاش
-  };
+  const openingOf = (k: string): number => openingBalanceOf(storeSettings as any, k);
 
   const [selected, setSelected] = useState<PaymentKey>(methods[0] || 'cash');
   const [from, setFrom] = useState('');
