@@ -8,7 +8,7 @@ const PERM_GROUPS: { section: string; items: [string, string][] }[] = [
   { section: 'المخزون والتصنيع', items: [['/admin/inventory', 'المخزون والمنتجات'], ['/admin/stocktake', 'الجرد والتسوية'], ['/admin/devo', 'الديڤو والتوالف'], ['/admin/manufacturing', 'التصنيع'], ['/admin/stock-alerts', 'تنبيهات النواقص']] },
   { section: 'العملاء', items: [['/admin/customers', 'قاعدة العملاء'], ['/admin/deferred', 'حسابات الآجل'], ['/admin/whatsapp-campaigns', 'حملات واتساب']] },
   { section: 'الموردين', items: [['/admin/suppliers', 'الموردين والمشتريات']] },
-  { section: 'المالية والخزائن', items: [['/admin/finance', 'الخزينة والمصاريف'], ['/admin/savings', 'خزنة الادخار'], ['/admin/budget', 'الميزانية العامة'], ['/admin/financing', 'سلف وتمويل'], ['/admin/managers', 'المدراء والسحوبات'], ['/admin/partners', 'الشركاء']] },
+  { section: 'المالية والخزائن', items: [['/admin/finance', 'الخزينة والمصاريف'], ['/admin/payment-accounts', 'كشوف حسابات الوسائل'], ['/admin/savings', 'خزنة الادخار'], ['/admin/budget', 'الميزانية العامة'], ['/admin/financing', 'سلف وتمويل'], ['/admin/managers', 'المدراء والسحوبات'], ['/admin/partners', 'الشركاء']] },
   { section: 'الموظفين', items: [['/admin/cashiers', 'إدارة المحاسبين'], ['/admin/employees', 'الرواتب والموظفين']] },
   { section: 'الإعدادات', items: [['/admin/settings', 'إعدادات النظام']] },
 ];

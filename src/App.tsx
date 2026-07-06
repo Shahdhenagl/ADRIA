@@ -27,6 +27,7 @@ import Partners from './pages/admin/Partners';
 import Savings from './pages/admin/Savings';
 import StockTake from './pages/admin/StockTake';
 import Devo from './pages/admin/Devo';
+import PaymentAccounts from './pages/admin/PaymentAccounts';
 import Reports from './pages/admin/Reports';
 import AdminUsers from './pages/admin/AdminUsers';
 import PublicInvoice from './pages/PublicInvoice';
@@ -183,6 +184,7 @@ function App() {
             <Route path="cashiers" element={<Cashiers />} />
             <Route path="deferred" element={<DeferredAccounts />} />
             <Route path="finance" element={<Finance />} />
+            <Route path="payment-accounts" element={<PaymentAccounts />} />
             <Route path="financing" element={<Financing />} />
             <Route path="offline-invoices" element={<OfflineInvoices />} />
             <Route path="coupons" element={<Coupons />} />

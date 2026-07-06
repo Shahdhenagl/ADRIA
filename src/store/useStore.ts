@@ -335,6 +335,7 @@ export interface StoreSettings {
   cashierPermissions?: Record<string, boolean>; // صلاحيات الكاشير (إظهار/إخفاء مميزات)
   paymentLabels?: Record<string, string>; // تسميات وسائل الدفع (كاش/فيزا/محفظة/انستا/طريقة5/طريقة6)
   paymentMethodsEnabled?: Record<string, boolean>; // تفعيل طرق الدفع الإضافية (method5/method6)
+  paymentOpeningBalances?: Record<string, number>; // رصيد افتتاحي مستقل لكل وسيلة دفع
   showInvoiceProfit?: boolean; // إظهار ربح الفاتورة في شاشة الكاشير
   allowCashierEmployeeAdvance?: boolean; // السماح للكاشير بصرف سلف للموظفين (افتراضياً مغلق)
 }
@@ -694,6 +695,7 @@ function mapSettings(row: Record<string, unknown>): StoreSettings {
     cashierPermissions: (row.cashier_permissions as Record<string, boolean>) ?? undefined,
     paymentLabels: (row.payment_labels as Record<string, string>) ?? undefined,
     paymentMethodsEnabled: (row.payment_methods_enabled as Record<string, boolean>) ?? undefined,
+    paymentOpeningBalances: (row.payment_opening_balances as Record<string, number>) ?? undefined,
     showInvoiceProfit: (row.show_invoice_profit as boolean) ?? true,
     allowCashierEmployeeAdvance: (row.allow_cashier_employee_advance as boolean) ?? false,
   };
@@ -2922,6 +2924,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.cashierPermissions !== undefined) mapped.cashier_permissions = newSettings.cashierPermissions;
     if (newSettings.paymentLabels !== undefined) mapped.payment_labels = newSettings.paymentLabels;
     if (newSettings.paymentMethodsEnabled !== undefined) mapped.payment_methods_enabled = newSettings.paymentMethodsEnabled;
+    if (newSettings.paymentOpeningBalances !== undefined) mapped.payment_opening_balances = newSettings.paymentOpeningBalances;
     if (newSettings.showInvoiceProfit !== undefined) mapped.show_invoice_profit = newSettings.showInvoiceProfit;
     if (newSettings.allowCashierEmployeeAdvance !== undefined) mapped.allow_cashier_employee_advance = newSettings.allowCashierEmployeeAdvance;
 
