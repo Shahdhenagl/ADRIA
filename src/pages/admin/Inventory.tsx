@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useStore, type Product } from '../../store/useStore';
-import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer } from 'lucide-react';
+import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { generateBarcode, printBarcodeLabels } from '../../utils/printBarcodeLabels';
@@ -10,7 +10,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 
 export default function Inventory() {
-  const { products, categories, storeSettings, addProduct, updateProduct, orders } = useStore();
+  const { products, categories, storeSettings, addProduct, updateProduct, orders, suppliers, addSupplier } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [stockLocation, setStockLocation] = useState<'all' | 'warehouse' | 'display'>('all');
   const [seasonFilter, setSeasonFilter] = useState<'all' | 'summer' | 'winter'>('all');
@@ -56,6 +56,8 @@ export default function Inventory() {
     }
   };
   const [loading, setLoading] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [formData, setFormData] = useState({
     name: '',
     barcode: '',
@@ -66,6 +68,7 @@ export default function Inventory() {
     wholesale_price: 0,
     half_wholesale_price: 0,
     season: 'summer',
+    supplier_name: '',
     stock_quantity: 0,
     display_quantity: 0,
     category_id: categories[0]?.id || '',
@@ -173,6 +176,7 @@ export default function Inventory() {
       wholesale_price: product.wholesale_price || 0,
       half_wholesale_price: product.half_wholesale_price || 0,
       season: product.season || 'summer',
+      supplier_name: product.supplier_name || '',
       stock_quantity: product.stock_quantity,
       display_quantity: product.display_quantity || 0,
       category_id: product.category_id,
@@ -193,6 +197,7 @@ export default function Inventory() {
       wholesale_price: 0,
       half_wholesale_price: 0,
       season: 'summer',
+      supplier_name: '',
       stock_quantity: 0,
       display_quantity: 0,
       category_id: categories[0]?.id || '',
@@ -202,12 +207,24 @@ export default function Inventory() {
     setShowAddModal(true);
   };
 
-  const submitProduct = (e: React.FormEvent) => {
+  // يضمن وجود المورد في قائمة الموردين (ينشئه لو الاسم جديد). يرجّع الاسم المنسّق للتخزين.
+  const ensureSupplier = async (rawName: string): Promise<string> => {
+    const name = (rawName || '').trim();
+    if (!name) return '';
+    const existing = suppliers.find(s => normalizeArabic(s.name) === normalizeArabic(name));
+    if (existing) return existing.name;
+    const created = await addSupplier({ name, phone: '', address: '' } as any);
+    return (created as any)?.name || name;
+  };
+
+  const submitProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.name) {
       alert("الرجاء إدخال اسم المنتج.");
       return;
     }
+    // لو المورد اسم جديد سجّله في قائمة الموردين واستخدم الاسم المنسّق
+    const supplierName = await ensureSupplier(formData.supplier_name);
 
     // الباركود: لو فاضي يتولّد تلقائياً (النظام بيتعامل بالكود ده في البيع على الـ POS)
     let barcode = (formData.barcode || '').trim();
@@ -222,7 +239,7 @@ export default function Inventory() {
       return;
     }
 
-    let payload = { ...formData, barcode };
+    let payload = { ...formData, barcode, supplier_name: supplierName };
     if (editingProductId) {
       // المعروض لا يتجاوز الإجمالي
       payload = { ...payload, display_quantity: Math.min(Number(formData.display_quantity) || 0, Number(formData.stock_quantity) || 0) };
@@ -258,6 +275,7 @@ export default function Inventory() {
       wholesale_price: 0,
       half_wholesale_price: 0,
       season: 'summer',
+      supplier_name: '',
       stock_quantity: 0,
       display_quantity: 0,
       category_id: categories[0]?.id || '',
@@ -271,11 +289,12 @@ export default function Inventory() {
       ['تقرير المخزون والمنتجات', '', '', '', '', ''],
       ['التاريخ', new Date().toLocaleDateString(), '', '', '', ''],
       [''],
-      ['الباركود', 'اسم المنتج', 'التصنيف', 'الوحدة', 'سعر الشراء', 'متوسط الشراء', 'سعر البيع', `المخزون (${stockLocation === 'warehouse' ? 'المستودع' : stockLocation === 'display' ? 'المحل' : 'الكل'})`, 'مستودع', 'محل', 'مباع'],
+      ['الباركود', 'اسم المنتج', 'التصنيف', 'المورد', 'الوحدة', 'سعر الشراء', 'متوسط الشراء', 'سعر البيع', `المخزون (${stockLocation === 'warehouse' ? 'المستودع' : stockLocation === 'display' ? 'المحل' : 'الكل'})`, 'مستودع', 'محل', 'مباع'],
       ...filteredProducts.map(p => [
         p.barcode,
         p.name,
         categories.find(c => c.id === p.category_id)?.name || '',
+        p.supplier_name || '',
         getUnitConfig(p.unit).label,
         p.purchase_price,
         p.average_purchase_price,
@@ -290,6 +309,146 @@ export default function Inventory() {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Inventory');
     XLSX.writeFile(wb, `inventory_report_${new Date().toLocaleDateString()}.xlsx`);
+  };
+
+  // أعمدة قالب الاستيراد. الترتيب لا يهم عند القراءة — نبحث عن العمود بالاسم.
+  const TEMPLATE_HEADERS = ['الباركود', 'اسم المنتج', 'التصنيف', 'المورد', 'الوحدة', 'سعر الشراء', 'سعر البيع', 'سعر الخصم', 'سعر الجملة', 'سعر نص الجملة', 'الموسم', 'كمية المستودع', 'كمية المحل'];
+
+  // تصدير قالب Excel جاهز للتعبئة وإعادة الاستيراد (يحتوي المنتجات الحالية حسب الفلاتر المختارة).
+  const exportTemplate = () => {
+    const rows = filteredProducts.map(p => [
+      p.barcode || '',
+      p.name,
+      categories.find(c => c.id === p.category_id)?.name || '',
+      p.supplier_name || '',
+      getUnitConfig(p.unit).label,
+      p.purchase_price || 0,
+      p.sale_price || 0,
+      p.discount_price || 0,
+      p.wholesale_price || 0,
+      p.half_wholesale_price || 0,
+      p.season === 'winter' ? 'شتوي' : 'صيفي',
+      Math.max(0, (Number(p.stock_quantity) || 0) - dispOf(p)), // كمية المستودع
+      dispOf(p),                                                // كمية المحل
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([TEMPLATE_HEADERS, ...rows]);
+    ws['!cols'] = TEMPLATE_HEADERS.map(() => ({ wch: 16 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'المنتجات');
+    XLSX.writeFile(wb, `products_template_${new Date().toLocaleDateString()}.xlsx`);
+  };
+
+  // استيراد المنتجات من ملف Excel: يطابق المنتج بالباركود (تحديث) أو يضيفه جديداً،
+  // ويطابق/ينشئ التصنيف والمورد بالاسم تلقائياً.
+  const importExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      if (!rows.length) { alert('الملف فارغ أو لا يحتوي على صفوف.'); return; }
+
+      // يلتقط قيمة العمود بأي اسم من المرادفات (بحث مرن بعد تطبيع العربية).
+      const pick = (row: any, ...keys: string[]): any => {
+        for (const k of keys) if (row[k] !== undefined && row[k] !== '') return row[k];
+        const nk = keys.map(normalizeArabic);
+        for (const key of Object.keys(row)) if (nk.includes(normalizeArabic(key))) return row[key];
+        return '';
+      };
+      const num = (v: any) => { const n = parseFloat(String(v).replace(/[^\d.-]/g, '')); return isNaN(n) ? 0 : n; };
+
+      const { supabase } = await import('../../lib/supabase');
+      const localCats = [...categories];
+      const localSups = [...suppliers];
+      const byBarcode = new Map(products.filter(p => p.barcode).map(p => [String(p.barcode), p]));
+      const usedBarcodes = new Set(products.map(p => p.barcode).filter(Boolean) as string[]);
+      let added = 0, updated = 0, skipped = 0;
+
+      for (const row of rows) {
+        try {
+          const name = String(pick(row, 'اسم المنتج', 'الاسم', 'name')).trim();
+          if (!name) { skipped++; continue; }
+
+          // التصنيف: طابق بالاسم أو أنشئه
+          let category_id = localCats[0]?.id || '';
+          const catName = String(pick(row, 'التصنيف', 'category')).trim();
+          if (catName) {
+            let cat = localCats.find(c => normalizeArabic(c.name) === normalizeArabic(catName));
+            if (!cat) {
+              const { data } = await supabase.from('categories').insert({ name: catName }).select().single();
+              if (data) { cat = data as any; localCats.push(cat as any); useStore.setState(s => ({ categories: [...s.categories, data as any] })); }
+            }
+            if (cat) category_id = cat.id;
+          }
+
+          // المورد: طابق بالاسم أو أنشئه
+          let supplier_name = '';
+          const supName = String(pick(row, 'المورد', 'supplier')).trim();
+          if (supName) {
+            let sup = localSups.find(s => normalizeArabic(s.name) === normalizeArabic(supName));
+            if (!sup) {
+              const created = await addSupplier({ name: supName, phone: '', address: '' } as any);
+              if (created) { sup = created as any; localSups.push(sup as any); }
+            }
+            supplier_name = (sup as any)?.name || supName;
+          }
+
+          // الوحدة: طابق باسم العرض أو القيمة
+          const unitLabel = String(pick(row, 'الوحدة', 'unit')).trim();
+          const unit = UNIT_OPTIONS.find(u => u.label === unitLabel || u.value === unitLabel)?.value || 'قطعة';
+
+          const seasonRaw = String(pick(row, 'الموسم', 'season')).trim();
+          const season = /شتو|winter/i.test(seasonRaw) ? 'winter' : 'summer';
+
+          const wh = num(pick(row, 'كمية المستودع', 'مستودع', 'warehouse'));
+          const display = num(pick(row, 'كمية المحل', 'محل', 'display'));
+          const stock_quantity = wh + display;
+          const purchase_price = num(pick(row, 'سعر الشراء', 'purchase'));
+
+          const payload: any = {
+            name,
+            purchase_price,
+            average_purchase_price: purchase_price,
+            sale_price: num(pick(row, 'سعر البيع', 'sale')),
+            discount_price: num(pick(row, 'سعر الخصم', 'سعر البيع بعد الخصم', 'discount')),
+            wholesale_price: num(pick(row, 'سعر الجملة', 'wholesale')),
+            half_wholesale_price: num(pick(row, 'سعر نص الجملة', 'half')),
+            season,
+            supplier_name,
+            category_id,
+            unit,
+            stock_quantity,
+            display_quantity: Math.min(display, stock_quantity),
+          };
+
+          const rawBarcode = String(pick(row, 'الباركود', 'barcode')).trim();
+          const existing = rawBarcode ? byBarcode.get(rawBarcode) : undefined;
+          if (existing) {
+            await updateProduct(existing.id, payload);
+            updated++;
+          } else {
+            let barcode = rawBarcode;
+            if (!barcode) barcode = generateBarcode(usedBarcodes);
+            usedBarcodes.add(barcode);
+            const created = await addProduct({ ...payload, barcode });
+            if (created) { byBarcode.set(barcode, created as any); added++; } else skipped++;
+          }
+        } catch (rowErr) {
+          console.error('Import row error:', rowErr, row);
+          skipped++;
+        }
+      }
+      alert(`تم الاستيراد ✅\nمنتجات مضافة: ${added}\nمنتجات محدّثة: ${updated}${skipped ? `\nصفوف متجاهلة: ${skipped}` : ''}`);
+    } catch (err) {
+      console.error('Import error:', err);
+      alert('حدث خطأ أثناء قراءة الملف. تأكد أنه ملف Excel صحيح وبنفس أعمدة القالب.');
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
   const exportPDF = async () => {
@@ -489,6 +648,14 @@ export default function Inventory() {
                     ))}
                   </div>
                 </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-bold text-slate-700 mb-1">المورد <span className="text-[10px] text-slate-400">(اختياري)</span></label>
+                  <input type="text" list="suppliers-datalist" value={formData.supplier_name} onChange={e => setFormData({...formData, supplier_name: e.target.value})} placeholder="اسم المورد الذي يورّد هذا المنتج..." className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-teal-500" />
+                  <datalist id="suppliers-datalist">
+                    {suppliers.map(s => <option key={s.id} value={s.name} />)}
+                  </datalist>
+                  <p className="text-xs text-slate-400 mt-1">لو كتبت اسم مورد جديد غير موجود، هيتسجّل تلقائياً في قائمة الموردين.</p>
+                </div>
                 {!editingProductId ? (
                   <>
                     <div>
@@ -619,14 +786,36 @@ export default function Inventory() {
           <h2 className="text-xl font-black text-slate-800">المنتجات</h2>
         </div>
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex gap-2">
-            <button 
+          <div className="flex gap-2 flex-wrap">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls"
+              onChange={importExcel}
+              className="hidden"
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={importing}
+              className="flex items-center gap-2 bg-teal-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-teal-700 transition text-sm disabled:opacity-50"
+              title="استيراد المنتجات من ملف Excel (تحديث بالباركود أو إضافة جديد)"
+            >
+              {importing ? '...جاري الاستيراد' : <><Upload size={16} /> استيراد Excel</>}
+            </button>
+            <button
+              onClick={exportTemplate}
+              className="flex items-center gap-2 bg-slate-700 text-white px-4 py-2 rounded-xl font-bold hover:bg-slate-800 transition text-sm"
+              title="تحميل قالب Excel جاهز للتعبئة وإعادة الاستيراد"
+            >
+              <Download size={16} /> قالب Excel
+            </button>
+            <button
               onClick={exportExcel}
               className="flex items-center gap-2 bg-emerald-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-emerald-700 transition text-sm"
             >
-              <TableIcon size={16} /> Excel
+              <TableIcon size={16} /> تقرير Excel
             </button>
-            <button 
+            <button
               onClick={exportPDF}
               className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-red-700 transition text-sm disabled:opacity-50"
               disabled={loading}
@@ -695,6 +884,7 @@ export default function Inventory() {
                 <th className="p-4">الباركود</th>
                 <th className="p-4">اسم المنتج</th>
                 <th className="p-4">التصنيف</th>
+                <th className="p-4">المورد</th>
                 <th className="p-4 text-center">الوحدة</th>
                 <th className="p-4 text-center">سعر الشراء</th>
                 <th className="p-4 text-center">متوسط الشراء</th>
@@ -718,6 +908,7 @@ export default function Inventory() {
                     </td>
                     <td className={`p-4 font-bold ${product.is_hidden ? 'line-through text-slate-400' : ''}`}>{product.name}</td>
                     <td className="p-4 text-slate-500">{category}</td>
+                    <td className="p-4 text-slate-500">{product.supplier_name || '—'}</td>
                     <td className="p-4 text-center">
                       <span className="text-xs font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{getUnitConfig(product.unit).label}</span>
                     </td>
