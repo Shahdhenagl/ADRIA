@@ -552,7 +552,7 @@ interface CashierStore {
   // Suppliers
   addSupplier: (supplier: Omit<Supplier, 'id' | 'created_at'>) => Promise<Supplier | null>;
   updateSupplier: (id: string, supplier: Partial<Supplier>) => Promise<void>;
-  setSupplierOpeningBalance: (supplierId: string, amount: number) => Promise<void>;
+  setSupplierOpeningBalance: (supplierId: string, amount: number, direction?: 'owed_to_supplier' | 'owed_to_us') => Promise<void>;
   deleteSupplier: (id: string) => Promise<void>;
 
   // Customers
@@ -4139,10 +4139,14 @@ setupRealtime: () => {
   // الرصيد الافتتاحي للمورد = المبلغ المستحق عليك للمورد قبل النظام.
   // نمثّله كفاتورة شراء بعلامة invoice_number='رصيد افتتاحي' (total=المبلغ، paid=0)،
   // فتنعكس تلقائياً في مديونية المورد وكشف حسابه وتُسدَّد بنفس منطق باقي الفواتير.
-  setSupplierOpeningBalance: async (supplierId, amount) => {
+  setSupplierOpeningBalance: async (supplierId, amount, direction = 'owed_to_supplier') => {
     const state = get();
     const MARK = 'رصيد افتتاحي';
     const amt = Math.max(0, Number(amount) || 0);
+    // يُخزَّن كفاتورة افتتاحية بدون تأثير على الخزنة (paid_amount = 0 دائماً):
+    //   علينا للمورد (دَين علينا)   → total = +amt  ⇒ الصافي (total-paid) = +amt
+    //   لينا عند المورد (رصيد دائن) → total = -amt  ⇒ الصافي (total-paid) = -amt
+    const signedTotal = direction === 'owed_to_us' ? -amt : amt;
     const existing = state.purchaseInvoices.find((inv) => inv.supplier_id === supplierId && inv.invoice_number === MARK);
     if (existing) {
       if (amt <= 0) {
@@ -4150,15 +4154,15 @@ setupRealtime: () => {
         set((s) => ({ purchaseInvoices: s.purchaseInvoices.filter((i) => i.id !== existing.id) }));
         return;
       }
-      await supabase.from('purchase_invoices').update({ total: amt }).eq('id', existing.id);
-      set((s) => ({ purchaseInvoices: s.purchaseInvoices.map((i) => (i.id === existing.id ? { ...i, total: amt } : i)) }));
+      await supabase.from('purchase_invoices').update({ total: signedTotal, paid_amount: 0 }).eq('id', existing.id);
+      set((s) => ({ purchaseInvoices: s.purchaseInvoices.map((i) => (i.id === existing.id ? { ...i, total: signedTotal, paid_amount: 0 } : i)) }));
       return;
     }
     if (amt <= 0) return;
     const { data, error } = await supabase.from('purchase_invoices').insert({
       invoice_number: MARK,
       supplier_id: supplierId,
-      total: amt,
+      total: signedTotal,
       paid_amount: 0,
       paid_cash: 0, paid_visa: 0, paid_wallet: 0, paid_instapay: 0, paid_method5: 0, paid_method6: 0,
       payment_method: 'cash',

@@ -122,7 +122,11 @@ function ProductSearchSelect({
 export default function Suppliers() {
   const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders } = useStore();
   const OPENING_MARK = 'رصيد افتتاحي';
-  const openingBalanceOf = (supplierId: string) => Number(purchaseInvoices.find((inv: any) => inv.supplier_id === supplierId && inv.invoice_number === OPENING_MARK)?.total) || 0;
+  // الرصيد الافتتاحي كصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد.
+  const openingBalanceOf = (supplierId: string) => {
+    const inv: any = purchaseInvoices.find((inv: any) => inv.supplier_id === supplierId && inv.invoice_number === OPENING_MARK);
+    return inv ? (Number(inv.total) || 0) - (Number(inv.paid_amount) || 0) : 0;
+  };
   const [activeTab, setActiveTab] = useState<'suppliers' | 'invoices'>('suppliers');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchQueryInvoices, setSearchQueryInvoices] = useState('');
@@ -138,7 +142,7 @@ export default function Suppliers() {
   const [isPayingDebt, setIsPayingDebt] = useState(false);
   const [debtPay, setDebtPay] = useState<Record<string, string>>({});
 
-  const [formData, setFormData] = useState({ name: '', phone: '', address: '', openingBalance: '' });
+  const [formData, setFormData] = useState({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
 
   // Invoice form state
   const [invSupplierId, setInvSupplierId] = useState('');
@@ -171,18 +175,18 @@ export default function Suppliers() {
 
   const handleSupplierSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { openingBalance, ...supplierData } = formData;
+    const { openingBalance, openingDirection, ...supplierData } = formData;
     const openAmt = Number(openingBalance) || 0;
     if (editingSupplier) {
       await updateSupplier(editingSupplier.id, supplierData);
-      await setSupplierOpeningBalance(editingSupplier.id, openAmt);
+      await setSupplierOpeningBalance(editingSupplier.id, openAmt, openingDirection);
     } else {
       const created = await addSupplier(supplierData);
-      if (created && openAmt > 0) await setSupplierOpeningBalance(created.id, openAmt);
+      if (created && openAmt > 0) await setSupplierOpeningBalance(created.id, openAmt, openingDirection);
     }
     setShowSupplierModal(false);
     setEditingSupplier(null);
-    setFormData({ name: '', phone: '', address: '', openingBalance: '' });
+    setFormData({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
   };
 
   const invTotal = invItems.reduce((sum, item) => {
@@ -478,7 +482,7 @@ export default function Suppliers() {
           onClick={() => {
             if (activeTab === 'suppliers') {
               setEditingSupplier(null);
-              setFormData({ name: '', phone: '', address: '', openingBalance: '' });
+              setFormData({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
               setShowSupplierModal(true);
             } else {
               setEditingPurchaseInvoice(null);
@@ -550,7 +554,7 @@ export default function Suppliers() {
                         title="ملف المورد"
                       ><Eye size={16} /></button>
                       <button
-                        onClick={() => { setEditingSupplier(supplier); setFormData({ name: supplier.name, phone: supplier.phone || '', address: supplier.address || '', openingBalance: openingBalanceOf(supplier.id) ? String(openingBalanceOf(supplier.id)) : '' }); setShowSupplierModal(true); }}
+                        onClick={() => { const ob = openingBalanceOf(supplier.id); setEditingSupplier(supplier); setFormData({ name: supplier.name, phone: supplier.phone || '', address: supplier.address || '', openingBalance: ob ? String(Math.abs(ob)) : '', openingDirection: ob < 0 ? 'owed_to_us' : 'owed_to_supplier' }); setShowSupplierModal(true); }}
                         className="p-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition"
                       ><Edit2 size={16} /></button>
                       <button
@@ -560,9 +564,14 @@ export default function Suppliers() {
                     </div>
                   </div>
                   <h3 className="text-xl font-black text-slate-800 mb-2">{supplier.name}</h3>
-                  {totalDebt > 0 && (
+                  {totalDebt > 0.009 && (
                     <div className="mb-4 inline-block bg-red-50 text-red-600 px-3 py-1 rounded-lg text-xs font-bold border border-red-100">
-                      مديونية: {totalDebt.toLocaleString()} {storeSettings.currency}
+                      علينا للمورد: {totalDebt.toLocaleString()} {storeSettings.currency}
+                    </div>
+                  )}
+                  {totalDebt < -0.009 && (
+                    <div className="mb-4 inline-block bg-emerald-50 text-emerald-600 px-3 py-1 rounded-lg text-xs font-bold border border-emerald-100">
+                      لينا عند المورد: {Math.abs(totalDebt).toLocaleString()} {storeSettings.currency}
                     </div>
                   )}
                   <div className="space-y-3 text-slate-600 text-sm font-medium">
@@ -690,9 +699,24 @@ export default function Suppliers() {
                 <textarea value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition font-medium resize-none h-24" />
               </div>
               <div>
-                <label className="block text-sm font-bold text-slate-700 mb-2">الرصيد الافتتاحي — المبلغ المستحق عليك للمورد ({storeSettings.currency})</label>
+                <label className="block text-sm font-bold text-slate-700 mb-2">الرصيد الافتتاحي ({storeSettings.currency})</label>
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <button type="button" onClick={() => setFormData({ ...formData, openingDirection: 'owed_to_supplier' })}
+                    className={`py-2.5 rounded-xl font-bold text-sm border transition ${formData.openingDirection === 'owed_to_supplier' ? 'bg-red-500 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                    علينا للمورد (دَين)
+                  </button>
+                  <button type="button" onClick={() => setFormData({ ...formData, openingDirection: 'owed_to_us' })}
+                    className={`py-2.5 rounded-xl font-bold text-sm border transition ${formData.openingDirection === 'owed_to_us' ? 'bg-emerald-500 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                    لينا عند المورد (رصيد)
+                  </button>
+                </div>
                 <input type="number" min="0" step="any" value={formData.openingBalance} onChange={e => setFormData({ ...formData, openingBalance: e.target.value })} placeholder="0" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition font-bold" />
-                <p className="text-[11px] text-slate-400 mt-1">دَينك للمورد قبل ما تبدأ على النظام. بيتضاف لمديونية المورد وبيظهر في كشف حسابه كبند «رصيد افتتاحي»، وبيتسدّد عادي.</p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  {formData.openingDirection === 'owed_to_supplier'
+                    ? 'دَينك للمورد قبل بدء العمل على النظام — بيتضاف لمديونيته وبيتسدّد عادي.'
+                    : 'رصيد ليك عند المورد (دفعت مقدّم أو ليك مرتجع) قبل بدء العمل — بيظهر في كشف الحساب كرصيد دائن ليك.'}
+                  {' '}بيظهر في كشف الحساب كبند «رصيد افتتاحي». لا يؤثر على الخزنة.
+                </p>
               </div>
               <div className="flex gap-3 pt-4 border-t border-slate-100">
                 <button type="submit" style={{ backgroundColor: tc }} className="flex-1 text-white py-3.5 rounded-xl font-bold shadow-lg hover:opacity-90 transition">حفظ البيانات</button>
@@ -825,9 +849,28 @@ export default function Suppliers() {
         const _end = supTo ? (() => { const d = new Date(`${supTo}T00:00:00`); d.setDate(d.getDate() + 1); return d; })() : null;
         const inRange = (dt: any) => { const d = new Date(dt); return (!_start || d >= _start) && (!_end || d < _end); };
         const supplierInvoices = purchaseInvoices.filter(inv => inv.supplier_id === selectedSupplierProfile.id && inRange(inv.created_at));
-        const totalPurchases = supplierInvoices.reduce((sum, inv) => sum + inv.total, 0);
-        const totalPaid = supplierInvoices.reduce((sum, inv) => sum + inv.paid_amount, 0);
-        const totalDebt = totalPurchases - totalPaid;
+        // المشتريات والمدفوع الحقيقي (باستثناء بند الرصيد الافتتاحي)
+        const realInvoices = supplierInvoices.filter(inv => inv.invoice_number !== OPENING_MARK);
+        const totalPurchases = realInvoices.reduce((sum, inv) => sum + inv.total, 0);
+        const totalPaid = realInvoices.reduce((sum, inv) => sum + inv.paid_amount, 0);
+        // الصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد (يشمل الرصيد الافتتاحي)
+        const netBalance = supplierInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0);
+        const totalDebt = netBalance; // للتوافق مع منطق السداد الحالي (السداد يظهر فقط لو علينا)
+
+        // ── كشف حساب دائن/مدين مع رصيد جاري (تصاعدي بالتاريخ) ──
+        // دائن = يزيد ما علينا (مشتريات + رصيد افتتاحي علينا). مدين = يخفّض ما علينا (سداد + رصيد افتتاحي لينا).
+        let _run = 0;
+        const ledgerRows = [...supplierInvoices]
+          .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+          .map(inv => {
+            const credit = Math.max(0, inv.total);                            // دائن (علينا)
+            const debit = (inv.paid_amount || 0) + Math.max(0, -inv.total);   // مدين (سداد/لينا)
+            _run += credit - debit;
+            const isOpening = inv.invoice_number === OPENING_MARK;
+            const isPayment = !isOpening && inv.total === 0 && (inv.paid_amount || 0) > 0;
+            const label = isOpening ? 'رصيد افتتاحي' : isPayment ? 'سداد مديونية' : 'فاتورة مشتريات';
+            return { inv, credit, debit, balance: _run, label, isOpening, isPayment };
+          });
 
         // ── إحصائيات المنتجات المشتراة من هذا المورد ──
         const productStats = (() => {
@@ -846,6 +889,12 @@ export default function Suppliers() {
               s.lastDate = inv.created_at;
             }
           }
+          // + المنتجات المرتبطة بهذا المورد بالاسم (عمود «المورد» في شيت المخزون) حتى لو مفيش فواتير شراء
+          const supNameNorm = normalizeArabic(selectedSupplierProfile.name || '');
+          for (const p of products) {
+            if (!p.supplier_name || normalizeArabic(p.supplier_name) !== supNameNorm) continue;
+            if (!map.has(p.id)) map.set(p.id, { product_id: p.id, totalQty: 0, totalCost: 0, lastPrice: 0, lastDate: '' });
+          }
           return Array.from(map.values()).map(s => {
             const product = products.find(p => p.id === s.product_id);
             let sold = 0;
@@ -859,11 +908,12 @@ export default function Suppliers() {
               ...s,
               name: product?.name || 'منتج محذوف',
               unit: product?.unit || 'قطعة',
-              avgPrice: s.totalQty > 0 ? s.totalCost / s.totalQty : 0,
+              avgPrice: s.totalQty > 0 ? s.totalCost / s.totalQty : (Number(product?.average_purchase_price) || Number(product?.purchase_price) || 0),
+              lastPrice: s.lastPrice > 0 ? s.lastPrice : (Number(product?.purchase_price) || Number(product?.average_purchase_price) || 0),
               currentStock: product?.stock_quantity ?? 0,
               sold
             };
-          }).sort((a, b) => b.totalQty - a.totalQty);
+          }).sort((a, b) => (b.currentStock - a.currentStock) || (b.totalQty - a.totalQty));
         })();
 
         const handlePayDebt = async () => {
@@ -889,7 +939,11 @@ export default function Suppliers() {
           const cur = storeSettings.currency;
           const period = (supFrom || supTo) ? `الفترة: ${supFrom || '...'} ← ${supTo || '...'}` : 'كل الفترات';
           const prodRows = productStats.map((s: any) => `<tr><td>${escapeHtml(s.name)}</td><td>${formatQty(s.totalQty, s.unit)}</td><td>${s.avgPrice.toFixed(2)}</td><td>${s.lastPrice.toFixed(2)}</td><td>${formatQty(s.currentStock, s.unit)}</td><td>${formatQty(s.sold, s.unit)}</td></tr>`).join('');
-          const invRows = [...supplierInvoices].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).map((inv) => `<tr><td>${escapeHtml(String(inv.invoice_number))}</td><td>${new Date(inv.created_at).toLocaleString('ar-EG')}</td><td>${(inv.total || 0).toFixed(2)}</td><td>${(inv.paid_amount || 0).toFixed(2)}</td><td>${((inv.total || 0) - (inv.paid_amount || 0)).toFixed(2)}</td></tr>`).join('');
+          const ledgerHtml = ledgerRows.map((r) => {
+            const bal = r.balance > 0.009 ? `${r.balance.toFixed(2)} علينا` : r.balance < -0.009 ? `${Math.abs(r.balance).toFixed(2)} لينا` : '0';
+            return `<tr><td>${new Date(r.inv.created_at).toLocaleDateString('ar-EG')}</td><td>${escapeHtml(r.label)} (${escapeHtml(String(r.inv.invoice_number))})</td><td>${r.credit > 0.009 ? r.credit.toFixed(2) : '—'}</td><td>${r.debit > 0.009 ? r.debit.toFixed(2) : '—'}</td><td>${bal}</td></tr>`;
+          }).join('');
+          const netLabel = netBalance > 0.009 ? 'الرصيد: علينا للمورد' : netBalance < -0.009 ? 'الرصيد: لينا عند المورد' : 'الرصيد: مُصفّى';
           const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"/><title>كشف حساب مورد - ${escapeHtml(selectedSupplierProfile.name)}</title><style>
             @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
             *{font-family:'Cairo',sans-serif;box-sizing:border-box;} body{padding:12mm;color:#000;}
@@ -905,12 +959,12 @@ export default function Suppliers() {
             <div class="sum">
               <div class="card">إجمالي المشتريات<b>${totalPurchases.toFixed(2)} ${cur}</b></div>
               <div class="card">المدفوع<b>${totalPaid.toFixed(2)} ${cur}</b></div>
-              <div class="card">المتبقّي (مديونية)<b>${totalDebt.toFixed(2)} ${cur}</b></div>
+              <div class="card">${netLabel}<b>${Math.abs(netBalance).toFixed(2)} ${cur}</b></div>
             </div>
             <h3>الأصناف المشتراة</h3>
             <table><thead><tr><th>المنتج</th><th>الكمية</th><th>متوسط الشراء</th><th>آخر شراء</th><th>المتاح بالمخزون</th><th>المباع</th></tr></thead><tbody>${prodRows || '<tr><td colspan=6>لا يوجد</td></tr>'}</tbody></table>
-            <h3>الفواتير</h3>
-            <table><thead><tr><th>رقم</th><th>التاريخ</th><th>الإجمالي</th><th>المدفوع</th><th>المتبقّي</th></tr></thead><tbody>${invRows || '<tr><td colspan=5>لا يوجد</td></tr>'}</tbody></table>
+            <h3>كشف الحساب (دائن / مدين)</h3>
+            <table><thead><tr><th>التاريخ</th><th>البيان</th><th>دائن (علينا)</th><th>مدين (له/سداد)</th><th>الرصيد الجاري</th></tr></thead><tbody>${ledgerHtml || '<tr><td colspan=5>لا يوجد</td></tr>'}</tbody></table>
             <p style="margin-top:16px;font-size:11px;color:#888;text-align:center;">تم الإصدار: ${new Date().toLocaleString('ar-EG')}</p>
             <script>window.onload=()=>{setTimeout(()=>{window.print();},400);}</script>
           </body></html>`;
@@ -956,8 +1010,12 @@ export default function Suppliers() {
                   </div>
                   <div className="bg-white p-6 rounded-[32px] border border-slate-100 shadow-sm relative overflow-hidden">
                     <div className="relative z-10">
-                      <p className="text-xs font-bold text-slate-400 mb-1">المديونية المتبقية</p>
-                      <p className={`text-2xl font-black ${totalDebt > 0 ? 'text-red-600' : 'text-emerald-600'}`}>{totalDebt.toLocaleString()} {storeSettings.currency}</p>
+                      <p className="text-xs font-bold text-slate-400 mb-1">
+                        {netBalance > 0.009 ? 'الرصيد: علينا للمورد' : netBalance < -0.009 ? 'الرصيد: لينا عند المورد' : 'الرصيد'}
+                      </p>
+                      <p className={`text-2xl font-black ${netBalance > 0.009 ? 'text-red-600' : netBalance < -0.009 ? 'text-emerald-600' : 'text-slate-500'}`}>
+                        {Math.abs(netBalance).toLocaleString()} {storeSettings.currency}
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -1038,45 +1096,59 @@ export default function Suppliers() {
                   </div>
                 </div>
 
-                {/* Transactions Table */}
+                {/* Account Statement (Debit / Credit ledger) */}
                 <div className="bg-white rounded-[32px] border border-slate-100 shadow-sm overflow-hidden">
-                  <div className="p-6 border-b border-slate-50">
-                    <h3 className="font-black text-slate-800">سجل المعاملات والفواتير</h3>
+                  <div className="p-6 border-b border-slate-50 flex items-center justify-between flex-wrap gap-2">
+                    <h3 className="font-black text-slate-800">كشف الحساب (دائن / مدين)</h3>
+                    <div className="text-sm font-bold">
+                      {netBalance > 0.009 ? (
+                        <span className="text-red-600">الرصيد النهائي: علينا للمورد {netBalance.toLocaleString()} {storeSettings.currency}</span>
+                      ) : netBalance < -0.009 ? (
+                        <span className="text-emerald-600">الرصيد النهائي: لينا عند المورد {Math.abs(netBalance).toLocaleString()} {storeSettings.currency}</span>
+                      ) : (
+                        <span className="text-slate-400">الرصيد النهائي: مُصفّى (0)</span>
+                      )}
+                    </div>
                   </div>
                   <div className="overflow-x-auto">
                   <table className="w-full text-right text-sm">
                     <thead className="bg-slate-50 text-slate-400 font-bold uppercase tracking-wider">
                       <tr>
-                        <th className="p-4">رقم الفاتورة</th>
                         <th className="p-4">التاريخ</th>
-                        <th className="p-4 text-center">الإجمالي</th>
-                        <th className="p-4 text-center">المدفوع</th>
-                        <th className="p-4 text-center">المتبقي</th>
-                        <th className="p-4 text-left">إجراءات</th>
+                        <th className="p-4">البيان</th>
+                        <th className="p-4 text-center text-red-500">دائن (علينا)</th>
+                        <th className="p-4 text-center text-emerald-600">مدين (له / سداد)</th>
+                        <th className="p-4 text-center">الرصيد الجاري</th>
+                        <th className="p-4 text-left">طباعة</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-50">
-                      {supplierInvoices.length === 0 ? (
-                        <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold">لا يوجد فواتير سابقة</td></tr>
+                      {ledgerRows.length === 0 ? (
+                        <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold">لا توجد حركات على هذا المورد</td></tr>
                       ) : (
-                        supplierInvoices.map(inv => {
-                          const isPayment = inv.total === 0;
-                          return (
-                            <tr key={inv.id} className={`hover:bg-slate-50 transition ${isPayment ? 'bg-emerald-50/30' : ''}`}>
-                              <td className="p-4 font-mono font-bold text-slate-800">
-                                {inv.invoice_number}
-                                {isPayment && <span className="block text-[10px] text-emerald-600 font-black">إيصال سداد مديونية</span>}
-                              </td>
-                              <td className="p-4 text-xs font-medium">{new Date(inv.created_at).toLocaleDateString('ar-SA')}</td>
-                              <td className="p-4 text-center font-bold">{isPayment ? '—' : inv.total.toLocaleString()}</td>
-                              <td className="p-4 text-center font-bold text-emerald-600">{inv.paid_amount.toLocaleString()}</td>
-                              <td className="p-4 text-center font-bold text-red-600">{isPayment ? '—' : (inv.total - inv.paid_amount).toLocaleString()}</td>
-                              <td className="p-4 text-left">
-                                <button onClick={() => printPurchaseInvoice(inv)} className="p-2 text-slate-400 hover:text-slate-800 transition" title="طباعة"><Printer size={16} /></button>
-                              </td>
-                            </tr>
-                          );
-                        })
+                        ledgerRows.map(({ inv, credit, debit, balance, label, isOpening, isPayment }) => (
+                          <tr key={inv.id} className={`hover:bg-slate-50 transition ${isPayment ? 'bg-emerald-50/30' : isOpening ? 'bg-amber-50/40' : ''}`}>
+                            <td className="p-4 text-xs font-medium whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString('ar-SA')}</td>
+                            <td className="p-4 font-bold text-slate-800">
+                              {label}
+                              <span className="block text-[10px] text-slate-400 font-mono">{inv.invoice_number}</span>
+                            </td>
+                            <td className="p-4 text-center font-bold text-red-600">{credit > 0.009 ? credit.toLocaleString() : '—'}</td>
+                            <td className="p-4 text-center font-bold text-emerald-600">{debit > 0.009 ? debit.toLocaleString() : '—'}</td>
+                            <td className="p-4 text-center font-black whitespace-nowrap">
+                              {balance > 0.009 ? (
+                                <span className="text-red-600">{balance.toLocaleString()} <span className="text-[10px] font-bold">علينا</span></span>
+                              ) : balance < -0.009 ? (
+                                <span className="text-emerald-600">{Math.abs(balance).toLocaleString()} <span className="text-[10px] font-bold">لينا</span></span>
+                              ) : (
+                                <span className="text-slate-400">0</span>
+                              )}
+                            </td>
+                            <td className="p-4 text-left">
+                              <button onClick={() => printPurchaseInvoice(inv)} className="p-2 text-slate-400 hover:text-slate-800 transition" title="طباعة"><Printer size={16} /></button>
+                            </td>
+                          </tr>
+                        ))
                       )}
                     </tbody>
                   </table>
