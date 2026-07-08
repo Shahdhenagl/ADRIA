@@ -196,17 +196,32 @@ export function buildFinancialStats(data) {
   const paymentOrders = activeOrders.filter((order) => order.type === 'payment');
   const deletedOrders = data.orders.filter((order) => order.is_deleted);
 
+  // فئات الحجز: 'حجز' (تحصيل عربون سالب / رد عربون موجب) و'تحويل حجز' (تحويل العربون لفاتورة، موجب).
+  const isReservation = (c) => c === 'حجز' || c === 'تحويل حجز';
+
   const salesRevenue = salesOrders.reduce((sum, order) => sum + Number(order.paid_amount || 0), 0);
   const customerPayments = paymentOrders.reduce((sum, order) => sum + Number(order.paid_amount || 0), 0);
   const manualRevenue = data.expenses
-    .filter((expense) => Number(expense.amount || 0) < 0)
+    .filter((expense) => Number(expense.amount || 0) < 0 && !isReservation(expense.category))
     .reduce((sum, expense) => sum + Math.abs(Number(expense.amount || 0)), 0);
+
+  // عرابين الحجز: محصّلة (داخل) − مرتجعة (خارج) = صافي؛ وتحويل العربون لفاتورة (خارج) لمنع الازدواج.
+  const reservationDeposits = data.expenses
+    .filter((e) => e.category === 'حجز' && Number(e.amount || 0) < 0)
+    .reduce((sum, e) => sum + Math.abs(Number(e.amount || 0)), 0);
+  const reservationRefunds = data.expenses
+    .filter((e) => e.category === 'حجز' && Number(e.amount || 0) > 0)
+    .reduce((sum, e) => sum + Number(e.amount || 0), 0);
+  const reservationConversions = data.expenses
+    .filter((e) => e.category === 'تحويل حجز')
+    .reduce((sum, e) => sum + Math.abs(Number(e.amount || 0)), 0);
+  const reservationNet = reservationDeposits - reservationRefunds;
 
   const customerRefunds = activeOrders.reduce((sum, order) => {
     return sum + (order.order_items || []).reduce((itemSum, item) => itemSum + Number(item.refunded_amount || 0), 0);
   }, 0);
   const manualExpenses = data.expenses
-    .filter((expense) => Number(expense.amount || 0) > 0)
+    .filter((expense) => Number(expense.amount || 0) > 0 && !isReservation(expense.category))
     .reduce((sum, expense) => sum + Number(expense.amount || 0), 0);
   const purchasePayments = data.purchases.reduce((sum, invoice) => sum + Number(invoice.paid_amount || 0), 0);
   const hasMatchingPayrollExpense = (tx) => {
@@ -235,12 +250,16 @@ export function buildFinancialStats(data) {
     salesRevenue,
     customerPayments,
     manualRevenue,
-    totalRevenue: salesRevenue + customerPayments + manualRevenue,
+    reservationDeposits,
+    reservationRefunds,
+    reservationConversions,
+    reservationNet,
+    totalRevenue: salesRevenue + customerPayments + manualRevenue + reservationDeposits,
     customerRefunds,
     manualExpenses,
     purchasePayments,
     payroll,
-    totalExpense: customerRefunds + manualExpenses + purchasePayments + payroll,
+    totalExpense: customerRefunds + manualExpenses + purchasePayments + payroll + reservationRefunds + reservationConversions,
     invoiceProfit,
   };
 }

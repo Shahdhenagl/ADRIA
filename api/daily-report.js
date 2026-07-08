@@ -37,6 +37,7 @@ export function buildDailyMessage(settings, range, data, openingBalance) {
     'تفاصيل الإيرادات:',
     `- مبيعات مدفوعة: ${money(stats.salesRevenue, currency)}`,
     `- تحصيلات عملاء: ${money(stats.customerPayments, currency)}`,
+    `- المحصّل من الحجوزات (صافي): ${money(stats.reservationNet, currency)}`,
     `- إيرادات أخرى: ${money(stats.manualRevenue, currency)}`,
     '',
     'تفاصيل المصروفات والمدفوعات:',

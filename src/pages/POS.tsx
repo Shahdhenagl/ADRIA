@@ -13,7 +13,7 @@ import { printDocument } from '../utils/printWindow';
 
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, recordHeldDepositConversion } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -404,7 +404,7 @@ export default function POS() {
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
       // تفصيل حركة اليوم (للتقفيل): مبيعات/تحصيل/مرتجعات/استبدال/مصروفات/مشتريات/رواتب.
-      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0 };
+      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0 };
       const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) => {
         const splits = methods.map((m) => +rec[`paid_${m}`] || 0);
         const splitsSum = splits.reduce((a, b) => a + b, 0);
@@ -443,17 +443,22 @@ export default function POS() {
         methods.forEach((m) => { abs[`paid_${m}`] = Math.abs(+e[`paid_${m}`] || 0); });
         return abs;
       });
+      // فئات الحجز: 'حجز' = تحصيل/رد عربون، 'تحويل حجز' = تحويل العربون لفاتورة عند الإتمام.
+      const isResv = (c: any) => c === 'حجز' || c === 'تحويل حجز';
       manualIncomes.forEach((r: any) => {
         const d = new Date(r.created_at);
-        if (d >= start && d < end) { addM(dayIn, r, 'amount'); bd.otherIncome += Math.abs(+r.amount || 0); }
+        // العربون داخل ضمن totalIn لكنه يُعرض في خانة الحجوزات مش «إيرادات أخرى».
+        if (d >= start && d < end) { addM(dayIn, r, 'amount'); if (!isResv(r.category)) bd.otherIncome += Math.abs(+r.amount || 0); }
         else if (d < start) addM(befIn, r, 'amount');
       });
       addOut(realExpenses, 'amount');
       addOut(purRes.data as any[], 'paid_amount');
       addOut(salRes.data as any[], 'amount');
-      // تفصيل الخارج لليوم حسب النوع.
+      // تفصيل الخارج لليوم حسب النوع (باستثناء حركات الحجز — لها خانتها).
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
-      bd.expensesTotal = realExpenses.filter(inDayRec).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.expensesTotal = realExpenses.filter(inDayRec).filter((e) => !isResv(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      // صافي المحصّل من الحجوزات اليوم = عرابين محصّلة − عرابين مرتجعة (category='حجز').
+      bd.reservationsNet = expensesArr.filter(inDayRec).filter((e) => e.category === 'حجز').reduce((s, e) => s - (Number(e.amount) || 0), 0);
       bd.purchasesTotal = ((purRes.data as any[]) || []).filter(inDayRec).reduce((s, p) => s + Math.abs(+p.paid_amount || 0), 0);
       bd.salariesTotal = ((salRes.data as any[]) || []).filter(inDayRec).reduce((s, t) => s + Math.abs(+t.amount || 0), 0);
       const sum = (o: Record<string, number>) => methods.reduce((s, m) => s + (o[m] || 0), 0);
@@ -485,6 +490,13 @@ export default function POS() {
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
   const [showHeldModal, setShowHeldModal] = useState(false);
   const [holdBusy, setHoldBusy] = useState(false);
+  // نموذج حفظ فاتورة معلّقة مع عربون
+  const [showHoldForm, setShowHoldForm] = useState(false);
+  const [holdDepositPay, setHoldDepositPay] = useState<Record<string, string>>({});
+  const holdDepositTotal = activePayKeys.reduce((s, k) => s + (parseFloat(holdDepositPay[k] || '') || 0), 0);
+  // عربون محصّل لفاتورة معلّقة يجري إتمامها الآن (يُضاف للمدفوع ويُسجّل تحويله بعد الإتمام)
+  const [activeDeposit, setActiveDeposit] = useState<{ amount: number; split: Record<string, number> } | null>(null);
+  useEffect(() => { if (cart.length === 0) setActiveDeposit(null); }, [cart.length]);
   const [shouldPrint, setShouldPrint] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [noteText, setNoteText] = useState('');
@@ -1089,9 +1101,9 @@ export default function POS() {
     );
     const currentCustomId = matchedCustomer?.custom_id || currentCustomerCard;
 
-    // مبالغ كل طريقة دفع مفعّلة
+    // مبالغ كل طريقة دفع مفعّلة (+ العربون المحصّل مسبقاً لو الفاتورة كانت معلّقة).
     const splitPayments: Record<string, number> = {};
-    activePayKeys.forEach((k) => { splitPayments[k] = paidVal(k); });
+    activePayKeys.forEach((k) => { splitPayments[k] = paidVal(k) + (activeDeposit ? (Number(activeDeposit.split[k]) || 0) : 0); });
 
     const finalPaidAmount = activePayKeys.reduce((s, k) => s + splitPayments[k], 0);
 
@@ -1106,7 +1118,8 @@ export default function POS() {
       remainingChange -= ded;
     }
 
-    const isAllEmpty = activePayKeys.every((k) => !payInput[k]);
+    // مع وجود عربون محصّل الفاتورة مش «كلها آجل» حتى لو ما اتكتبش مبلغ جديد.
+    const isAllEmpty = !activeDeposit && activePayKeys.every((k) => !payInput[k]);
 
     // لو ما دخلتش أي مبلغ → الفاتورة كلها آجل (0 مدفوع)
     const effectivePaidAmount = isAllEmpty ? 0 : (finalPaidAmount - change);
@@ -1130,6 +1143,14 @@ export default function POS() {
     }
 
     const invoiceId = await checkout(currentTotal, { name: currentCustomerName, phone: currentCustomerPhone, custom_id: currentCustomId }, effectivePaidAmount, 'sale', primaryMethod as any, finalSplit as any, undefined, deferredNote, currentCouponCode, currentCouponDiscount);
+
+    // العربون كان دخل الخزنة وقت الحجز؛ الفاتورة سجّلته ضمن المدفوع، فنسجّل تحويله
+    // (صرف بقيمة العربون) عشان ما يتحسبش مرتين.
+    const depositForThis = activeDeposit;
+    if (depositForThis && depositForThis.amount > 0) {
+      await recordHeldDepositConversion(depositForThis.amount, depositForThis.split, String(invoiceId));
+    }
+    setActiveDeposit(null);
 
     const details: any = {
       cart: currentCart,
@@ -1179,17 +1200,32 @@ export default function POS() {
 
   // ── فواتير معلقة (محجوزة) ──────────────────────────────────
   // حفظ السلة الحالية كفاتورة معلقة (تحجز الكمية من المخزون).
+  // فتح نموذج الحفظ كمعلّقة (لإدخال عربون اختياري).
+  const openHoldForm = () => {
+    if (cart.length === 0 || pricesHidden || holdBusy) return;
+    setHoldDepositPay({});
+    setShowHoldForm(true);
+  };
+
   const handleHoldInvoice = async () => {
     if (cart.length === 0 || holdBusy) return;
+    const depositSplit: Record<string, number> = {};
+    activePayKeys.forEach((k) => { depositSplit[k] = parseFloat(holdDepositPay[k] || '') || 0; });
+    const deposit = activePayKeys.reduce((s, k) => s + depositSplit[k], 0);
+    if (deposit > total + 0.01) { alert('العربون أكبر من إجمالي الفاتورة.'); return; }
     setHoldBusy(true);
     const ok = await holdInvoice({
       customerName,
       customerPhone,
       customerCustomId: customerId,
       notes: deferredNote,
+      deposit,
+      depositSplit,
     });
     setHoldBusy(false);
     if (ok) {
+      setShowHoldForm(false);
+      setHoldDepositPay({});
       setCustomerName('');
       setCustomerPhone('');
       setCustomerId('');
@@ -1199,7 +1235,9 @@ export default function POS() {
       setCustomerDebt(0);
       setDeferredNote('');
       setShowCustomerSuggestions(false);
-      alert('✅ تم حفظ الفاتورة في الفواتير المعلقة وحجز الكمية من المخزون.');
+      alert(deposit > 0
+        ? `✅ تم حفظ الفاتورة المعلقة وحجز الكمية، وتحصيل عربون ${deposit.toFixed(2)} ${storeSettings.currency} في الخزنة.`
+        : '✅ تم حفظ الفاتورة في الفواتير المعلقة وحجز الكمية من المخزون.');
     }
   };
 
@@ -1213,14 +1251,23 @@ export default function POS() {
       setCustomerId(held.customer_custom_id || '');
       setDeferredNote(held.notes || '');
       setPayInput({});
+      const dep = Math.max(0, Number(held.deposit) || 0);
+      setActiveDeposit(dep > 0 ? { amount: dep, split: held.deposit_split || { cash: dep } } : null);
       setShowHeldModal(false);
       setMobileView('cart');
-      alert('✅ تم تحميل الفاتورة المعلقة. أكمل التحصيل والطباعة لإتمام البيع.');
+      alert(dep > 0
+        ? `✅ تم تحميل الفاتورة المعلقة. العربون المحصّل ${dep.toFixed(2)} ${storeSettings.currency} محسوب ضمن المدفوع — حصّل الباقي أو أضِفه آجل.`
+        : '✅ تم تحميل الفاتورة المعلقة. أكمل التحصيل والطباعة لإتمام البيع.');
     }
   };
 
   const handleReturnHeld = async (id: string) => {
-    if (!window.confirm('سيتم إرجاع كمية هذه الفاتورة للمخزون وإلغاؤها. متابعة؟')) return;
+    const h = heldInvoices.find((x) => x.id === id);
+    const dep = Math.max(0, Number(h?.deposit) || 0);
+    const msg = dep > 0
+      ? `سيتم إرجاع الكمية للمخزون وإلغاء الحجز، ورد العربون (${dep.toFixed(2)} ${storeSettings.currency}) للعميل من الدرج. متابعة؟`
+      : 'سيتم إرجاع كمية هذه الفاتورة للمخزون وإلغاؤها. متابعة؟';
+    if (!window.confirm(msg)) return;
     await returnHeldInvoice(id);
   };
 
@@ -1861,6 +1908,7 @@ export default function POS() {
                         <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 text-[12px] font-black text-slate-600 dark:text-slate-300">تفصيل حركة اليوم</div>
                         <Row label="المبيعات" value={b.salesTotal} count={b.salesCount} />
                         <Row label="التحصيل (المدفوع فعلياً)" value={b.collected} tone="in" />
+                        <Row label="المحصّل من الحجوزات (صافي)" value={b.reservationsNet || 0} tone={((b.reservationsNet || 0) < 0) ? 'out' : 'in'} />
                         {b.otherIncome > 0 && <Row label="إيرادات أخرى" value={b.otherIncome} tone="in" />}
                         <Row label="المرتجعات" value={b.refundsTotal} count={b.refundsCount} tone="out" />
                         <div className="flex items-center justify-between py-2 px-3 border-b border-slate-100 dark:border-slate-700/50">
@@ -2808,6 +2856,16 @@ export default function POS() {
             </div>
           </div>
 
+          {activeDeposit && activeDeposit.amount > 0 && (
+            <div className="mb-2 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 rounded-2xl px-4 py-3 flex items-center justify-between">
+              <span className="text-xs font-black text-orange-600 dark:text-orange-400 flex items-center gap-1.5"><Clock size={14} /> عربون محصّل من الحجز</span>
+              <div className="text-left">
+                <div className="text-sm font-black text-orange-700 dark:text-orange-300">{activeDeposit.amount.toFixed(2)} {storeSettings.currency}</div>
+                <div className="text-[10px] font-bold text-slate-500">الباقي المطلوب: {Math.max(0, total - activeDeposit.amount).toFixed(2)}</div>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-3">
             <button
               id="pos-checkout-btn"
@@ -2831,7 +2889,7 @@ export default function POS() {
           </div>
           {perm('held') && (
           <button
-            onClick={handleHoldInvoice}
+            onClick={openHoldForm}
             disabled={cart.length === 0 || pricesHidden || holdBusy}
             className="w-full mt-2 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed py-3 rounded-2xl font-black flex items-center justify-center gap-2 transition-all text-sm active:scale-95 border border-orange-100 dark:border-orange-900/30"
           >
@@ -2871,6 +2929,16 @@ export default function POS() {
                 </span>
               </div>
 
+              {activeDeposit && activeDeposit.amount > 0 && (
+                <div className="bg-orange-50 dark:bg-orange-900/20 p-4 rounded-2xl border border-orange-200 dark:border-orange-800/50 flex justify-between items-center">
+                  <span className="text-xs font-black text-orange-600 dark:text-orange-400 flex items-center gap-1.5"><Clock size={14} /> عربون محصّل مسبقاً</span>
+                  <div className="text-left">
+                    <div className="text-base font-black text-orange-700 dark:text-orange-300">− {activeDeposit.amount.toFixed(2)} {storeSettings.currency}</div>
+                    <div className="text-[10px] font-bold text-slate-500">المطلوب تحصيله الآن: {Math.max(0, total - activeDeposit.amount).toFixed(2)}</div>
+                  </div>
+                </div>
+              )}
+
               {/* Payment Inputs Grid */}
               <div className="grid grid-cols-2 gap-4">
                 {activePayKeys.map((k, idx) => (
@@ -2889,33 +2957,35 @@ export default function POS() {
               </div>
 
               {/* Summary Bar */}
+              {(() => { const effPaid = paidTotal + (activeDeposit?.amount || 0); return (
               <div className="bg-slate-100 dark:bg-slate-900 p-4 rounded-2xl flex justify-between items-center">
                 <div className="text-right">
-                  <span className="text-[10px] text-slate-400 block font-bold uppercase">إجمالي المدفوع</span>
+                  <span className="text-[10px] text-slate-400 block font-bold uppercase">إجمالي المدفوع{activeDeposit && activeDeposit.amount > 0 ? ' (مع العربون)' : ''}</span>
                   <span className="text-lg font-black text-slate-700 dark:text-slate-200">
-                    {paidTotal.toFixed(2)}
+                    {effPaid.toFixed(2)}
                   </span>
                 </div>
 
                 <div className="flex gap-6">
                   <div className="text-center">
                     <span className="text-[10px] text-slate-400 block font-bold uppercase">المتبقي (آجل)</span>
-                    <span className={`text-lg font-black ${total - paidTotal > 0 ? 'text-red-500' : 'text-slate-400'}`}>
-                      {Math.max(0, total - paidTotal).toFixed(2)}
+                    <span className={`text-lg font-black ${total - effPaid > 0 ? 'text-red-500' : 'text-slate-400'}`}>
+                      {Math.max(0, total - effPaid).toFixed(2)}
                     </span>
                   </div>
 
                   <div className="text-left">
                     <span className="text-[10px] text-slate-400 block font-bold uppercase">الباقي (للعميل)</span>
-                    <span className={`text-lg font-black ${paidTotal - total > 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
-                      {Math.max(0, paidTotal - total).toFixed(2)}
+                    <span className={`text-lg font-black ${effPaid - total > 0 ? 'text-emerald-500' : 'text-slate-400'}`}>
+                      {Math.max(0, effPaid - total).toFixed(2)}
                     </span>
                   </div>
                 </div>
               </div>
+              ); })()}
 
               {/* Deferred Note Input */}
-              {Math.max(0, total - paidTotal) > 0 && (
+              {Math.max(0, total - paidTotal - (activeDeposit?.amount || 0)) > 0 && (
                 <div className="mt-4">
                   <label className="text-sm font-bold text-slate-600 dark:text-slate-300 block mb-2 flex items-center gap-2">
                     <FileText size={16} />
@@ -2954,6 +3024,51 @@ export default function POS() {
       )}
 
       {/* Held / Reserved Invoices Modal */}
+      {showHoldForm && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-800 rounded-[32px] shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20">
+            <div className="p-6 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="flex items-center gap-3">
+                <div className="bg-orange-500 p-2.5 rounded-2xl text-white shadow-lg shadow-orange-200"><PauseCircle size={24} /></div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-800 dark:text-white">حفظ كفاتورة معلّقة (حجز)</h3>
+                  <p className="text-xs text-slate-400 font-bold">تُحجز الكمية، وتقدر تحصّل عربون يدخل الخزنة</p>
+                </div>
+              </div>
+              <button onClick={() => setShowHoldForm(false)} className="p-2 hover:bg-red-50 hover:text-red-500 rounded-xl transition-colors"><X size={20} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl p-4 flex justify-between items-center border border-indigo-100 dark:border-indigo-800/50">
+                <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">إجمالي الفاتورة</span>
+                <span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">{total.toFixed(2)} <span className="text-xs opacity-60">{storeSettings.currency}</span></span>
+              </div>
+              <div>
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">العربون المحصّل (اختياري) — يدخل الخزنة</label>
+                <div className="grid grid-cols-2 gap-3">
+                  {activePayKeys.map((k) => (
+                    <div key={k} className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 uppercase flex items-center gap-1">
+                        {k === 'cash' ? <Banknote size={14} /> : k === 'visa' ? <CreditCard size={14} /> : k === 'wallet' ? <Smartphone size={14} /> : k === 'instapay' ? <Zap size={14} /> : <Wallet size={14} />} {payLabel(k)}
+                      </label>
+                      <input type="number" dir="ltr" value={holdDepositPay[k] || ''} onChange={(e) => setHoldDepositPay((s) => ({ ...s, [k]: e.target.value }))} placeholder="0.00" className="w-full bg-slate-50 dark:bg-slate-900 border-2 border-transparent focus:border-orange-500 py-2.5 px-3 rounded-xl outline-none font-black text-left" />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-between items-center mt-3 px-1">
+                  <span className="text-xs font-bold text-slate-500">إجمالي العربون</span>
+                  <span className="text-lg font-black text-orange-600">{holdDepositTotal.toFixed(2)} {storeSettings.currency}</span>
+                </div>
+                {holdDepositTotal > 0 && <div className="text-[11px] font-bold text-slate-400 mt-1">الباقي بعد العربون: {Math.max(0, total - holdDepositTotal).toFixed(2)} {storeSettings.currency} — يتحصّل وقت الإتمام أو يتحط آجل.</div>}
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button onClick={handleHoldInvoice} disabled={holdBusy} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-3.5 rounded-2xl font-black flex items-center justify-center gap-2 transition active:scale-95"><PauseCircle size={18} /> {holdBusy ? 'جاري الحفظ...' : 'تأكيد الحجز'}</button>
+                <button onClick={() => setShowHoldForm(false)} className="px-5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-2xl font-black">إلغاء</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showHeldModal && (
         <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
           <div className="bg-white dark:bg-slate-800 rounded-[32px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20">
@@ -3005,9 +3120,15 @@ export default function POS() {
                         </div>
                       </div>
 
-                      <div className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-3 line-clamp-2">
+                      <div className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-2 line-clamp-2">
                         {itemsCount} قطعة · {h.items.map((i) => `${i.name}×${formatQty(i.quantity, i.unit || 'قطعة')}`).join(' ، ')}
                       </div>
+                      {Number(h.deposit) > 0 && (
+                        <div className="flex items-center gap-2 mb-3 text-[11px] font-black">
+                          <span className="px-2 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-800/40">عربون محصّل: {Number(h.deposit).toFixed(2)} {storeSettings.currency}</span>
+                          <span className="px-2 py-1 rounded-lg bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-400 border border-amber-100 dark:border-amber-800/40">الباقي: {Math.max(0, Number(h.total) - Number(h.deposit)).toFixed(2)}</span>
+                        </div>
+                      )}
 
                       <div className="flex gap-2">
                         <button

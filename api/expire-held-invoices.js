@@ -23,7 +23,9 @@ export default async function handler(req, res) {
 
     if (error) throw error;
 
+    const PAY_KEYS = ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'];
     let restored = 0;
+    let refunded = 0;
     for (const row of expired || []) {
       const { error: delErr } = await supabase.from('held_invoices').delete().eq('id', row.id);
       if (delErr) continue;
@@ -34,10 +36,26 @@ export default async function handler(req, res) {
         const currentStock = Number(prod?.stock_quantity ?? 0);
         await supabase.from('products').update({ stock_quantity: currentStock + Number(item.quantity || 0) }).eq('id', item.id);
       }
+      // رد عربون الحجز المنتهي للعميل (مرتجع من الدرج): صف مصروف بقيمة موجبة، category='حجز'.
+      const depAmt = Math.max(0, Number(row.deposit || 0));
+      if (depAmt > 0) {
+        const split = row.deposit_split || { cash: depAmt };
+        const paid = {};
+        let best = 'cash', bestAmt = -Infinity;
+        for (const k of PAY_KEYS) { const a = Math.abs(Number(split?.[k]) || 0); paid['paid_' + k] = a; if (a > bestAmt) { bestAmt = a; best = k; } }
+        await supabase.from('expenses').insert({
+          category: 'حجز',
+          amount: depAmt,
+          ...paid,
+          note: `رد عربون حجز منتهٍ - ${(row.customer_name || 'عميل').trim()}`,
+          payment_method: best,
+        });
+        refunded += 1;
+      }
       restored += 1;
     }
 
-    return res.status(200).json({ ok: true, restored });
+    return res.status(200).json({ ok: true, restored, refunded });
   } catch (error) {
     return res.status(500).json({ ok: false, error: String(error) });
   }

@@ -236,6 +236,8 @@ export interface HeldInvoice {
   salesperson_name?: string | null;
   cashier_name?: string | null;
   notes?: string | null;
+  deposit?: number; // العربون المحصّل وقت الحجز (يدخل الخزنة)
+  deposit_split?: Record<string, number>; // تقسيمة العربون على وسائل الدفع
   created_at: string;
   expires_at: string;
 }
@@ -531,10 +533,13 @@ interface CashierStore {
     customerPhone?: string;
     customerCustomId?: string;
     notes?: string;
+    deposit?: number;
+    depositSplit?: Record<string, number>;
   }) => Promise<boolean>;
   confirmHeldInvoice: (id: string) => Promise<HeldInvoice | null>;
   returnHeldInvoice: (id: string) => Promise<boolean>;
   sweepExpiredHeldInvoices: () => Promise<void>;
+  recordHeldDepositConversion: (deposit: number, split: Record<string, number>, invoiceId: string) => Promise<void>;
 
   // Admin
   loadAnalyticsData: (startDate?: string, endDate?: string) => Promise<Order[]>;
@@ -739,6 +744,21 @@ function getActorName(state: CashierStore): string {
     return sessionStorage.getItem('active_cashier_name') || 'مدير النظام';
   }
   return 'مدير النظام';
+}
+
+// ── مساعدات تقسيمة الدفع للعربون (حجز) ─────────────────────────
+const _PAY_KEYS = ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const;
+// يحوّل تقسيمة { cash, visa, ... } إلى حقول paid_* لصف المصروفات/الإيراد.
+function paidFromSplit(split?: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const k of _PAY_KEYS) out['paid_' + k] = Math.abs(Number(split?.[k]) || 0);
+  return out;
+}
+// أكبر وسيلة في التقسيمة (افتراضي cash).
+function primaryOfSplit(split?: Record<string, number>): string {
+  let best = 'cash', bestAmt = -Infinity;
+  for (const k of _PAY_KEYS) { const a = Math.abs(Number(split?.[k]) || 0); if (a > bestAmt) { bestAmt = a; best = k; } }
+  return best;
 }
 
 function getPublicInvoiceUrl(invoiceId: string): string {
@@ -1725,7 +1745,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   // Saves the current cart as a held invoice and RESERVES the stock (deducts it
   // from products.stock_quantity, like a real sale) so the quantity can't be
   // sold twice. No invoice number is consumed until the sale is confirmed.
-  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes } = {}) => {
+  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit } = {}) => {
     const state = get();
     if (state.cart.length === 0) return false;
     try {
@@ -1747,6 +1767,9 @@ export const useStore = create<CashierStore>((set, get) => ({
         category_id: i.category_id,
       }));
 
+      const depAmt = Math.max(0, Number(deposit) || 0);
+      const depSplit = depositSplit || {};
+
       const { data, error } = await supabase
         .from('held_invoices')
         .insert({
@@ -1760,6 +1783,8 @@ export const useStore = create<CashierStore>((set, get) => ({
           salesperson_name: sp?.name || null,
           cashier_name: getActorName(state),
           notes: notes?.trim() || null,
+          deposit: depAmt,
+          deposit_split: depAmt > 0 ? depSplit : null,
         })
         .select()
         .single();
@@ -1780,6 +1805,18 @@ export const useStore = create<CashierStore>((set, get) => ({
         const cartItem = state.cart.find((c) => c.id === p.id);
         return cartItem ? { ...p, stock_quantity: Math.max(0, p.stock_quantity - cartItem.quantity) } : p;
       });
+
+      // تحصيل العربون: يدخل الخزنة كإيراد حجز (category='حجز', amount سالب).
+      if (depAmt > 0) {
+        const paid = paidFromSplit(depSplit);
+        await get().addExpense({
+          category: 'حجز',
+          amount: -depAmt,
+          ...paid,
+          note: `عربون حجز - ${customerName?.trim() || 'عميل'}`,
+          payment_method: primaryOfSplit(depSplit) as any,
+        } as any);
+      }
 
       set({
         heldInvoices: [{ ...(data as any), items } as HeldInvoice, ...state.heldInvoices],
@@ -1876,6 +1913,18 @@ export const useStore = create<CashierStore>((set, get) => ({
         const it = held.items.find((i) => i.id === p.id);
         return it ? { ...p, stock_quantity: p.stock_quantity + it.quantity } : p;
       });
+      // رد العربون للعميل: مرتجع من الدرج يوم الإلغاء (category='حجز', amount موجب).
+      const depAmt = Math.max(0, Number(held.deposit) || 0);
+      if (depAmt > 0) {
+        const split = held.deposit_split || { cash: depAmt };
+        await get().addExpense({
+          category: 'حجز',
+          amount: depAmt,
+          ...paidFromSplit(split),
+          note: `رد عربون حجز - ${held.customer_name?.trim() || 'عميل'}`,
+          payment_method: primaryOfSplit(split) as any,
+        } as any);
+      }
       set({
         heldInvoices: state.heldInvoices.filter((h) => h.id !== id),
         products: restoredProducts,
@@ -1887,6 +1936,21 @@ export const useStore = create<CashierStore>((set, get) => ({
       alert('تعذّر إرجاع الفاتورة للمخزون.');
       return false;
     }
+  },
+
+  // تحويل العربون لفاتورة عند الإتمام: صرف بقيمة العربون (category='تحويل حجز')
+  // يلغي ازدواج الحساب لأن الفاتورة سجّلت العربون ضمن المدفوع.
+  recordHeldDepositConversion: async (deposit, split, invoiceId) => {
+    const depAmt = Math.max(0, Number(deposit) || 0);
+    if (depAmt <= 0) return;
+    const s = split || { cash: depAmt };
+    await get().addExpense({
+      category: 'تحويل حجز',
+      amount: depAmt,
+      ...paidFromSplit(s),
+      note: `تحويل عربون لفاتورة #${invoiceId}`,
+      payment_method: primaryOfSplit(s) as any,
+    } as any);
   },
 
   // إرجاع تلقائي للفواتير المعلقة المنتهية (تجاوزت أسبوعاً) للمخزون. مستقل عن
@@ -1908,6 +1972,18 @@ export const useStore = create<CashierStore>((set, get) => ({
           const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', item.id).single();
           const currentStock = (prodData as any)?.stock_quantity ?? 0;
           await supabase.from('products').update({ stock_quantity: currentStock + (item.quantity || 0) }).eq('id', item.id);
+        }
+        // رد عربون الحجز المنتهي للعميل (مرتجع من الدرج).
+        const depAmt = Math.max(0, Number(row.deposit) || 0);
+        if (depAmt > 0) {
+          const split = row.deposit_split || { cash: depAmt };
+          await get().addExpense({
+            category: 'حجز',
+            amount: depAmt,
+            ...paidFromSplit(split),
+            note: `رد عربون حجز منتهٍ - ${row.customer_name?.trim() || 'عميل'}`,
+            payment_method: primaryOfSplit(split) as any,
+          } as any);
         }
       }
 
