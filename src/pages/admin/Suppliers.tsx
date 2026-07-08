@@ -168,6 +168,9 @@ export default function Suppliers() {
   const [isSaving, setIsSaving] = useState(false);
   const [isPayingDebt, setIsPayingDebt] = useState(false);
   const [debtPay, setDebtPay] = useState<Record<string, string>>({});
+  const [showSupplierFinancialModal, setShowSupplierFinancialModal] = useState(false);
+  const [supplierFinancialType, setSupplierFinancialType] = useState<'pay_to_supplier' | 'collect_from_supplier'>('pay_to_supplier');
+  const [supplierFinancialPay, setSupplierFinancialPay] = useState<Record<string, string>>({});
 
   const [formData, setFormData] = useState({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
 
@@ -479,6 +482,8 @@ export default function Suppliers() {
   const printPurchaseInvoice = (inv: any) => {
     const supplier = suppliers.find(s => s.id === inv.supplier_id);
     const isPaymentReceipt = inv.total === 0;
+    const isSupplierCollection = isPaymentReceipt && (Number(inv.paid_amount) || 0) < 0;
+    const receiptAmount = Math.abs(Number(inv.paid_amount) || 0);
     
     // Calculate historical debt at the time of this invoice/payment
     const relevantInvoices = purchaseInvoices
@@ -516,7 +521,7 @@ export default function Suppliers() {
 <html dir="rtl" lang="ar">
 <head>
 <meta charset="UTF-8"/>
-<title>${isPaymentReceipt ? 'إيصال سداد' : 'فاتورة مشتريات'} #${inv.invoice_number}</title>
+<title>${isPaymentReceipt ? (isSupplierCollection ? 'إيصال تحصيل' : 'إيصال سداد') : 'فاتورة مشتريات'} #${inv.invoice_number}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
   *{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo', sans-serif;}
@@ -561,7 +566,7 @@ export default function Suppliers() {
     <img class="logo" src="${escapeHtml(storeSettings.logo)}" onerror="this.style.display='none'" />
     <div class="store-name">${escapeHtml(storeSettings.name)}</div>
     <div class="store-details">${escapeHtml(storeSettings.address)} | ${escapeHtml(storeSettings.phone)}</div>
-    <div class="invoice-title-badge">${isPaymentReceipt ? 'إيصال سداد مورد' : 'فاتورة مشتريات'}</div>
+    <div class="invoice-title-badge">${isPaymentReceipt ? (isSupplierCollection ? 'إيصال تحصيل من مورد' : 'إيصال سداد مورد') : 'فاتورة مشتريات'}</div>
   </div>
 
   <div class="info-grid">
@@ -584,8 +589,8 @@ export default function Suppliers() {
   </table>
   ` : `
   <div style="padding:30px; text-align:center; background:#f0fdf4; border:2px dashed #bbf7d0; border-radius:20px; margin-bottom:20px;">
-    <h2 style="color:#15803d; font-size:22px; font-weight:900;">إيصال سداد مديونية</h2>
-    <p style="color:#166534; margin-top:5px; font-weight:bold;">تم تسليم المبلغ للمورد وتخفيضه من الحساب</p>
+    <h2 style="color:#15803d; font-size:22px; font-weight:900;">${isSupplierCollection ? 'إيصال تحصيل من المورد' : 'إيصال سداد مديونية'}</h2>
+    <p style="color:#166534; margin-top:5px; font-weight:bold;">${isSupplierCollection ? 'تم استلام المبلغ من المورد وتخفيض الرصيد لنا عنده' : 'تم تسليم المبلغ للمورد وتخفيضه من الحساب'}</p>
   </div>
   `}
 
@@ -598,22 +603,22 @@ export default function Suppliers() {
     </div>
 
     <div class="summary-row" style="color: #059669; font-weight: 900; font-size: 20px; background: #ecfdf5; padding: 10px; border-radius: 8px; border: 1px solid #bbf7d0; margin: 8px 0;">
-       <span>المبلغ المدفوع حالياً:</span>
-       <span>${inv.paid_amount.toFixed(2)}</span>
+      <span>${isSupplierCollection ? 'المبلغ المحصل حالياً:' : 'المبلغ المدفوع حالياً:'}</span>
+       <span>${receiptAmount.toFixed(2)}</span>
     </div>
 
     <div class="summary-row" style="color: #ef4444; font-weight: 900; font-size: 18px; border-top: 2px solid #ef4444; padding-top: 10px;">
-       <span>المتبقي للمورد:</span>
+       <span>${debtAfter < -0.009 ? 'المتبقي لنا عند المورد:' : 'المتبقي للمورد:'}</span>
        <span>${debtAfter.toFixed(2)}</span>
     </div>
     
     <div style="display: flex; gap: 20px; align-items: flex-end; margin-top: 15px;">
       <div style="flex: 1; padding: 10px; background: #f9fafb; border-radius: 10px; border: 1px solid #eee;">
         <div style="font-size: 11px; color: #64748b; margin-bottom: 4px; border-bottom: 1px solid #eee; padding-bottom: 4px; text-align: right; font-weight: bold;">طريقة الدفع:</div>
-        ${inv.paid_cash > 0 ? `<div class="summary-row" style="font-size: 12px; border: none; padding: 2px 0;"><span>💵 كاش:</span><span>${inv.paid_cash.toFixed(2)}</span></div>` : ''}
-        ${inv.paid_visa > 0 ? `<div class="summary-row" style="font-size: 12px; border: none; padding: 2px 0;"><span>💳 فيزا:</span><span>${inv.paid_visa.toFixed(2)}</span></div>` : ''}
-        ${inv.paid_wallet > 0 ? `<div class="summary-row" style="font-size: 12px; border: none; padding: 2px 0;"><span>📱 محفظة:</span><span>${inv.paid_wallet.toFixed(2)}</span></div>` : ''}
-        ${inv.paid_instapay > 0 ? `<div class="summary-row" style="font-size: 12px; border: none; padding: 2px 0;"><span>⚡ انستا باي:</span><span>${inv.paid_instapay.toFixed(2)}</span></div>` : ''}
+        ${Math.abs(inv.paid_cash || 0) > 0 ? `<div class="summary-row" style="font-size: 12px; border: none; padding: 2px 0;"><span>💵 كاش:</span><span>${Math.abs(inv.paid_cash).toFixed(2)}</span></div>` : ''}
+        ${Math.abs(inv.paid_visa || 0) > 0 ? `<div class="summary-row" style="font-size: 12px; border: none; padding: 2px 0;"><span>💳 فيزا:</span><span>${Math.abs(inv.paid_visa).toFixed(2)}</span></div>` : ''}
+        ${Math.abs(inv.paid_wallet || 0) > 0 ? `<div class="summary-row" style="font-size: 12px; border: none; padding: 2px 0;"><span>📱 محفظة:</span><span>${Math.abs(inv.paid_wallet).toFixed(2)}</span></div>` : ''}
+        ${Math.abs(inv.paid_instapay || 0) > 0 ? `<div class="summary-row" style="font-size: 12px; border: none; padding: 2px 0;"><span>⚡ انستا باي:</span><span>${Math.abs(inv.paid_instapay).toFixed(2)}</span></div>` : ''}
       </div>
       <div style="text-align: center;">
         <img src="${qrCodeUrl}" style="width: 80px; height: 80px; border: 1px solid #eee; padding: 5px; border-radius: 8px; background: white;" />
@@ -1057,7 +1062,7 @@ export default function Suppliers() {
         // المشتريات والمدفوع الحقيقي (باستثناء بند الرصيد الافتتاحي)
         const realInvoices = supplierInvoices.filter(inv => inv.invoice_number !== OPENING_MARK);
         const totalPurchases = realInvoices.reduce((sum, inv) => sum + inv.total, 0);
-        const totalPaid = realInvoices.reduce((sum, inv) => sum + inv.paid_amount, 0);
+        const totalPaid = realInvoices.reduce((sum, inv) => sum + Math.max(0, inv.paid_amount), 0);
         // الصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد (يشمل الرصيد الافتتاحي)
         const netBalance = supplierInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0);
         const totalDebt = netBalance; // للتوافق مع منطق السداد الحالي (السداد يظهر فقط لو علينا)
@@ -1068,13 +1073,16 @@ export default function Suppliers() {
         const ledgerRows = [...supplierInvoices]
           .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
           .map(inv => {
-            const credit = Math.max(0, inv.total);                            // دائن (علينا)
-            const debit = (inv.paid_amount || 0) + Math.max(0, -inv.total);   // مدين (سداد/لينا)
+            const paid = Number(inv.paid_amount) || 0;
+            const total = Number(inv.total) || 0;
+            const credit = Math.max(0, total) + Math.max(0, -paid);           // دائن (علينا / تحصيل من المورد)
+            const debit = Math.max(0, paid) + Math.max(0, -total);            // مدين (سداد/لينا)
             _run += credit - debit;
             const isOpening = inv.invoice_number === OPENING_MARK;
-            const isPayment = !isOpening && inv.total === 0 && (inv.paid_amount || 0) > 0;
-            const label = isOpening ? 'رصيد افتتاحي' : isPayment ? 'سداد مديونية' : 'فاتورة مشتريات';
-            return { inv, credit, debit, balance: _run, label, isOpening, isPayment };
+            const isPayment = !isOpening && total === 0 && paid > 0;
+            const isCollection = !isOpening && total === 0 && paid < 0;
+            const label = isOpening ? 'رصيد افتتاحي' : isCollection ? 'تحصيل من المورد' : isPayment ? 'سداد مديونية' : 'فاتورة مشتريات';
+            return { inv, credit, debit, balance: _run, label, isOpening, isPayment, isCollection };
           });
 
         // ── إحصائيات المنتجات المشتراة من هذا المورد ──
@@ -1135,6 +1143,35 @@ export default function Suppliers() {
             setDebtPay({});
           } catch (e) {
             alert('حدث خطأ أثناء تسجيل السداد');
+          } finally {
+            setIsPayingDebt(false);
+          }
+        };
+
+        const handleSupplierFinancialTransaction = async () => {
+          const splitPayments = formToSplit(supplierFinancialPay);
+          const totalPaid = sumSplit(splitPayments);
+          const isCollection = supplierFinancialType === 'collect_from_supplier';
+          const availableBalance = isCollection ? Math.max(0, -netBalance) : Math.max(0, netBalance);
+
+          if (totalPaid <= 0) return alert('أدخل مبلغاً صحيحاً للمعاملة');
+          if (availableBalance <= 0.009) return alert('لا يوجد رصيد مفتوح لهذه المعاملة حالياً');
+          if (totalPaid > availableBalance + 0.01) {
+            return alert(isCollection ? 'المبلغ أكبر من الرصيد لنا عند المورد' : 'المبلغ أكبر من المديونية الحالية للمورد');
+          }
+
+          try {
+            setIsPayingDebt(true);
+            if (isCollection) {
+              await useStore.getState().collectSupplierCredit(selectedSupplierProfile.id, totalPaid, splitPayments as any);
+            } else {
+              await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any);
+            }
+            alert(isCollection ? 'تم تسجيل تحصيل من المورد بنجاح' : 'تم تسجيل سداد للمورد بنجاح');
+            setSupplierFinancialPay({});
+            setShowSupplierFinancialModal(false);
+          } catch (e) {
+            alert('حدث خطأ أثناء تسجيل المعاملة المالية');
           } finally {
             setIsPayingDebt(false);
           }
@@ -1224,6 +1261,16 @@ export default function Suppliers() {
                   </div>
                   <button onClick={exportSupplierExcel} className="text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition"><FileSpreadsheet size={16} /> تصدير Excel</button>
                   <button onClick={exportSupplierPDF} style={{ backgroundColor: tc }} className="text-white px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 hover:opacity-90 transition"><Download size={16} /> تصدير PDF</button>
+                  <button
+                    onClick={() => {
+                      setSupplierFinancialType(netBalance < -0.009 ? 'collect_from_supplier' : 'pay_to_supplier');
+                      setSupplierFinancialPay({});
+                      setShowSupplierFinancialModal(true);
+                    }}
+                    className="text-white bg-slate-900 hover:bg-slate-800 px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition"
+                  >
+                    <Plus size={16} /> إضافة معاملة مالية
+                  </button>
                   <button onClick={() => setShowSupplierProfile(false)} className="p-2 rounded-2xl hover:bg-slate-100 transition"><X size={24} /></button>
                 </div>
               </div>
@@ -1366,8 +1413,8 @@ export default function Suppliers() {
                       {ledgerRows.length === 0 ? (
                         <tr><td colSpan={6} className="p-10 text-center text-slate-400 font-bold">لا توجد حركات على هذا المورد</td></tr>
                       ) : (
-                        ledgerRows.map(({ inv, credit, debit, balance, label, isOpening, isPayment }) => (
-                          <tr key={inv.id} className={`hover:bg-slate-50 transition ${isPayment ? 'bg-emerald-50/30' : isOpening ? 'bg-amber-50/40' : ''}`}>
+                        ledgerRows.map(({ inv, credit, debit, balance, label, isOpening, isPayment, isCollection }) => (
+                          <tr key={inv.id} className={`hover:bg-slate-50 transition ${isCollection ? 'bg-sky-50/40' : isPayment ? 'bg-emerald-50/30' : isOpening ? 'bg-amber-50/40' : ''}`}>
                             <td className="p-4 text-xs font-medium whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString('ar-SA')}</td>
                             <td className="p-4 font-bold text-slate-800">
                               {label}
@@ -1395,6 +1442,72 @@ export default function Suppliers() {
                   </div>
                 </div>
               </div>
+
+              {showSupplierFinancialModal && (
+                <div className="fixed inset-0 z-[60] bg-slate-950/50 backdrop-blur-sm flex items-center justify-center p-4">
+                  <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg border border-slate-100 overflow-hidden">
+                    <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                      <div>
+                        <h3 className="text-xl font-black text-slate-800">إضافة معاملة مالية</h3>
+                        <p className="text-sm font-bold text-slate-400 mt-1">{selectedSupplierProfile.name}</p>
+                      </div>
+                      <button onClick={() => setShowSupplierFinancialModal(false)} className="p-2 rounded-2xl hover:bg-slate-100 transition"><X size={22} /></button>
+                    </div>
+
+                    <div className="p-6 space-y-5">
+                      <div className="grid grid-cols-2 gap-3">
+                        <button
+                          type="button"
+                          onClick={() => setSupplierFinancialType('collect_from_supplier')}
+                          className={`py-3 rounded-2xl font-black border transition ${supplierFinancialType === 'collect_from_supplier' ? 'bg-emerald-600 text-white border-emerald-600 shadow-lg shadow-emerald-100' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
+                        >
+                          تحصيل من المورد
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSupplierFinancialType('pay_to_supplier')}
+                          className={`py-3 rounded-2xl font-black border transition ${supplierFinancialType === 'pay_to_supplier' ? 'bg-red-600 text-white border-red-600 shadow-lg shadow-red-100' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}
+                        >
+                          سداد للمورد
+                        </button>
+                      </div>
+
+                      <div className="bg-slate-50 rounded-2xl p-4 flex items-center justify-between">
+                        <span className="text-sm font-bold text-slate-500">
+                          {supplierFinancialType === 'collect_from_supplier' ? 'المتاح تحصيله' : 'المتاح سداده'}
+                        </span>
+                        <span className="text-lg font-black text-slate-800">
+                          {(supplierFinancialType === 'collect_from_supplier' ? Math.max(0, -netBalance) : Math.max(0, netBalance)).toLocaleString()} {storeSettings.currency}
+                        </span>
+                      </div>
+
+                      <PaymentSplitInputs
+                        value={supplierFinancialPay}
+                        onChange={(k, v) => setSupplierFinancialPay((s) => ({ ...s, [k]: v }))}
+                        cols={2}
+                        labelClassName="text-[11px] font-black text-slate-400 block pr-2 mb-1"
+                        inputClassName="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-black text-center"
+                      />
+
+                      <div className="bg-white border border-slate-100 rounded-2xl p-4 flex items-center justify-between">
+                        <span className="text-sm font-bold text-slate-500">إجمالي المعاملة</span>
+                        <span className="text-xl font-black text-emerald-600">{sumSplit(formToSplit(supplierFinancialPay)).toLocaleString()} {storeSettings.currency}</span>
+                      </div>
+                    </div>
+
+                    <div className="p-6 border-t border-slate-100 flex gap-3">
+                      <button
+                        onClick={handleSupplierFinancialTransaction}
+                        disabled={isPayingDebt}
+                        className="flex-1 bg-slate-900 text-white py-3.5 rounded-2xl font-black hover:bg-slate-800 transition disabled:opacity-50"
+                      >
+                        {isPayingDebt ? 'جاري الحفظ...' : 'حفظ المعاملة'}
+                      </button>
+                      <button type="button" onClick={() => setShowSupplierFinancialModal(false)} className="flex-1 bg-slate-100 text-slate-700 py-3.5 rounded-2xl font-black hover:bg-slate-200 transition">إلغاء</button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         );

@@ -658,6 +658,7 @@ interface CashierStore {
   ) => Promise<void>;
   deletePurchaseInvoice: (id: string) => Promise<void>;
   paySupplierDebt: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<void>;
+  collectSupplierCredit: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<void>;
 
   // Car Maintenance
   loadCarSubscriptions: () => Promise<void>;
@@ -4632,6 +4633,81 @@ setupRealtime: () => {
       });
     } catch (e) {
       console.error("Pay Supplier Debt Exception:", e);
+      throw e;
+    }
+  },
+
+  collectSupplierCredit: async (supplierId, amount, splitPayments) => {
+    const state = get();
+    const invoiceNumber = `SUP-COL-${Date.now()}`;
+
+    const supplierInvoices = state.purchaseInvoices.filter(inv => inv.supplier_id === supplierId);
+    const netBalance = supplierInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0);
+    const supplierCredit = Math.max(0, -netBalance);
+    if (amount > supplierCredit + 0.01) {
+      alert(`المبلغ المدخل (${amount.toFixed(2)}) أكبر من الرصيد لنا عند المورد (${supplierCredit.toFixed(2)})`);
+      return;
+    }
+
+    try {
+      const methods = [
+        { name: 'cash', amount: splitPayments?.cash || 0 },
+        { name: 'visa', amount: splitPayments?.visa || 0 },
+        { name: 'wallet', amount: splitPayments?.wallet || 0 },
+        { name: 'instapay', amount: splitPayments?.instapay || 0 },
+        { name: 'method5', amount: splitPayments?.method5 || 0 },
+        { name: 'method6', amount: splitPayments?.method6 || 0 }
+      ];
+      const primaryMethod = splitPayments ? methods.sort((a, b) => b.amount - a.amount)[0].name : 'cash';
+      const splits = getSplits(splitPayments, primaryMethod, amount);
+
+      const { data, error } = await supabase
+        .from('purchase_invoices')
+        .insert({
+          invoice_number: invoiceNumber,
+          supplier_id: supplierId,
+          total: 0,
+          paid_amount: -amount,
+          paid_cash: -Math.abs(splits.cash || 0),
+          paid_visa: -Math.abs(splits.visa || 0),
+          paid_wallet: -Math.abs(splits.wallet || 0),
+          paid_instapay: -Math.abs(splits.instapay || 0),
+          paid_method5: -Math.abs(splits.method5 || 0),
+          paid_method6: -Math.abs(splits.method6 || 0),
+          payment_method: primaryMethod
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error("Supplier Collection Insert Error:", error);
+        throw error;
+      }
+
+      const newCollection: PurchaseInvoice = {
+        ...(data as any),
+        items: []
+      };
+
+      set({
+        purchaseInvoices: [newCollection, ...state.purchaseInvoices]
+      });
+
+      const supplier = state.suppliers.find((s) => s.id === supplierId);
+      sendTelegramAlert({
+        type: 'supplier_collection',
+        actor: getActorName(state),
+        currency: state.storeSettings.currency,
+        invoiceId: invoiceNumber,
+        invoiceUrl: getPublicInvoiceUrl((data as any).id),
+        supplier: supplier?.name || 'مورد',
+        date: (data as any).created_at,
+        total: 0,
+        paid: amount,
+        paymentMethod: (data as any).payment_method,
+      });
+    } catch (e) {
+      console.error("Collect Supplier Credit Exception:", e);
       throw e;
     }
   },
