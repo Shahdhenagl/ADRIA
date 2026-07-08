@@ -2,13 +2,20 @@ import JsBarcode from 'jsbarcode';
 import { escapeHtml } from './escapeHtml';
 import { printDocument } from './printWindow';
 
-// Generates a unique numeric barcode (12 digits). Pass existing codes to avoid collisions.
+// باركود تسلسلي: آخر باركود رقمي + 1. يتجاهل الأكواد الطويلة (العالمية أو العشوائية القديمة)
+// حتى يبدأ السيريال نظيفاً ويزيد 1 في كل مرة. يبدأ من 1000 لو مفيش باركود تسلسلي بعد.
 export function generateBarcode(existing: Set<string> = new Set()): string {
-  let code = '';
-  do {
-    code = '2' + String(Date.now()).slice(-8) + String(Math.floor(Math.random() * 1000)).padStart(3, '0');
-  } while (existing.has(code));
-  return code;
+  let max = 0;
+  for (const code of existing) {
+    if (/^\d+$/.test(code) && code.length <= 9) {
+      const n = parseInt(code, 10);
+      if (n > max) max = n;
+    }
+  }
+  let next = max > 0 ? max + 1 : 1000;
+  let candidate = String(next);
+  while (existing.has(candidate)) { next++; candidate = String(next); }
+  return candidate;
 }
 
 // Prints `count` barcode labels on a 38mm x 25mm thermal label roll.

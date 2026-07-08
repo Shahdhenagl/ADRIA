@@ -585,33 +585,17 @@ export default function Inventory() {
             </div>
             <form onSubmit={submitProduct} className="p-6 space-y-4 overflow-y-auto">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* ── البيانات الأساسية (الأسرع إدخالاً) ── */}
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-1">اسم المنتج <span className="text-red-500">*</span></label>
                   <input type="text" required value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none" />
                 </div>
-                <div className="sm:col-span-2 relative group">
-                  <div className="flex justify-between items-end mb-1">
-                    <label className="block text-sm font-bold text-slate-700">الباركود</label>
-                    <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md flex items-center gap-1 opacity-0 group-focus-within:opacity-100 transition-opacity">
-                      <ScanLine size={12} />
-                      ضع المؤشر هنا واستخدم جهاز الـ POS للفحص
-                    </span>
-                  </div>
-                  <div className="relative">
-                    <input 
-                      type="text" 
-                      dir="ltr" 
-                      value={formData.barcode} 
-                      onChange={e => setFormData({...formData, barcode: e.target.value})} 
-                      onKeyDown={handleBarcodeKeyDown}
-                      style={{ '--tw-ring-color': scanSuccess ? '#10b981' : storeSettings.themeColor + '40' } as any} 
-                      className={`w-full bg-slate-50 border py-3 px-4 rounded-xl focus:ring-2 focus:outline-none text-left font-mono font-bold transition-colors ${scanSuccess ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200'}`} 
-                      placeholder="امسح الباركود هنا..."
-                    />
-                    {scanSuccess && (
-                      <CheckCircle2 className="absolute left-3 top-3.5 text-emerald-500 animate-in zoom-in" size={20} />
-                    )}
-                  </div>
+                <div className="sm:col-span-2">
+                  <label className="block text-sm font-bold text-slate-700 mb-1">المورد <span className="text-[10px] text-slate-400">(اختياري)</span></label>
+                  <input type="text" list="suppliers-datalist" value={formData.supplier_name} onChange={e => setFormData({...formData, supplier_name: e.target.value})} placeholder="اسم المورد الذي يورّد هذا المنتج..." className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-teal-500" />
+                  <datalist id="suppliers-datalist">
+                    {suppliers.map(s => <option key={s.id} value={s.name} />)}
+                  </datalist>
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-1">وحدة البيع <span className="text-red-500">*</span></label>
@@ -620,43 +604,7 @@ export default function Inventory() {
                       <option key={u.value} value={u.value}>{u.label}</option>
                     ))}
                   </select>
-                  <p className="text-xs text-slate-400 mt-1">{isFractionalUnit(formData.unit) ? '⚖️ منتج يُباع بالوزن — يمكن بيع كميات كسرية' : '🔢 منتج يُباع بالعدد'}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر البيع لكل {getUnitConfig(formData.unit).label} <span className="text-red-500">*</span></label>
-                  <input type="number" min="0" step="0.01" required value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: parseFloat(e.target.value) || 0})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-green-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر البيع بعد الخصم (اختياري)</label>
-                  <input type="number" min="0" step="0.01" value={formData.discount_price} onChange={e => setFormData({...formData, discount_price: parseFloat(e.target.value) || 0})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-amber-500" />
-                  <p className="text-xs text-slate-400 mt-1">لو دخلت قيمة هنا، هتبقى هي سعر البيع الفعلي على الكاشير. والباركود لو سيبته فاضي هيتولّد تلقائياً.</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر نص الجملة <span className="text-[10px] text-slate-400">(اختياري)</span></label>
-                  <input type="number" min="0" step="0.01" value={formData.half_wholesale_price} onChange={e => setFormData({...formData, half_wholesale_price: parseFloat(e.target.value) || 0})} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-sky-500" />
-                </div>
-                <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر الجملة <span className="text-[10px] text-slate-400">(اختياري)</span></label>
-                  <input type="number" min="0" step="0.01" value={formData.wholesale_price} onChange={e => setFormData({...formData, wholesale_price: parseFloat(e.target.value) || 0})} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-purple-500" />
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-sm font-bold text-slate-700 mb-1">الموسم</label>
-                  <div className="flex gap-2">
-                    {([['summer','صيفي'],['winter','شتوي'],['annual','سنوي']] as const).map(([k,label]) => (
-                      <button type="button" key={k} onClick={() => setFormData({...formData, season: k})}
-                        className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition border ${formData.season === k ? 'bg-indigo-600 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="block text-sm font-bold text-slate-700 mb-1">المورد <span className="text-[10px] text-slate-400">(اختياري)</span></label>
-                  <input type="text" list="suppliers-datalist" value={formData.supplier_name} onChange={e => setFormData({...formData, supplier_name: e.target.value})} placeholder="اسم المورد الذي يورّد هذا المنتج..." className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-teal-500" />
-                  <datalist id="suppliers-datalist">
-                    {suppliers.map(s => <option key={s.id} value={s.name} />)}
-                  </datalist>
-                  <p className="text-xs text-slate-400 mt-1">لو كتبت اسم مورد جديد غير موجود، هيتسجّل تلقائياً في قائمة الموردين.</p>
+                  <p className="text-xs text-slate-400 mt-1">{isFractionalUnit(formData.unit) ? '⚖️ يُباع بالوزن' : '🔢 يُباع بالعدد'}</p>
                 </div>
                 {!editingProductId ? (
                   <>
@@ -692,7 +640,7 @@ export default function Inventory() {
                   </>
                 )}
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-1">تكلفة شراء الـ{getUnitConfig(formData.unit).label} <span className="text-[10px] text-slate-400">(اختياري)</span></label>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر الشراء لكل {getUnitConfig(formData.unit).label} <span className="text-[10px] text-slate-400">(اختياري)</span></label>
                   <input
                     type="number" min="0" step="0.01"
                     value={formData.purchase_price}
@@ -701,8 +649,35 @@ export default function Inventory() {
                     className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-amber-500"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر البيع القطاعي لكل {getUnitConfig(formData.unit).label} <span className="text-red-500">*</span></label>
+                  <input type="number" min="0" step="0.01" required value={formData.sale_price} onChange={e => setFormData({...formData, sale_price: parseFloat(e.target.value) || 0})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-green-500" />
+                </div>
+
+                {/* ── أسعار وبيانات إضافية ── */}
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر البيع بعد الخصم <span className="text-[10px] text-slate-400">(اختياري)</span></label>
+                  <input type="number" min="0" step="0.01" value={formData.discount_price} onChange={e => setFormData({...formData, discount_price: parseFloat(e.target.value) || 0})} style={{ '--tw-ring-color': storeSettings.themeColor + '40' } as any} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-amber-500" />
+                  <p className="text-xs text-slate-400 mt-1">لو دخلت قيمة هنا، هتبقى هي سعر البيع الفعلي على الكاشير.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر نص الجملة <span className="text-[10px] text-slate-400">(اختياري)</span></label>
+                  <input type="number" min="0" step="0.01" value={formData.half_wholesale_price} onChange={e => setFormData({...formData, half_wholesale_price: parseFloat(e.target.value) || 0})} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-sky-500" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">سعر الجملة <span className="text-[10px] text-slate-400">(اختياري)</span></label>
+                  <input type="number" min="0" step="0.01" value={formData.wholesale_price} onChange={e => setFormData({...formData, wholesale_price: parseFloat(e.target.value) || 0})} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none border-l-4 border-l-purple-500" />
+                </div>
                 <div className="sm:col-span-2">
-                  <p className="text-xs text-slate-400 -mt-1">ℹ️ هذه كمية وتكلفة المخزون الافتتاحي — بعدها يتم التحديث تلقائياً عبر فواتير المشتريات. يمكن تعديل سعر البيع لاحقاً.</p>
+                  <label className="block text-sm font-bold text-slate-700 mb-1">الموسم</label>
+                  <div className="flex gap-2">
+                    {([['summer','صيفي'],['winter','شتوي'],['annual','سنوي']] as const).map(([k,label]) => (
+                      <button type="button" key={k} onClick={() => setFormData({...formData, season: k})}
+                        className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition border ${formData.season === k ? 'bg-indigo-600 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-1">التصنيف</label>
@@ -711,6 +686,33 @@ export default function Inventory() {
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
                   </select>
+                </div>
+                <div className="sm:col-span-2 relative group">
+                  <div className="flex justify-between items-end mb-1">
+                    <label className="block text-sm font-bold text-slate-700">الباركود <span className="text-[10px] text-slate-400">(يتولّد تلقائياً تسلسلياً لو فاضي)</span></label>
+                    <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-md flex items-center gap-1 opacity-0 group-focus-within:opacity-100 transition-opacity">
+                      <ScanLine size={12} />
+                      ضع المؤشر هنا واستخدم جهاز الـ POS للفحص
+                    </span>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      dir="ltr"
+                      value={formData.barcode}
+                      onChange={e => setFormData({...formData, barcode: e.target.value})}
+                      onKeyDown={handleBarcodeKeyDown}
+                      style={{ '--tw-ring-color': scanSuccess ? '#10b981' : storeSettings.themeColor + '40' } as any}
+                      className={`w-full bg-slate-50 border py-3 px-4 rounded-xl focus:ring-2 focus:outline-none text-left font-mono font-bold transition-colors ${scanSuccess ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200'}`}
+                      placeholder="امسح الباركود أو اتركه فارغاً للترقيم التلقائي..."
+                    />
+                    {scanSuccess && (
+                      <CheckCircle2 className="absolute left-3 top-3.5 text-emerald-500 animate-in zoom-in" size={20} />
+                    )}
+                  </div>
+                </div>
+                <div className="sm:col-span-2">
+                  <p className="text-xs text-slate-400 -mt-1">ℹ️ الكمية والتكلفة هنا للمخزون الافتتاحي — بعدها يتم التحديث تلقائياً عبر فواتير المشتريات.</p>
                 </div>
               </div>
               <div className="pt-4 mt-2 border-t">
