@@ -76,7 +76,7 @@ export default function AdminLayout() {
     { section: 'المالية والخزائن', items: [
       { name: 'الخزينة والمصاريف', path: '/admin/finance', icon: Wallet },
       { name: 'كشوف حسابات الوسائل', path: '/admin/payment-accounts', icon: Landmark },
-      { name: 'خزنة الادخار', path: '/admin/savings', icon: PiggyBank },
+      { name: 'الخزنة الرئيسية', path: '/admin/savings', icon: PiggyBank },
       { name: 'الميزانية العامة', path: '/admin/budget', icon: PieChart },
       { name: 'سلف وتمويل', path: '/admin/financing', icon: Building2 },
       { name: 'المدراء والسحوبات', path: '/admin/managers', icon: Briefcase },

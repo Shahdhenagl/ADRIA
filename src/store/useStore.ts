@@ -3810,8 +3810,8 @@ setupRealtime: () => {
     return data ? true : true;
   },
 
-  // تحويل بين خزنة المحل وخزنة الادخار (كل طريقة بطريقتها). ينعكس على خزنة المحل
-  // كمصروف (تحويل للادخار) أو إيراد (تحويل من الادخار)، ويُسجَّل في دفتر الادخار.
+  // تحويل بين خزنة المحل والخزنة الرئيسية (كل طريقة بطريقتها). ينعكس على خزنة المحل
+  // كمصروف (تحويل للرئيسية) أو إيراد (تحويل من الرئيسية)، ويُسجَّل في دفتر الخزنة الرئيسية.
   savingsTransfer: async (split, direction, source, note) => {
     const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
@@ -3822,14 +3822,14 @@ setupRealtime: () => {
 
     // انعكاس على خزنة المحل
     await get().addExpense({
-      category: direction === 'in' ? 'تحويل لخزنة الادخار' : 'تحويل من خزنة الادخار',
+      category: direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية',
       amount: direction === 'in' ? total : -total,
-      note: note || (direction === 'in' ? 'تحويل من المحل للادخار' : 'تحويل من الادخار للمحل'),
+      note: note || (direction === 'in' ? 'تحويل من المحل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية للمحل'),
       payment_method: primary,
       paid_cash: s.cash, paid_visa: s.visa, paid_wallet: s.wallet, paid_instapay: s.instapay, paid_method5: s.method5 || 0, paid_method6: s.method6 || 0,
     } as Omit<Expense, 'id' | 'date'>);
 
-    // دفتر الادخار: صف لكل طريقة بمبلغ
+    // دفتر الخزنة الرئيسية: صف لكل طريقة بمبلغ
     const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
       .filter((m) => s[m] > 0)
       .map((m) => ({ direction, amount: s[m], method: m, source: source || 'manual', note: note || null }));
@@ -3839,7 +3839,7 @@ setupRealtime: () => {
       type: direction === 'in' ? 'savings_in' : 'savings_out',
       actor: getActorName(get()),
       currency: get().storeSettings.currency,
-      description: `${direction === 'in' ? 'تحويل للادخار' : 'تحويل من الادخار'}: ${total.toFixed(2)}`,
+      description: `${direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية'}: ${total.toFixed(2)}`,
       amount: total,
       paymentMethod: primary,
       date: new Date().toISOString(),

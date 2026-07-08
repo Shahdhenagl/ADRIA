@@ -6,7 +6,7 @@ import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, 
 import { Html5Qrcode } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { printBarcodeLabels, generateBarcode } from '../utils/printBarcodeLabels';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf } from '../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, totalOpeningBalance } from '../utils/paymentMethods';
 import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
@@ -34,7 +34,7 @@ export default function POS() {
     setSaveXferBusy(true);
     try {
       const lines = PAY_KEYS.filter(([k]) => (Number(saveXfer[k]) || 0) > 0).map(([k, l]) => `${l}: ${Number(saveXfer[k]).toFixed(2)}`).join(' | ');
-      const details = `تحويل من خزنة المحل ➜ الادخار\n${lines}\nالإجمالي: ${saveXferTotal.toFixed(2)} ${storeSettings.currency}`;
+      const details = `تحويل من خزنة المحل ➜ الخزنة الرئيسية\n${lines}\nالإجمالي: ${saveXferTotal.toFixed(2)} ${storeSettings.currency}`;
       const t = await saveXferToken();
       const r = await fetch('/api/wholesale-otp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }, body: JSON.stringify({ action: 'request', purpose: 'savings', details }) });
       const j = await r.json();
@@ -54,11 +54,11 @@ export default function POS() {
       if (!j.ok) { alert(j.error || 'رمز غير صحيح'); setSaveXferBusy(false); return; }
       const split = { cash: Number(saveXfer.cash) || 0, visa: Number(saveXfer.visa) || 0, wallet: Number(saveXfer.wallet) || 0, instapay: Number(saveXfer.instapay) || 0 };
       const ok = await savingsTransfer(split, 'in', 'day_closing');
-      if (ok) { alert('تم تحويل المبلغ لخزنة الادخار ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
+      if (ok) { alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);
   };
-  const [posSeason, setPosSeason] = useState<'all' | 'summer' | 'winter'>('all');
+  const [posSeason, setPosSeason] = useState<'all' | 'summer' | 'winter' | 'annual'>('all');
   const [historyToday, setHistoryToday] = useState(true);
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const [viewExchange, setViewExchange] = useState<any>(null);
@@ -442,12 +442,12 @@ export default function POS() {
       addOut(purRes.data as any[], 'paid_amount');
       addOut(salRes.data as any[], 'amount');
       const sum = (o: Record<string, number>) => methods.reduce((s, m) => s + (o[m] || 0), 0);
-      const opening = (Number((storeSettings as any).initialBalance ?? (storeSettings as any).initial_balance) || 0) + sum(befIn) - sum(befOut);
+      // الرصيد الافتتاحي = مجموع الأرصدة الافتتاحية لكل وسائل الدفع (كاش + فيزا + محافظ...) وليس الكاش فقط.
+      const opening = totalOpeningBalance(storeSettings as any) + sum(befIn) - sum(befOut);
       const totalIn = sum(dayIn), totalOut = sum(dayOut);
-      // الرصيد الحالي في خزنة المحل لكل وسيلة (كل الفترات) — للتحويل لخزنة الادخار.
+      // الرصيد الحالي في خزنة المحل لكل وسيلة (كل الفترات) = الرصيد الافتتاحي للوسيلة + صافي حركتها — للتحويل للخزنة الرئيسية.
       const shopAvail: Record<string, number> = zero();
-      methods.forEach((m) => { shopAvail[m] = (befIn[m] + dayIn[m]) - (befOut[m] + dayOut[m]); });
-      shopAvail.cash += Number((storeSettings as any).initialBalance ?? (storeSettings as any).initial_balance) || 0;
+      methods.forEach((m) => { shopAvail[m] = openingBalanceOf(storeSettings as any, m) + (befIn[m] + dayIn[m]) - (befOut[m] + dayOut[m]); });
       setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut, shopAvail });
     } catch (e) { console.error(e); alert('تعذّر تحميل ميزانية اليوم'); }
     setDayBudgetLoading(false);
@@ -1246,7 +1246,6 @@ export default function POS() {
   );
 
   const subtotal = cart.reduce((sum, item) => sum + item.sale_price * item.quantity, 0);
-  const totalCost = cart.reduce((sum, item) => sum + (item.average_purchase_price || item.purchase_price || 0) * item.quantity, 0);
   const manualDiscount = Math.min(parseFloat(discountStr) || 0, subtotal);
   
   // Coupon Validation and Calculation
@@ -1296,7 +1295,6 @@ export default function POS() {
   const discountedSubtotal = Math.max(0, subtotal - totalDiscount);
   const tax = discountedSubtotal * (storeSettings.taxRate / 100);
   const total = discountedSubtotal + tax;
-  const profit = discountedSubtotal - totalCost;
 
 
   // Sync customer debt calculation only
@@ -1854,11 +1852,11 @@ export default function POS() {
                   {perm('savings') && (
                   <div className="border-t border-slate-100 dark:border-slate-700 pt-3">
                     {!showSaveXfer ? (
-                      <button onClick={() => { setShowSaveXfer(true); const a = dayBudget.shopAvail || {}; setSaveXfer({ cash: String(Math.max(0, a.cash || 0) || ''), visa: String(Math.max(0, a.visa || 0) || ''), wallet: String(Math.max(0, a.wallet || 0) || ''), instapay: String(Math.max(0, a.instapay || 0) || '') }); }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2">🏦 تحويل لخزنة الادخار</button>
+                      <button onClick={() => { setShowSaveXfer(true); const a = dayBudget.shopAvail || {}; setSaveXfer({ cash: String(Math.max(0, a.cash || 0) || ''), visa: String(Math.max(0, a.visa || 0) || ''), wallet: String(Math.max(0, a.wallet || 0) || ''), instapay: String(Math.max(0, a.instapay || 0) || '') }); }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2">🏦 تحويل للخزنة الرئيسية</button>
                     ) : (
                       <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-3 space-y-2">
                         <div className="flex items-center justify-between">
-                          <span className="text-sm font-black text-indigo-800 dark:text-indigo-300">تحويل لخزنة الادخار</span>
+                          <span className="text-sm font-black text-indigo-800 dark:text-indigo-300">تحويل للخزنة الرئيسية</span>
                           <button onClick={() => { setShowSaveXfer(false); setSaveXferSent(false); }} className="text-xs font-bold text-slate-500">إغلاق</button>
                         </div>
                         <p className="text-[11px] text-slate-500">المبالغ مملوءة بكامل الموجود في خزنة المحل — عدّليها لو عايزة مبلغ محدد (مش أكبر من المتاح). كل طريقة بتتحوّل بنفسها.</p>
@@ -2422,7 +2420,7 @@ export default function POS() {
           </div>
           <div className="flex items-center gap-2 overflow-x-auto hide-scrollbar">
             <span className="text-[11px] font-bold text-slate-400 shrink-0">الموسم</span>
-            {([['all', 'الكل'], ['summer', 'صيفي'], ['winter', 'شتوي']] as const).map(([k, label]) => (
+            {([['all', 'الكل'], ['summer', 'صيفي'], ['winter', 'شتوي'], ['annual', 'سنوي']] as const).map(([k, label]) => (
               <button key={k} onClick={() => setPosSeason(k)}
                 className={`shrink-0 px-4 py-2 rounded-xl text-xs font-black transition ${posSeason === k ? 'bg-amber-500 text-white shadow-md' : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200'}`}>
                 {label}
@@ -2480,8 +2478,6 @@ export default function POS() {
             {filteredProducts.map((product) => {
               const isOutOfStock = product.stock_quantity <= 0;
               const isLowStock = product.stock_quantity > 0 && product.stock_quantity < 5;
-              const avgPrice = product.average_purchase_price || product.purchase_price || 0;
-              const lastPrice = product.purchase_price || 0;
 
               return (
                 <div
@@ -2495,19 +2491,7 @@ export default function POS() {
 
                   <div className="pt-2">
                     <h3 className="font-bold text-gray-800 dark:text-gray-100 line-clamp-2 leading-tight text-base">{product.name}</h3>
-                    {/* Purchase cost info for cashier */}
-                    {!pricesHidden && (
-                    <div className="mt-2 space-y-0.5">
-                      <div className="flex items-center gap-1.5 text-[11px]">
-                        <span className="text-slate-400 font-medium">آخر شراء:</span>
-                        <span className="font-bold text-orange-500">{lastPrice.toFixed(2)} {storeSettings.currency}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 text-[11px]">
-                        <span className="text-slate-400 font-medium">متوسط:</span>
-                        <span className="font-bold text-indigo-500">{avgPrice.toFixed(2)} {storeSettings.currency}</span>
-                      </div>
-                    </div>
-                    )}
+                    {/* سعر الشراء مخفي في الكاشير — يظهر سعر البيع فقط */}
                   </div>
                   <div className="flex items-end justify-between mt-3 pt-2 border-t border-gray-100 dark:border-slate-700">
                     <div>
@@ -2776,15 +2760,7 @@ export default function POS() {
                 <span className="text-3xl font-black text-indigo-600 dark:text-indigo-400 tracking-tighter">
                   {pricesHidden ? '🔒' : total.toFixed(2)} <span className="text-xs text-slate-400 font-bold tracking-normal">{storeSettings.currency}</span>
                 </span>
-                {cart.length > 0 && !pricesHidden && ((storeSettings as any).showInvoiceProfit !== false) && (
-                  <span className={`text-[10px] font-black px-2 py-0.5 rounded-md mt-1 border ${
-                    profit >= 0 
-                      ? 'text-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 border-emerald-100 dark:border-emerald-800' 
-                      : 'text-red-500 bg-red-50 dark:bg-red-900/30 border-red-100 dark:border-red-800'
-                  }`}>
-                    ربح الفاتورة: {profit.toFixed(2)} {storeSettings.currency}
-                  </span>
-                )}
+                {/* ربح الفاتورة مخفي في الكاشير */}
               </div>
             </div>
           </div>

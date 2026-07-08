@@ -59,7 +59,7 @@ export default function Savings() {
       ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(storeSettings as any, k); });
       setShopAvail(net);
 
-      // رصيد الادخار لكل وسيلة (داخل − خارج)
+      // رصيد الخزنة الرئيسية لكل وسيلة (داخل − خارج)
       const sav = zero();
       const list = (savRes.data as any[]) || [];
       list.forEach((t) => { const m = t.method || 'cash'; if (sav[m] === undefined) return; sav[m] += (t.direction === 'in' ? 1 : -1) * (Number(t.amount) || 0); });
@@ -78,7 +78,7 @@ export default function Savings() {
 
   const detailsText = () => {
     const lines = METHODS.filter((m) => (Number(amt[m.key]) || 0) > 0).map((m) => `${m.label}: ${Number(amt[m.key]).toFixed(2)}`);
-    return `${direction === 'in' ? 'تحويل من المحل ➜ الادخار' : 'تحويل من الادخار ➜ المحل'}\n${lines.join(' | ')}\nالإجمالي: ${total.toFixed(2)} ${cur}${note ? `\nملاحظة: ${note}` : ''}`;
+    return `${direction === 'in' ? 'تحويل من المحل ➜ الخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية ➜ المحل'}\n${lines.join(' | ')}\nالإجمالي: ${total.toFixed(2)} ${cur}${note ? `\nملاحظة: ${note}` : ''}`;
   };
 
   const validate = () => {
@@ -128,11 +128,11 @@ export default function Savings() {
     <div className="p-6 md:p-8 space-y-6 animate-fade-in">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-black text-slate-800 dark:text-white flex items-center gap-3"><PiggyBank className="text-indigo-600" size={30} /> خزنة الادخار</h1>
-          <p className="text-slate-500 mt-1 font-medium text-sm">تحويل بين خزنة المحل وخزنة الادخار (كل طريقة بطريقتها) — بتأكيد OTP للمدير</p>
+          <h1 className="text-3xl font-black text-slate-800 dark:text-white flex items-center gap-3"><PiggyBank className="text-indigo-600" size={30} /> الخزنة الرئيسية</h1>
+          <p className="text-slate-500 mt-1 font-medium text-sm">تحويل بين خزنة المحل والخزنة الرئيسية (كل طريقة بطريقتها) — بتأكيد OTP للمدير</p>
         </div>
         <div className="bg-gradient-to-l from-indigo-600 to-purple-600 text-white rounded-2xl px-5 py-3 text-center">
-          <div className="text-[11px] font-bold opacity-90">إجمالي الادخار</div>
+          <div className="text-[11px] font-bold opacity-90">إجمالي الخزنة الرئيسية</div>
           <div className="text-2xl font-black">{savingsTotal.toFixed(2)} {cur}</div>
         </div>
       </div>
@@ -152,8 +152,8 @@ export default function Savings() {
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5 space-y-3 max-w-2xl">
         <h2 className="text-base font-black text-slate-800 dark:text-white flex items-center gap-2"><ArrowLeftRight size={18} className="text-indigo-600" /> تحويل</h2>
         <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => { setDirection('in'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-sm ${direction === 'in' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>من المحل ➜ الادخار</button>
-          <button onClick={() => { setDirection('out'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-sm ${direction === 'out' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>من الادخار ➜ المحل</button>
+          <button onClick={() => { setDirection('in'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-sm ${direction === 'in' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>من المحل ➜ الخزنة الرئيسية</button>
+          <button onClick={() => { setDirection('out'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-sm ${direction === 'out' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>من الخزنة الرئيسية ➜ المحل</button>
         </div>
         <div className="flex justify-end"><button onClick={fillAll} className="text-[11px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">تحويل كل المتاح</button></div>
         <div className="grid grid-cols-2 gap-2">
@@ -183,7 +183,7 @@ export default function Savings() {
 
       {/* Ledger */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5">
-        <h2 className="text-base font-black text-slate-800 dark:text-white mb-4">سجل معاملات خزنة الادخار</h2>
+        <h2 className="text-base font-black text-slate-800 dark:text-white mb-4">سجل معاملات الخزنة الرئيسية</h2>
         <div className="overflow-x-auto">
           <table className="w-full text-right text-sm">
             <thead><tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">المبلغ</th><th className="p-2">الطريقة</th><th className="p-2">المصدر</th><th className="p-2">ملاحظة</th></tr></thead>
@@ -193,7 +193,7 @@ export default function Savings() {
                 : txs.map((t) => (
                   <tr key={t.id} className="border-b border-slate-100 dark:border-slate-700/50">
                     <td className="p-2">{new Date(t.created_at).toLocaleString('ar-EG')}</td>
-                    <td className="p-2 font-bold"><span className={t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}>{t.direction === 'in' ? 'إيداع للادخار' : 'سحب للمحل'}</span></td>
+                    <td className="p-2 font-bold"><span className={t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}>{t.direction === 'in' ? 'إيداع للرئيسية' : 'سحب للمحل'}</span></td>
                     <td className={`p-2 font-black ${t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>{Number(t.amount).toFixed(2)} {cur}</td>
                     <td className="p-2">{METHODS.find((m) => m.key === t.method)?.label || t.method}</td>
                     <td className="p-2 text-xs text-slate-500">{t.source === 'day_closing' ? 'تقفيل اليوم' : t.source === 'shop_transfer' ? 'تحويل من المحل' : t.source === 'to_shop' ? 'تحويل للمحل' : 'يدوي'}</td>

@@ -248,7 +248,7 @@ export default function Settings() {
               ['debt', 'سداد آجل للعملاء'],
               ['dayClosing', 'تقفيل اليوم'],
               ['wholesale', 'أسعار الجملة / نص الجملة'],
-              ['savings', 'تحويل لخزنة الادخار'],
+              ['savings', 'تحويل للخزنة الرئيسية'],
               ['barcodePrint', 'طباعة باركود المنتجات'],
             ] as const).map(([k, label]) => {
               const perms = formData.cashierPermissions || {};

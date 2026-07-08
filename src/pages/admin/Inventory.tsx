@@ -13,7 +13,7 @@ export default function Inventory() {
   const { products, categories, storeSettings, addProduct, updateProduct, orders, suppliers, addSupplier } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [stockLocation, setStockLocation] = useState<'all' | 'warehouse' | 'display'>('all');
-  const [seasonFilter, setSeasonFilter] = useState<'all' | 'summer' | 'winter'>('all');
+  const [seasonFilter, setSeasonFilter] = useState<'all' | 'summer' | 'winter' | 'annual'>('all');
   const [warehouseQty, setWarehouseQty] = useState(0); // كمية المستودع عند إضافة منتج جديد
   const [newCategoryName, setNewCategoryName] = useState('');
   const [showCatForm, setShowCatForm] = useState(false);
@@ -312,7 +312,7 @@ export default function Inventory() {
   };
 
   // أعمدة قالب الاستيراد. الترتيب لا يهم عند القراءة — نبحث عن العمود بالاسم.
-  const TEMPLATE_HEADERS = ['الباركود', 'اسم المنتج', 'التصنيف', 'المورد', 'الوحدة', 'سعر الشراء', 'سعر البيع', 'سعر الخصم', 'سعر الجملة', 'سعر نص الجملة', 'الموسم', 'كمية المستودع', 'كمية المحل'];
+  const TEMPLATE_HEADERS = ['الباركود', 'اسم المنتج', 'التصنيف', 'المورد', 'الوحدة', 'سعر الشراء', 'سعر البيع', 'سعر الخصم', 'سعر الجملة', 'سعر نص الجملة', 'الموسم (صيفي/شتوي/سنوي)', 'كمية المستودع', 'كمية المحل'];
 
   // تصدير قالب Excel جاهز للتعبئة وإعادة الاستيراد (يحتوي المنتجات الحالية حسب الفلاتر المختارة).
   const exportTemplate = () => {
@@ -327,7 +327,7 @@ export default function Inventory() {
       p.discount_price || 0,
       p.wholesale_price || 0,
       p.half_wholesale_price || 0,
-      p.season === 'winter' ? 'شتوي' : 'صيفي',
+      p.season === 'winter' ? 'شتوي' : p.season === 'annual' ? 'سنوي' : 'صيفي',
       Math.max(0, (Number(p.stock_quantity) || 0) - dispOf(p)), // كمية المستودع
       dispOf(p),                                                // كمية المحل
     ]);
@@ -400,8 +400,10 @@ export default function Inventory() {
           const unitLabel = String(pick(row, 'الوحدة', 'unit')).trim();
           const unit = UNIT_OPTIONS.find(u => u.label === unitLabel || u.value === unitLabel)?.value || 'قطعة';
 
-          const seasonRaw = String(pick(row, 'الموسم', 'season')).trim();
-          const season = /شتو|winter/i.test(seasonRaw) ? 'winter' : 'summer';
+          // الموسم: يقبل عمود اسمه «الموسم» أو «الموسم (صيفي/شتوي/سنوي)». الافتراضي دائماً صيفي إلا لو مكتوب شتوي/سنوي صراحةً.
+          const seasonKey = Object.keys(row).find(k => { const n = normalizeArabic(k); return n.startsWith(normalizeArabic('الموسم')) || /season/i.test(k); });
+          const seasonRaw = seasonKey ? String(row[seasonKey]).trim() : '';
+          const season = /شتو|winter/i.test(seasonRaw) ? 'winter' : /سنو|annual|year/i.test(seasonRaw) ? 'annual' : 'summer';
 
           const wh = num(pick(row, 'كمية المستودع', 'مستودع', 'warehouse'));
           const display = num(pick(row, 'كمية المحل', 'محل', 'display'));
@@ -553,7 +555,7 @@ export default function Inventory() {
       <div className="flex items-center gap-3 flex-wrap mb-2">
         <div className="flex items-center gap-2 bg-white rounded-2xl p-2 shadow-sm border border-slate-100 w-fit">
           <span className="text-xs font-bold text-slate-500 px-2">الموسم:</span>
-          {([['all', 'الكل'], ['summer', 'صيفي'], ['winter', 'شتوي']] as const).map(([k, label]) => (
+          {([['all', 'الكل'], ['summer', 'صيفي'], ['winter', 'شتوي'], ['annual', 'سنوي']] as const).map(([k, label]) => (
             <button key={k} onClick={() => setSeasonFilter(k)}
               className={`px-4 py-2 rounded-xl text-sm font-bold transition ${seasonFilter === k ? 'bg-amber-500 text-white shadow' : 'text-slate-600 hover:bg-slate-100'}`}>
               {label}
@@ -640,7 +642,7 @@ export default function Inventory() {
                 <div className="sm:col-span-2">
                   <label className="block text-sm font-bold text-slate-700 mb-1">الموسم</label>
                   <div className="flex gap-2">
-                    {([['summer','صيفي'],['winter','شتوي']] as const).map(([k,label]) => (
+                    {([['summer','صيفي'],['winter','شتوي'],['annual','سنوي']] as const).map(([k,label]) => (
                       <button type="button" key={k} onClick={() => setFormData({...formData, season: k})}
                         className={`flex-1 py-2.5 rounded-xl font-bold text-sm transition border ${formData.season === k ? 'bg-indigo-600 text-white border-transparent' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
                         {label}
