@@ -7,6 +7,7 @@ import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../
 import { escapeHtml } from '../../utils/escapeHtml';
 import { openPrintWindow } from '../../utils/printWindow';
 import { generateBarcode } from '../../utils/printBarcodeLabels';
+import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import PaymentSplitInputs from '../../components/PaymentSplitInputs';
 import { activePaymentKeys, formToSplit, sumSplit, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 import * as XLSX from 'xlsx';
@@ -171,6 +172,7 @@ export default function Suppliers() {
   const [showSupplierFinancialModal, setShowSupplierFinancialModal] = useState(false);
   const [supplierFinancialType, setSupplierFinancialType] = useState<'pay_to_supplier' | 'collect_from_supplier'>('pay_to_supplier');
   const [supplierFinancialPay, setSupplierFinancialPay] = useState<Record<string, string>>({});
+  const [supplierFinancialDate, setSupplierFinancialDate] = useState<string>(() => businessDateStr(storeSettings));
 
   const [formData, setFormData] = useState({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
 
@@ -1162,10 +1164,11 @@ export default function Suppliers() {
 
           try {
             setIsPayingDebt(true);
+            const dateISO = timestampForBusinessDate(supplierFinancialDate, storeSettings);
             if (isCollection) {
-              await useStore.getState().collectSupplierCredit(selectedSupplierProfile.id, totalPaid, splitPayments as any);
+              await useStore.getState().collectSupplierCredit(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO);
             } else {
-              await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any);
+              await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO);
             }
             alert(isCollection ? 'تم تسجيل تحصيل من المورد بنجاح' : 'تم تسجيل سداد للمورد بنجاح');
             setSupplierFinancialPay({});
@@ -1265,6 +1268,7 @@ export default function Suppliers() {
                     onClick={() => {
                       setSupplierFinancialType(netBalance < -0.009 ? 'collect_from_supplier' : 'pay_to_supplier');
                       setSupplierFinancialPay({});
+                      setSupplierFinancialDate(businessDateStr(storeSettings));
                       setShowSupplierFinancialModal(true);
                     }}
                     className="text-white bg-slate-900 hover:bg-slate-800 px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition"
@@ -1479,6 +1483,16 @@ export default function Suppliers() {
                         <span className="text-lg font-black text-slate-800">
                           {(supplierFinancialType === 'collect_from_supplier' ? Math.max(0, -netBalance) : Math.max(0, netBalance)).toLocaleString()} {storeSettings.currency}
                         </span>
+                      </div>
+
+                      <div>
+                        <label className="text-[11px] font-black text-slate-400 block pr-2 mb-1">تاريخ العملية (تُسجَّل في حسابات هذا اليوم)</label>
+                        <input
+                          type="date"
+                          value={supplierFinancialDate}
+                          onChange={(e) => setSupplierFinancialDate(e.target.value)}
+                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-black text-center"
+                        />
                       </div>
 
                       <PaymentSplitInputs

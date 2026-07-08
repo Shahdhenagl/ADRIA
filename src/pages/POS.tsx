@@ -10,7 +10,7 @@ import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, tota
 import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
-import { businessDateStr, businessDayRange } from '../utils/businessDay';
+import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 
 
 export default function POS() {
@@ -79,6 +79,7 @@ export default function POS() {
   const [debtAmount, setDebtAmount] = useState('');
   const [debtMethod, setDebtMethod] = useState('cash');
   const [debtSaving, setDebtSaving] = useState(false);
+  const [debtPayDate, setDebtPayDate] = useState(() => businessDateStr(storeSettings));
   const customerDebtOf = (custId: string) => {
     return orders.filter(o => o.customer?.id === custId && !o.is_deleted).reduce((sum, o) => {
       const debt = (o.type === 'payment' ? 0 : (o.total || 0)) - (o.paid_amount || 0);
@@ -132,7 +133,8 @@ export default function POS() {
     setDebtSaving(true);
     try {
       const split = { cash: debtMethod === 'cash' ? amount : 0, visa: debtMethod === 'visa' ? amount : 0, wallet: debtMethod === 'wallet' ? amount : 0, instapay: debtMethod === 'instapay' ? amount : 0 };
-      const invId = await checkout(0, { name: c.name, phone: c.phone, custom_id: c.custom_id }, amount, 'payment', debtMethod as any, split);
+      const dateISO = timestampForBusinessDate(debtPayDate, storeSettings);
+      const invId = await checkout(0, { name: c.name, phone: c.phone, custom_id: c.custom_id }, amount, 'payment', debtMethod as any, split, undefined, undefined, undefined, undefined, undefined, dateISO);
       const methodLabel = debtMethod === 'cash' ? 'كاش' : debtMethod === 'visa' ? 'فيزا' : debtMethod === 'wallet' ? 'محفظة' : 'انستا باي';
       printDebtReceipt(c.name, amount, Math.max(0, c.debt - amount), methodLabel, String(invId || ''));
       setShowDebtModal(false); setDebtCustId(''); setDebtAmount(''); setDebtSearch('');
@@ -2132,6 +2134,10 @@ export default function POS() {
                       <option value="cash">{payLabel('cash')}</option><option value="visa">{payLabel('visa')}</option><option value="wallet">{payLabel('wallet')}</option><option value="instapay">{payLabel('instapay')}</option>
                     </select>
                   </div>
+                  <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">تاريخ التحصيل (يُسجَّل في حسابات هذا اليوم)</label>
+                    <input type="date" value={debtPayDate} onChange={(e) => setDebtPayDate(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl py-2.5 px-3 text-sm font-bold outline-none focus:ring-2 focus:ring-amber-500" />
+                  </div>
                   <div className="bg-slate-100 dark:bg-slate-900 rounded-xl p-3 text-center">
                     <span className="text-xs font-bold text-slate-500">المتبقي بعد السداد: </span>
                     <span className="font-black text-slate-800 dark:text-slate-100">{Math.max(0, selectedDebtCustomer.debt - (Number(debtAmount) || 0)).toFixed(2)} {storeSettings.currency}</span>
@@ -2478,7 +2484,7 @@ export default function POS() {
             </button>
             )}
             {perm('debt') && (
-            <button onClick={() => setShowDebtModal(true)} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 rounded-2xl font-bold transition border border-amber-100 dark:border-amber-900/30 whitespace-nowrap shadow-sm shrink-0">
+            <button onClick={() => { setDebtPayDate(businessDateStr(storeSettings)); setShowDebtModal(true); }} className="flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 rounded-2xl font-bold transition border border-amber-100 dark:border-amber-900/30 whitespace-nowrap shadow-sm shrink-0">
               <CreditCard size={18} /> <span className="text-sm">سداد آجل</span>
             </button>
             )}

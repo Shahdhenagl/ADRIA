@@ -511,7 +511,8 @@ interface CashierStore {
     notes?: string,
     couponCode?: string,
     discountAmount?: number,
-    carId?: string
+    carId?: string,
+    dateISO?: string
   ) => Promise<string>;
   payInvoiceDebt: (
     invoiceId: string, 
@@ -657,8 +658,8 @@ interface CashierStore {
     splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }
   ) => Promise<void>;
   deletePurchaseInvoice: (id: string) => Promise<void>;
-  paySupplierDebt: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<void>;
-  collectSupplierCredit: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<void>;
+  paySupplierDebt: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string) => Promise<void>;
+  collectSupplierCredit: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string) => Promise<void>;
 
   // Car Maintenance
   loadCarSubscriptions: () => Promise<void>;
@@ -1440,7 +1441,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   })),
 
   // ── Checkout ───────────────────────────────────────────────
-  checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId) => {
+  checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId, dateISO) => {
     const state = get();
     const finalCashierName = cashierName || state.activeCashier?.name || 'مدير النظام';
     const sp = state.salesperson;
@@ -1493,7 +1494,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         paid_method6: splits.method6 || 0,
         type,
         payment_method: paymentMethod as any,
-        date: new Date().toISOString(),
+        date: dateISO || new Date().toISOString(),
         customer: finalCustomer,
         cashier_name: finalCashierName,
         salesperson_id: sp?.id || undefined,
@@ -1628,7 +1629,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         notes: notes || null,
         coupon_code: couponCode || null,
         discount_amount: discountAmount || 0,
-        car_id: carId || null
+        car_id: carId || null,
+        ...(dateISO ? { created_at: dateISO } : {})
       });
 
       if (orderError) {
@@ -1674,7 +1676,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         paid_method6: splits.method6 || 0,
         type,
         payment_method: paymentMethod as any,
-        date: new Date().toISOString(),
+        date: dateISO || new Date().toISOString(),
         customer: finalCustomer,
         cashier_name: finalCashierName,
         salesperson_id: sp?.id,
@@ -4563,7 +4565,7 @@ setupRealtime: () => {
     }
   },
 
-  paySupplierDebt: async (supplierId, amount, splitPayments) => {
+  paySupplierDebt: async (supplierId, amount, splitPayments, dateISO) => {
     const state = get();
     const invoiceNumber = `PAY-${Date.now()}`;
 
@@ -4599,7 +4601,8 @@ setupRealtime: () => {
           paid_instapay: splits.instapay,
         paid_method5: splits.method5 || 0,
         paid_method6: splits.method6 || 0,
-          payment_method: primaryMethod
+          payment_method: primaryMethod,
+          ...(dateISO ? { created_at: dateISO } : {})
         })
         .select()
         .single();
@@ -4637,7 +4640,7 @@ setupRealtime: () => {
     }
   },
 
-  collectSupplierCredit: async (supplierId, amount, splitPayments) => {
+  collectSupplierCredit: async (supplierId, amount, splitPayments, dateISO) => {
     const state = get();
     const invoiceNumber = `SUP-COL-${Date.now()}`;
 
@@ -4674,7 +4677,8 @@ setupRealtime: () => {
           paid_instapay: -Math.abs(splits.instapay || 0),
           paid_method5: -Math.abs(splits.method5 || 0),
           paid_method6: -Math.abs(splits.method6 || 0),
-          payment_method: primaryMethod
+          payment_method: primaryMethod,
+          ...(dateISO ? { created_at: dateISO } : {})
         })
         .select()
         .single();

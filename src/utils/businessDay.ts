@@ -36,3 +36,16 @@ export function businessDayRange(dayStr: string, settings?: { dayStartHour?: num
   end.setDate(end.getDate() + 1);
   return { start, end };
 }
+
+/**
+ * وقت (ISO) لتسجيل حركة في حسابات يوم محاسبي مُحدَّد YYYY-MM-DD:
+ * - لو التاريخ هو اليوم المحاسبي الحالي → الوقت الفعلي الآن (يحفظ التوقيت الحقيقي).
+ * - غير كده (يوم سابق/لاحق) → منتصف اليوم المحاسبي المطلوب (مضمون داخل نطاق التقفيل مهما كانت ساعة البداية).
+ */
+export function timestampForBusinessDate(dayStr: string, settings?: { dayStartHour?: number } | null, now: Date = new Date()): string {
+  if (dayStr === businessDateStr(settings, now)) return now.toISOString();
+  const { start } = businessDayRange(dayStr, settings);
+  const mid = new Date(start);
+  mid.setHours(mid.getHours() + 12); // منتصف اليوم المحاسبي
+  return mid.toISOString();
+}
