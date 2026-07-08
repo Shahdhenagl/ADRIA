@@ -4,17 +4,21 @@ import { useStore, type Employee, type EmployeeTransaction, type EmployeeLeave }
 import {
   Users, Plus, Trash2, Edit3, Search, X,
   Wallet, Landmark, CreditCard, Zap, Phone,
-  DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download
+  DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn
 } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 
 export default function Employees() {
   const {
-    employees, employeeTransactions, employeeLeaves, storeSettings, orders, cashiers,
+    employees, employeeTransactions, employeeLeaves, employeeAttendance, storeSettings, orders, cashiers,
     addEmployee, updateEmployee, addEmployeeTransaction,
     updateEmployeeTransaction, deleteEmployeeTransaction,
-    addEmployeeLeave, updateEmployeeLeave, deleteEmployeeLeave
+    addEmployeeLeave, deleteEmployeeLeave,
+    addEmployeeAttendance, deleteEmployeeAttendance
   } = useStore();
+
+  const DEFAULT_MONTHLY_LEAVE = 4;
+  const monthlyLeaveDaysOf = (emp: Employee) => Number(emp.monthly_leave_days ?? DEFAULT_MONTHLY_LEAVE);
   const payKeys = activePaymentKeys(storeSettings as any);
 
   // إجمالي مبيعات محاسب (المرتبط بموظف) في شهر معيّن (YYYY-MM).
@@ -59,7 +63,10 @@ export default function Employees() {
     job_title: '',
     working_hours: '',
     monthly_salary: '',
-    annual_leave_balance: '',
+    monthly_leave_days: String(DEFAULT_MONTHLY_LEAVE),
+    shift_start: '',
+    shift_end: '',
+    late_grace_minutes: '0',
     hire_date: new Date().toISOString().slice(0, 10),
     is_active: true
   });
@@ -132,36 +139,94 @@ export default function Employees() {
     return ranges;
   };
 
-  const getCurrentLeaveYearStart = (emp: Employee) => {
-    const hire = new Date(`${emp.hire_date || emp.created_at?.slice(0, 10) || today}T00:00:00`);
-    const now = new Date();
-    const yearStart = new Date(now.getFullYear(), hire.getMonth(), hire.getDate());
-    if (yearStart > now) yearStart.setFullYear(yearStart.getFullYear() - 1);
-    return formatDateInput(yearStart);
-  };
-
-  const getLeaveBalanceStats = (emp: Employee, excludeLeaveId?: string) => {
-    const annualBalance = Number(emp.annual_leave_balance || 0);
-    const yearStart = getCurrentLeaveYearStart(emp);
-    const nextYearStart = new Date(`${yearStart}T00:00:00`);
-    nextYearStart.setFullYear(nextYearStart.getFullYear() + 1);
-    const yearEnd = nextYearStart.toISOString().slice(0, 10);
+  // رصيد الإجازة الشهري: يتجدد أول كل شهر بدون ترحيل.
+  const getLeaveBalanceStats = (emp: Employee, month?: string, excludeLeaveId?: string) => {
+    const targetMonth = month || new Date().toISOString().slice(0, 7);
+    const monthlyBalance = monthlyLeaveDaysOf(emp);
     const paidLeaves = employeeLeaves.filter(l =>
       l.employee_id === emp.id &&
       l.leave_type === 'paid' &&
       l.id !== excludeLeaveId &&
-      l.start_date >= yearStart &&
-      l.start_date < yearEnd
+      (l.month === targetMonth || l.start_date.slice(0, 7) === targetMonth)
     );
     const used = paidLeaves.reduce((sum, l) => sum + Number(l.days_count || 0), 0);
 
     return {
-      annualBalance,
-      yearStart,
-      yearEnd,
+      month: targetMonth,
+      monthlyBalance,
       used,
-      remaining: Math.max(0, annualBalance - used)
+      remaining: Math.max(0, monthlyBalance - used)
     };
+  };
+
+  // توزيع الإجازة على الشهور: كل شهر يأخذ من رصيده الشهري، والزيادة تتخصم من المرتب.
+  const buildLeaveAllocation = (
+    emp: Employee,
+    start: string,
+    end: string,
+    leaveType: 'paid' | 'unpaid',
+    excludeLeaveId?: string
+  ) => {
+    const dailyRate = emp.monthly_salary / 30;
+    const ranges = splitDateRangeByMonth(start, end);
+    const records: {
+      start_date: string; end_date: string; days_count: number;
+      leave_type: 'paid' | 'unpaid'; deduction_amount: number; month: string;
+    }[] = [];
+    let totalPaid = 0, totalUnpaid = 0, totalDeduction = 0;
+
+    for (const r of ranges) {
+      const month = r.start.slice(0, 7);
+      // كل الإجازة "بخصم مرتب" لو اختار المستخدم كده، وإلا نأخذ من الرصيد الشهري أولاً.
+      const remaining = leaveType === 'unpaid' ? 0 : Math.max(0, getLeaveBalanceStats(emp, month, excludeLeaveId).remaining);
+      const paidDays = Math.min(r.days, remaining);
+      const unpaidDays = r.days - paidDays;
+
+      if (paidDays > 0) {
+        const pEnd = addDaysToDate(r.start, paidDays - 1);
+        records.push({ start_date: r.start, end_date: pEnd, days_count: paidDays, leave_type: 'paid', deduction_amount: 0, month });
+        totalPaid += paidDays;
+      }
+      if (unpaidDays > 0) {
+        const uStart = addDaysToDate(r.start, paidDays);
+        const ded = unpaidDays * dailyRate;
+        records.push({ start_date: uStart, end_date: r.end, days_count: unpaidDays, leave_type: 'unpaid', deduction_amount: ded, month });
+        totalUnpaid += unpaidDays;
+        totalDeduction += ded;
+      }
+    }
+    return { records, totalPaid, totalUnpaid, totalDeduction };
+  };
+
+  // خصومات الحضور (التأخير) لموظف في شهر معيّن.
+  const getAttendanceMonthDeductions = (empId: string, month: string) =>
+    employeeAttendance
+      .filter(a => a.employee_id === empId && (a.month === month || a.date.slice(0, 7) === month))
+      .reduce((sum, a) => sum + Number(a.deduction_amount || 0), 0);
+
+  // حساب التأخير لحظة تسجيل الحضور.
+  const computeLateness = (emp: Employee, now: Date) => {
+    if (!emp.shift_start) return { lateMinutes: 0, deduction: 0 };
+    const dateStr = formatDateInput(now);
+    const [sh, sm] = emp.shift_start.slice(0, 5).split(':').map((x) => parseInt(x, 10));
+    const expected = new Date(`${dateStr}T00:00:00`);
+    expected.setHours(sh || 0, sm || 0, 0, 0);
+    const grace = Number(emp.late_grace_minutes ?? 0);
+    const rawLate = Math.round((now.getTime() - expected.getTime()) / 60000);
+    const lateMinutes = Math.max(0, rawLate - grace);
+    if (lateMinutes <= 0) return { lateMinutes: 0, deduction: 0 };
+
+    // طول يوم العمل بالدقائق (لتحديد سعر الدقيقة). fallback 8 ساعات.
+    let workdayMinutes = 480;
+    if (emp.shift_end) {
+      const [eh, em] = emp.shift_end.slice(0, 5).split(':').map((x) => parseInt(x, 10));
+      let mins = ((eh || 0) * 60 + (em || 0)) - ((sh || 0) * 60 + (sm || 0));
+      if (mins <= 0) mins += 24 * 60; // وردية تعدّي منتصف الليل
+      workdayMinutes = mins || 480;
+    }
+    const dailyRate = emp.monthly_salary / 30;
+    const deduction = Math.min(dailyRate, (lateMinutes / workdayMinutes) * dailyRate);
+    return { lateMinutes, deduction: Math.round(deduction * 100) / 100 };
   };
 
   const getLeaveMonthDeductions = (empId: string, month: string, excludeLeaveId?: string) =>
@@ -193,19 +258,20 @@ export default function Employees() {
 
   const getEmployeeMonthStats = (empId: string, month: string, excludeTransactionId?: string) => {
     const emp = employees.find(e => e.id === empId);
-    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, remaining: 0 };
+    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, remaining: 0 };
 
     const monthTrans = employeeTransactions.filter(t => t.employee_id === empId && t.month === month && t.id !== excludeTransactionId);
-    
+
     const advances = monthTrans.filter(t => t.type === 'advance').reduce((sum, t) => sum + t.amount, 0);
     const paidSalary = monthTrans.filter(t => t.type === 'salary').reduce((sum, t) => sum + t.amount, 0);
     const deductions = monthTrans.filter(t => t.type === 'salary').reduce((sum, t) => sum + (t.deductions || 0), 0);
     const incentives = monthTrans.filter(t => t.type === 'incentive').reduce((sum, t) => sum + t.amount, 0);
     const leaveDeductions = getLeaveMonthDeductions(empId, month);
+    const attendanceDeductions = getAttendanceMonthDeductions(empId, month);
 
-    const remaining = Math.max(0, emp.monthly_salary - advances - paidSalary - deductions - leaveDeductions);
+    const remaining = Math.max(0, emp.monthly_salary - advances - paidSalary - deductions - leaveDeductions - attendanceDeductions);
 
-    return { salary: emp.monthly_salary, advances, paidSalary, deductions: deductions + leaveDeductions, incentives, leaveDeductions, remaining };
+    return { salary: emp.monthly_salary, advances, paidSalary, deductions: deductions + leaveDeductions + attendanceDeductions, incentives, leaveDeductions, attendanceDeductions, remaining };
   };
 
   // تصدير كشف الرواتب للشهر المحدد (Excel)
@@ -273,16 +339,37 @@ export default function Employees() {
     return leaves.sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime());
   }, [profileEmployee, employeeLeaves, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
+  const profileAttendance = useMemo(() => {
+    if (!profileEmployee) return [];
+    let att = employeeAttendance.filter(a => a.employee_id === profileEmployee.id);
+    if (profileTimeFilter === 'month') {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      att = att.filter(a => a.month === currentMonth || a.date.startsWith(currentMonth));
+    } else if (profileTimeFilter === 'week') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      att = att.filter(a => new Date(a.date) >= sevenDaysAgo);
+    } else if (profileTimeFilter === 'custom_month') {
+      att = att.filter(a => a.month === profileCustomMonth || a.date.startsWith(profileCustomMonth));
+    } else if (profileTimeFilter === 'custom_year') {
+      att = att.filter(a => (a.month || '').startsWith(profileCustomYear) || a.date.startsWith(profileCustomYear));
+    }
+    return att.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [profileEmployee, employeeAttendance, profileTimeFilter, profileCustomMonth, profileCustomYear]);
+
   const profileStats = useMemo(() => {
-    if (!profileEmployee) return { advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDays: 0 };
+    if (!profileEmployee) return { advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDays: 0, lateDays: 0, lateMinutes: 0 };
+    const attDeductions = profileAttendance.reduce((s, a) => s + (a.deduction_amount || 0), 0);
     return {
       advances: profileTransactions.filter(t => t.type === 'advance').reduce((s, t: any) => s + t.amount, 0),
       paidSalary: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + t.amount, 0),
-      deductions: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + (t.deductions || 0), 0) + profileLeaves.filter(l => l.leave_type === 'unpaid').reduce((s, l) => s + (l.deduction_amount || 0), 0),
+      deductions: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + (t.deductions || 0), 0) + profileLeaves.filter(l => l.leave_type === 'unpaid').reduce((s, l) => s + (l.deduction_amount || 0), 0) + attDeductions,
       incentives: profileTransactions.filter(t => t.type === 'incentive').reduce((s, t: any) => s + t.amount, 0),
-      leaveDays: profileLeaves.reduce((s, l) => s + (l.days_count || 0), 0)
+      leaveDays: profileLeaves.reduce((s, l) => s + (l.days_count || 0), 0),
+      lateDays: profileAttendance.filter(a => (a.late_minutes || 0) > 0).length,
+      lateMinutes: profileAttendance.reduce((s, a) => s + (a.late_minutes || 0), 0)
     };
-  }, [profileTransactions, profileLeaves, profileEmployee]);
+  }, [profileTransactions, profileLeaves, profileAttendance, profileEmployee]);
 
   const profileLeaveBalance = profileEmployee ? getLeaveBalanceStats(profileEmployee) : null;
 
@@ -296,13 +383,16 @@ export default function Employees() {
         job_title: emp.job_title,
         working_hours: emp.working_hours,
         monthly_salary: emp.monthly_salary.toString(),
-        annual_leave_balance: (emp.annual_leave_balance || 0).toString(),
+        monthly_leave_days: String(monthlyLeaveDaysOf(emp)),
+        shift_start: (emp.shift_start || '').slice(0, 5),
+        shift_end: (emp.shift_end || '').slice(0, 5),
+        late_grace_minutes: String(Number(emp.late_grace_minutes ?? 0)),
         hire_date: emp.hire_date || emp.created_at?.slice(0, 10) || today,
         is_active: emp.is_active ?? true
       });
     } else {
       setEditingEmployee(null);
-      setEmpFormData({ name: '', phone: '', job_title: '', working_hours: '', monthly_salary: '', annual_leave_balance: '', hire_date: today, is_active: true });
+      setEmpFormData({ name: '', phone: '', job_title: '', working_hours: '', monthly_salary: '', monthly_leave_days: String(DEFAULT_MONTHLY_LEAVE), shift_start: '', shift_end: '', late_grace_minutes: '0', hire_date: today, is_active: true });
     }
     setShowEmpModal(true);
   };
@@ -316,15 +406,19 @@ export default function Employees() {
       job_title: empFormData.job_title,
       working_hours: empFormData.working_hours,
       monthly_salary: parseFloat(empFormData.monthly_salary) || 0,
-      annual_leave_balance: parseFloat(empFormData.annual_leave_balance) || 0,
+      annual_leave_balance: editingEmployee?.annual_leave_balance ?? 0, // legacy (لم يعد مستخدماً)
+      monthly_leave_days: parseFloat(empFormData.monthly_leave_days) || 0,
+      shift_start: empFormData.shift_start || null,
+      shift_end: empFormData.shift_end || null,
+      late_grace_minutes: parseFloat(empFormData.late_grace_minutes) || 0,
       hire_date: empFormData.hire_date || today,
       is_active: empFormData.is_active
     };
 
     if (editingEmployee) {
-      await updateEmployee(editingEmployee.id, data);
+      await updateEmployee(editingEmployee.id, data as any);
     } else {
-      await addEmployee(data);
+      await addEmployee(data as any);
     }
     setShowEmpModal(false);
   };
@@ -432,73 +526,75 @@ export default function Employees() {
     if (!selectedEmployee) return;
     if (!leaveFormData.start_date || !leaveFormData.end_date) return alert('يرجى تحديد تاريخ الإجازة');
 
-    const daysCount = getDaysBetween(leaveFormData.start_date, leaveFormData.end_date);
-    const balance = getLeaveBalanceStats(selectedEmployee, editingLeave?.id);
-    const dailyRate = selectedEmployee.monthly_salary / 30;
+    const alloc = buildLeaveAllocation(
+      selectedEmployee,
+      leaveFormData.start_date,
+      leaveFormData.end_date,
+      leaveFormData.leave_type,
+      editingLeave?.id
+    );
 
-    const createLeaveData = (
-      startDate: string,
-      endDate: string,
-      leaveType: 'paid' | 'unpaid',
-      days: number
-    ) => ({
-      employee_id: selectedEmployee.id,
-      start_date: startDate,
-      end_date: endDate,
-      days_count: days,
-      leave_type: leaveType,
-      deduction_amount: leaveType === 'unpaid' ? days * dailyRate : 0,
-      month: startDate.slice(0, 7),
-      note: leaveFormData.note || (leaveType === 'paid' ? 'إجازة من الرصيد' : 'إجازة بخصم من المرتب')
-    });
+    // عند التعديل: نحذف السجل القديم ونعيد إنشاء السجلات الجديدة (قد تنقسم لعدة شهور/أنواع).
+    if (editingLeave) {
+      await deleteEmployeeLeave(editingLeave.id);
+    }
 
-    if (leaveFormData.leave_type === 'unpaid') {
-      const unpaidRanges = splitDateRangeByMonth(leaveFormData.start_date, leaveFormData.end_date);
-      for (let index = 0; index < unpaidRanges.length; index += 1) {
-        const range = unpaidRanges[index];
-        const leaveData = createLeaveData(range.start, range.end, 'unpaid', range.days);
-        if (editingLeave && index === 0) {
-          await updateEmployeeLeave(editingLeave.id, leaveData);
-        } else {
-          await addEmployeeLeave(leaveData);
-        }
-      }
-    } else {
-      const paidDays = Math.min(daysCount, Math.max(0, balance.remaining));
-      const unpaidDays = daysCount - paidDays;
+    for (const rec of alloc.records) {
+      await addEmployeeLeave({
+        employee_id: selectedEmployee.id,
+        start_date: rec.start_date,
+        end_date: rec.end_date,
+        days_count: rec.days_count,
+        leave_type: rec.leave_type,
+        deduction_amount: rec.deduction_amount,
+        month: rec.month,
+        note: leaveFormData.note || (rec.leave_type === 'paid' ? 'إجازة من الرصيد الشهري' : 'إجازة بخصم من المرتب')
+      });
+    }
 
-      if (paidDays > 0) {
-        const paidStart = leaveFormData.start_date;
-        const paidEnd = addDaysToDate(paidStart, paidDays - 1);
-        const paidLeaveData = createLeaveData(paidStart, paidEnd, 'paid', paidDays);
-
-        if (editingLeave) {
-          await updateEmployeeLeave(editingLeave.id, paidLeaveData);
-        } else {
-          await addEmployeeLeave(paidLeaveData);
-        }
-      }
-
-      if (unpaidDays > 0) {
-        const unpaidStart = addDaysToDate(leaveFormData.start_date, paidDays);
-        const unpaidRanges = splitDateRangeByMonth(unpaidStart, leaveFormData.end_date);
-
-        for (let index = 0; index < unpaidRanges.length; index += 1) {
-          const range = unpaidRanges[index];
-          const unpaidLeaveData = createLeaveData(range.start, range.end, 'unpaid', range.days);
-          if (paidDays === 0 && editingLeave && index === 0) {
-            await updateEmployeeLeave(editingLeave.id, unpaidLeaveData);
-          } else {
-            await addEmployeeLeave(unpaidLeaveData);
-          }
-        }
-
-        alert(`الرصيد المتاح ${balance.remaining} يوم. تم تسجيل ${paidDays} يوم من الرصيد و${unpaidDays} يوم بخصم من المرتب.`);
-      }
+    if (alloc.totalUnpaid > 0 && leaveFormData.leave_type === 'paid') {
+      alert(`تم تسجيل ${alloc.totalPaid} يوم من الرصيد الشهري و${alloc.totalUnpaid} يوم بخصم من المرتب (${alloc.totalDeduction.toLocaleString()} ${storeSettings.currency}).`);
     }
 
     setShowLeaveModal(false);
     setEditingLeave(null);
+  };
+
+  const handleCheckIn = async (emp: Employee) => {
+    if (!emp.shift_start) {
+      return alert('حدّد "بداية الدوام" لهذا الموظف أولاً من تعديل بياناته حتى يُحسب التأخير.');
+    }
+    const now = new Date();
+    const dateStr = formatDateInput(now);
+    const already = employeeAttendance.find(a => a.employee_id === emp.id && a.date === dateStr);
+    if (already) {
+      return alert('تم تسجيل حضور هذا الموظف اليوم بالفعل.');
+    }
+    const { lateMinutes, deduction } = computeLateness(emp, now);
+    const timeStr = now.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
+    const confirmMsg = lateMinutes > 0
+      ? `تسجيل حضور ${emp.name} الساعة ${timeStr}.\nتأخير ${lateMinutes} دقيقة${deduction > 0 ? ` — خصم ${deduction.toLocaleString()} ${storeSettings.currency}` : ''}.\nمتابعة؟`
+      : `تسجيل حضور ${emp.name} الساعة ${timeStr} — في الميعاد ✅. متابعة؟`;
+    if (!confirm(confirmMsg)) return;
+    try {
+      await addEmployeeAttendance({
+        employee_id: emp.id,
+        date: dateStr,
+        check_in: now.toISOString(),
+        shift_start: emp.shift_start.slice(0, 5),
+        late_minutes: lateMinutes,
+        deduction_amount: deduction,
+        month: dateStr.slice(0, 7),
+        note: ''
+      });
+    } catch (err) {
+      alert((err as Error)?.message || 'تعذّر تسجيل الحضور');
+    }
+  };
+
+  const handleDeleteAttendance = async (attId: string) => {
+    if (!confirm('هل تريد حذف سجل الحضور؟ سيُلغى خصم التأخير المرتبط به.')) return;
+    await deleteEmployeeAttendance(attId);
   };
 
   const handleDeleteLeave = async (leaveId: string) => {
@@ -600,8 +696,15 @@ export default function Employees() {
                 <p className="text-slate-500 font-medium">{profileEmployee.job_title || 'بدون مسمى'} • {profileEmployee.phone}</p>
               </div>
             </div>
-            <div className="flex gap-2">
-              <button 
+            <div className="flex gap-2 flex-wrap">
+              <button
+                onClick={() => handleCheckIn(profileEmployee)}
+                disabled={!(profileEmployee.is_active ?? true)}
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-indigo-50 text-indigo-600 font-bold hover:bg-indigo-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <LogIn size={20} /> تسجيل حضور
+              </button>
+              <button
                 onClick={() => handleOpenLeaveModal(profileEmployee)}
                 disabled={!(profileEmployee.is_active ?? true)}
                 className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-sky-50 text-sky-600 font-bold hover:bg-sky-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
@@ -641,8 +744,8 @@ export default function Employees() {
             </div>
             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
               <span className="text-sky-500 font-bold text-sm mb-1">رصيد الإجازات المتبقي</span>
-              <span className="text-2xl font-black text-sky-600">{profileLeaveBalance?.remaining || 0} <span className="text-sm font-medium text-sky-400">يوم</span></span>
-              <span className="text-[11px] font-bold text-slate-400 mt-1">يتجدد {profileLeaveBalance?.yearEnd}</span>
+              <span className="text-2xl font-black text-sky-600">{profileLeaveBalance?.remaining ?? 0} / {profileLeaveBalance?.monthlyBalance ?? 0} <span className="text-sm font-medium text-sky-400">يوم</span></span>
+              <span className="text-[11px] font-bold text-slate-400 mt-1">شهري • يتجدد أول كل شهر</span>
             </div>
             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
               <span className="text-amber-500 font-bold text-sm mb-1">إجمالي السلف (للفترة)</span>
@@ -823,6 +926,61 @@ export default function Employees() {
               </table>
             </div>
           </div>
+
+          {/* Attendance / Lateness */}
+          <div className="bg-white rounded-[32px] shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                <Clock size={20} className="text-indigo-500" />
+                سجل الحضور والتأخير
+              </h3>
+              <div className="flex items-center gap-4 text-xs font-bold">
+                <span className="text-slate-400">أيام تأخير: <span className="text-red-500">{profileStats.lateDays}</span></span>
+                <span className="text-slate-400">إجمالي التأخير: <span className="text-red-500">{profileStats.lateMinutes} دقيقة</span></span>
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right">
+                <thead>
+                  <tr className="bg-white text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-slate-100">
+                    <th className="p-6">التاريخ</th>
+                    <th className="p-6">وقت الحضور</th>
+                    <th className="p-6">بداية الدوام</th>
+                    <th className="p-6">التأخير</th>
+                    <th className="p-6">الخصم</th>
+                    <th className="p-6 text-left">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {profileAttendance.map((a) => (
+                    <tr key={a.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-6 text-slate-500 font-bold">{a.date}</td>
+                      <td className="p-6 text-slate-800 font-black">{new Date(a.check_in).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</td>
+                      <td className="p-6 text-slate-500 font-bold">{(a.shift_start || '-').slice(0, 5)}</td>
+                      <td className="p-6">
+                        {a.late_minutes > 0
+                          ? <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-red-50 text-red-600 border border-red-100">{a.late_minutes} دقيقة</span>
+                          : <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-100">في الميعاد</span>}
+                      </td>
+                      <td className="p-6 font-black text-red-600">{a.deduction_amount > 0 ? `${a.deduction_amount.toLocaleString()} ${storeSettings.currency}` : '-'}</td>
+                      <td className="p-6">
+                        <div className="flex items-center justify-end gap-2">
+                          <button onClick={() => handleDeleteAttendance(a.id)} className="p-2 text-slate-400 hover:text-red-500 transition" title="حذف">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {profileAttendance.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="py-12 text-center text-slate-400 font-bold">لا يوجد تسجيل حضور في هذه الفترة</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       ) : (
         <>
@@ -885,8 +1043,8 @@ export default function Employees() {
                     <span className="font-black text-slate-800">{emp.monthly_salary.toLocaleString()} {storeSettings.currency}</span>
                   </div>
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-slate-400 flex items-center gap-1"><CalendarDays size={14} /> رصيد الإجازات</span>
-                    <span className="font-black text-sky-600">{leaveStats.remaining} / {leaveStats.annualBalance} يوم</span>
+                    <span className="text-slate-400 flex items-center gap-1"><CalendarDays size={14} /> إجازة الشهر</span>
+                    <span className="font-black text-sky-600">{leaveStats.remaining} / {leaveStats.monthlyBalance} يوم</span>
                   </div>
                   {stats.paidSalary > 0 && (
                     <div className="flex items-center justify-between text-sm">
@@ -941,7 +1099,14 @@ export default function Employees() {
                     <Landmark size={16} /> {stats.remaining <= 0 ? 'مُسدد بالكامل' : 'صرف راتب'}
                   </button>
                 </div>
-                <button 
+                <button
+                  onClick={() => handleCheckIn(emp)}
+                  disabled={!isActive}
+                  className="w-full mt-3 py-3 rounded-xl bg-indigo-50 text-indigo-600 font-bold hover:bg-indigo-100 transition flex items-center justify-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <LogIn size={16} /> تسجيل حضور اليوم
+                </button>
+                <button
                   onClick={() => setSelectedProfileId(emp.id)}
                   className="w-full mt-3 py-3 border-2 border-slate-100 rounded-xl text-slate-500 font-bold hover:border-indigo-200 hover:text-indigo-600 transition flex items-center justify-center gap-2 text-sm"
                 >
@@ -1092,24 +1257,60 @@ export default function Employees() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">رصيد الإجازات السنوي</label>
-                  <input 
+                  <label className="block text-sm font-bold text-slate-700 mb-2">رصيد الإجازة الشهري (أيام)</label>
+                  <input
                     type="number"
                     className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-2 focus:ring-indigo-500/20 outline-none font-black"
-                    value={empFormData.annual_leave_balance}
-                    onChange={e => setEmpFormData({...empFormData, annual_leave_balance: e.target.value})}
-                    placeholder="مثال: 21"
+                    value={empFormData.monthly_leave_days}
+                    onChange={e => setEmpFormData({...empFormData, monthly_leave_days: e.target.value})}
+                    placeholder="مثال: 4"
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">يتجدد أول كل شهر. الزيادة تتخصم من الراتب حسب سعر اليوم.</p>
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">تاريخ التعيين</label>
-                  <input 
+                  <input
                     type="date"
                     className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-2 focus:ring-indigo-500/20 outline-none font-black"
                     value={empFormData.hire_date}
                     onChange={e => setEmpFormData({...empFormData, hire_date: e.target.value})}
                   />
                 </div>
+              </div>
+
+              <div className="bg-sky-50/60 border border-sky-100 rounded-2xl p-4 space-y-3">
+                <p className="text-sm font-black text-sky-700 flex items-center gap-2"><Clock size={16} /> مواعيد الدوام وحساب التأخير</p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">بداية الدوام</label>
+                    <input
+                      type="time"
+                      className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none font-bold"
+                      value={empFormData.shift_start}
+                      onChange={e => setEmpFormData({...empFormData, shift_start: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">نهاية الدوام</label>
+                    <input
+                      type="time"
+                      className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none font-bold"
+                      value={empFormData.shift_end}
+                      onChange={e => setEmpFormData({...empFormData, shift_end: e.target.value})}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-600 mb-1">دقائق سماح</label>
+                    <input
+                      type="number"
+                      className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none font-bold"
+                      value={empFormData.late_grace_minutes}
+                      onChange={e => setEmpFormData({...empFormData, late_grace_minutes: e.target.value})}
+                      placeholder="0"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-400">التأخير = وقت الحضور − بداية الدوام − دقائق السماح، ويُخصم من الراتب بالتناسب مع طول يوم العمل.</p>
               </div>
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">حالة الموظف</label>
@@ -1349,26 +1550,25 @@ export default function Employees() {
             <div className="p-8 space-y-6 overflow-y-auto">
               {(() => {
                 const daysCount = getDaysBetween(leaveFormData.start_date, leaveFormData.end_date);
-                const balance = getLeaveBalanceStats(selectedEmployee, editingLeave?.id);
-                const paidDays = leaveFormData.leave_type === 'paid' ? Math.min(daysCount, Math.max(0, balance.remaining)) : 0;
-                const unpaidDays = leaveFormData.leave_type === 'paid' ? daysCount - paidDays : daysCount;
-                const deduction = unpaidDays * (selectedEmployee.monthly_salary / 30);
+                const startMonth = leaveFormData.start_date.slice(0, 7);
+                const balance = getLeaveBalanceStats(selectedEmployee, startMonth, editingLeave?.id);
+                const alloc = buildLeaveAllocation(selectedEmployee, leaveFormData.start_date, leaveFormData.end_date, leaveFormData.leave_type, editingLeave?.id);
                 return (
                   <div className="bg-sky-50 rounded-2xl p-4 border border-sky-100 grid grid-cols-2 md:grid-cols-3 gap-3">
                     <div>
-                      <p className="text-[10px] font-bold text-sky-500">الرصيد المتبقي</p>
-                      <p className="text-lg font-black text-sky-700">{balance.remaining} يوم</p>
+                      <p className="text-[10px] font-bold text-sky-500">رصيد شهر {startMonth}</p>
+                      <p className="text-lg font-black text-sky-700">{balance.remaining} / {balance.monthlyBalance} يوم</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-slate-500">مدة الإجازة</p>
                       <p className="text-lg font-black text-slate-800">{daysCount} يوم</p>
-                      {leaveFormData.leave_type === 'paid' && unpaidDays > 0 && (
-                        <p className="text-[10px] font-bold text-red-500 mt-1">{unpaidDays} يوم بخصم</p>
+                      {alloc.totalUnpaid > 0 && (
+                        <p className="text-[10px] font-bold text-red-500 mt-1">{alloc.totalPaid} من الرصيد • {alloc.totalUnpaid} بخصم</p>
                       )}
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-red-500">خصم متوقع</p>
-                      <p className="text-lg font-black text-red-600">{deduction.toLocaleString()} <span className="text-xs">{storeSettings.currency}</span></p>
+                      <p className="text-lg font-black text-red-600">{alloc.totalDeduction.toLocaleString()} <span className="text-xs">{storeSettings.currency}</span></p>
                     </div>
                   </div>
                 );

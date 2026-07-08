@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
-import { PiggyBank, ArrowLeftRight } from 'lucide-react';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf } from '../../utils/paymentMethods';
+import { PiggyBank, ArrowLeftRight, Banknote, Save } from 'lucide-react';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf } from '../../utils/paymentMethods';
 
 type Split = Record<string, number>;
 const zero = (): Split => { const z: Split = {}; ALL_PAYMENT_KEYS.forEach((k) => { z[k] = 0; }); return z; };
 
 export default function Savings() {
-  const { orders, storeSettings, savingsTransfer } = useStore();
+  const { orders, storeSettings, savingsTransfer, updateSettings } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
@@ -23,6 +23,30 @@ export default function Savings() {
   const [otpInput, setOtpInput] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  // محرّر الرصيد الافتتاحي للخزنة الرئيسية
+  const [openDraft, setOpenDraft] = useState<Record<string, string>>({});
+  const [savingOpen, setSavingOpen] = useState(false);
+  useEffect(() => {
+    const d: Record<string, string> = {};
+    METHODS.forEach((m) => { d[m.key] = String(savingsOpeningBalanceOf(storeSettings as any, m.key)); });
+    setOpenDraft(d);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storeSettings.savingsOpeningBalances, METHODS.map((m) => m.key).join(',')]);
+
+  const saveOpening = async () => {
+    setSavingOpen(true);
+    const obj: Record<string, number> = { ...(storeSettings.savingsOpeningBalances || {}) };
+    METHODS.forEach((m) => { obj[m.key] = Number(openDraft[m.key]) || 0; });
+    try {
+      await updateSettings({ savingsOpeningBalances: obj });
+      await load();
+      alert('تم حفظ الرصيد الافتتاحي للخزنة الرئيسية ✅');
+    } catch (err) {
+      alert((err as Error)?.message || 'تعذّر حفظ الرصيد الافتتاحي');
+    }
+    setSavingOpen(false);
+  };
 
   const load = async () => {
     setLoading(true);
@@ -59,8 +83,9 @@ export default function Savings() {
       ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(storeSettings as any, k); });
       setShopAvail(net);
 
-      // رصيد الخزنة الرئيسية لكل وسيلة (داخل − خارج)
+      // رصيد الخزنة الرئيسية لكل وسيلة = رصيد افتتاحي + (داخل − خارج)
       const sav = zero();
+      ALL_PAYMENT_KEYS.forEach((k) => { sav[k] += savingsOpeningBalanceOf(storeSettings as any, k); });
       const list = (savRes.data as any[]) || [];
       list.forEach((t) => { const m = t.method || 'cash'; if (sav[m] === undefined) return; sav[m] += (t.direction === 'in' ? 1 : -1) * (Number(t.amount) || 0); });
       setSavingsBal(sav);
@@ -147,6 +172,21 @@ export default function Savings() {
           </div>
         ))}
       </div>
+
+      {/* الرصيد الافتتاحي للخزنة الرئيسية */}
+      <details className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
+        <summary className="cursor-pointer font-black text-slate-800 dark:text-white flex items-center gap-2"><Banknote size={18} className="text-emerald-600" /> الرصيد الافتتاحي للخزنة الرئيسية</summary>
+        <p className="text-[11px] text-slate-400 mt-2 mb-3">الفلوس اللي كانت موجودة في الخزنة الرئيسية لكل وسيلة قبل ما تبدئي على النظام. بتتضاف لرصيد الخزنة الرئيسية (مستقلة عن خزنة المحل).</p>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {METHODS.map((m) => (
+            <div key={m.key}>
+              <label className="text-xs font-bold text-slate-500 block mb-1 truncate">{m.label}</label>
+              <input type="number" value={openDraft[m.key] ?? ''} onChange={(e) => setOpenDraft((d) => ({ ...d, [m.key]: e.target.value }))} className={input} />
+            </div>
+          ))}
+        </div>
+        <button onClick={saveOpening} disabled={savingOpen} className="mt-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-5 py-2.5 rounded-xl flex items-center gap-2"><Save size={18} /> {savingOpen ? 'جاري الحفظ...' : 'حفظ الرصيد الافتتاحي'}</button>
+      </details>
 
       {/* Transfer */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5 space-y-3 max-w-2xl">

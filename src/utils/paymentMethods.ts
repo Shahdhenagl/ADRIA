@@ -88,6 +88,16 @@ export function totalOpeningBalance(settings: any): number {
   return activePaymentKeys(settings).reduce((s, k) => s + openingBalanceOf(settings, k), 0);
 }
 
+/**
+ * الرصيد الافتتاحي لوسيلة دفع في الخزنة الرئيسية (savings) — مستقل تماماً عن
+ * رصيد خزنة المحل. من savingsOpeningBalances لو موجود، وإلا صفر.
+ */
+export function savingsOpeningBalanceOf(settings: any, k: string): number {
+  const ob = settings?.savingsOpeningBalances;
+  if (ob && ob[k] !== undefined && ob[k] !== null) return Number(ob[k]) || 0;
+  return 0;
+}
+
 /** The dominant method in a split (largest amount), defaulting to cash. */
 export function primaryMethod(split: PaymentSplit | undefined): PaymentKey {
   let best: PaymentKey = 'cash';

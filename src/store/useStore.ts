@@ -337,7 +337,8 @@ export interface StoreSettings {
   cashierPermissions?: Record<string, boolean>; // صلاحيات الكاشير (إظهار/إخفاء مميزات)
   paymentLabels?: Record<string, string>; // تسميات وسائل الدفع (كاش/فيزا/محفظة/انستا/طريقة5/طريقة6)
   paymentMethodsEnabled?: Record<string, boolean>; // تفعيل طرق الدفع الإضافية (method5/method6)
-  paymentOpeningBalances?: Record<string, number>; // رصيد افتتاحي مستقل لكل وسيلة دفع
+  paymentOpeningBalances?: Record<string, number>; // رصيد افتتاحي مستقل لكل وسيلة دفع (خزنة المحل)
+  savingsOpeningBalances?: Record<string, number>; // رصيد افتتاحي مستقل لكل وسيلة دفع (الخزنة الرئيسية)
   showInvoiceProfit?: boolean; // إظهار ربح الفاتورة في شاشة الكاشير
   allowCashierEmployeeAdvance?: boolean; // السماح للكاشير بصرف سلف للموظفين (افتراضياً مغلق)
 }
@@ -349,7 +350,11 @@ export interface Employee {
   phone: string;
   working_hours: string;
   monthly_salary: number;
-  annual_leave_balance: number;
+  annual_leave_balance: number; // (قديم) رصيد سنوي — لم يعد مستخدماً بعد التحويل للشهري
+  monthly_leave_days?: number; // رصيد الإجازة الشهري (أيام) يتجدد أول كل شهر
+  shift_start?: string; // بداية الدوام 'HH:MM' لحساب التأخير
+  shift_end?: string; // نهاية الدوام 'HH:MM' لحساب طول يوم العمل
+  late_grace_minutes?: number; // دقائق سماح قبل احتساب التأخير
   hire_date: string;
   is_active: boolean;
   created_at: string;
@@ -385,6 +390,19 @@ export interface EmployeeLeave {
   deduction_amount: number;
   month: string;
   note: string;
+  created_at: string;
+}
+
+export interface EmployeeAttendance {
+  id: string;
+  employee_id: string;
+  date: string; // YYYY-MM-DD
+  check_in: string; // ISO timestamp للحضور الفعلي
+  shift_start?: string; // 'HH:MM' المتوقع وقت التسجيل
+  late_minutes: number; // دقائق التأخير (بعد خصم السماح)
+  deduction_amount: number; // خصم التأخير من الراتب
+  month: string; // YYYY-MM
+  note?: string;
   created_at: string;
 }
 
@@ -455,6 +473,7 @@ interface CashierStore {
   employees: Employee[];
   employeeTransactions: EmployeeTransaction[];
   employeeLeaves: EmployeeLeave[];
+  employeeAttendance: EmployeeAttendance[];
   productSuggestions: ProductSuggestion[];
   cashierNotes: CashierNote[];
   carSubscriptions: CarSubscription[];
@@ -606,6 +625,8 @@ interface CashierStore {
   addEmployeeLeave: (leave: Omit<EmployeeLeave, 'id' | 'created_at'>) => Promise<void>;
   updateEmployeeLeave: (id: string, leave: Partial<Omit<EmployeeLeave, 'id' | 'created_at'>>) => Promise<void>;
   deleteEmployeeLeave: (id: string) => Promise<void>;
+  addEmployeeAttendance: (att: Omit<EmployeeAttendance, 'id' | 'created_at'>) => Promise<void>;
+  deleteEmployeeAttendance: (id: string) => Promise<void>;
 
   // Suggestions & Notes
   loadProductSuggestions: () => Promise<void>;
@@ -699,6 +720,7 @@ function mapSettings(row: Record<string, unknown>): StoreSettings {
     paymentLabels: (row.payment_labels as Record<string, string>) ?? undefined,
     paymentMethodsEnabled: (row.payment_methods_enabled as Record<string, boolean>) ?? undefined,
     paymentOpeningBalances: (row.payment_opening_balances as Record<string, number>) ?? undefined,
+    savingsOpeningBalances: (row.savings_opening_balances as Record<string, number>) ?? undefined,
     showInvoiceProfit: (row.show_invoice_profit as boolean) ?? true,
     allowCashierEmployeeAdvance: (row.allow_cashier_employee_advance as boolean) ?? false,
   };
@@ -840,6 +862,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   employees: [],
   employeeTransactions: [],
   employeeLeaves: [],
+  employeeAttendance: [],
   productSuggestions: [],
   cashierNotes: [],
   coupons: [],
@@ -982,7 +1005,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     // right after login). Used by login()/loginPOS().
     if (!silent) set({ isLoading: true, dbError: null });
     try {
-      const [settingsRes, categoriesRes, productsRes, customersRes, ordersRes, counterRes, cashiersRes, employeesRes, employeeTransactionsRes, employeeLeavesRes] =
+      const [settingsRes, categoriesRes, productsRes, customersRes, ordersRes, counterRes, cashiersRes, employeesRes, employeeTransactionsRes, employeeLeavesRes, employeeAttendanceRes] =
         await Promise.all([
           supabase.from('store_settings').select('*').limit(1).maybeSingle(),
           supabase.from('categories').select('*').order('name'),
@@ -998,6 +1021,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           supabase.from('employees').select('*').order('created_at', { ascending: false }),
           supabase.from('employee_transactions').select('*').order('created_at', { ascending: false }),
           supabase.from('employee_leaves').select('*').order('created_at', { ascending: false }),
+          supabase.from('employee_attendance').select('*').order('created_at', { ascending: false }),
         ]);
 
       const settings = settingsRes.data ? mapSettings(settingsRes.data as Record<string, unknown>) : get().storeSettings;
@@ -1093,6 +1117,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         employees: (employeesRes.data ?? []) as Employee[],
         employeeTransactions: (employeeTransactionsRes.data ?? []) as EmployeeTransaction[],
         employeeLeaves: (employeeLeavesRes.data ?? []) as EmployeeLeave[],
+        employeeAttendance: (employeeAttendanceRes.data ?? []) as EmployeeAttendance[],
       });
 
       // Fetch expenses separately to avoid breaking the whole loadAll if the table is missing
@@ -2928,6 +2953,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.paymentLabels !== undefined) mapped.payment_labels = newSettings.paymentLabels;
     if (newSettings.paymentMethodsEnabled !== undefined) mapped.payment_methods_enabled = newSettings.paymentMethodsEnabled;
     if (newSettings.paymentOpeningBalances !== undefined) mapped.payment_opening_balances = newSettings.paymentOpeningBalances;
+    if (newSettings.savingsOpeningBalances !== undefined) mapped.savings_opening_balances = newSettings.savingsOpeningBalances;
     if (newSettings.showInvoiceProfit !== undefined) mapped.show_invoice_profit = newSettings.showInvoiceProfit;
     if (newSettings.allowCashierEmployeeAdvance !== undefined) mapped.allow_cashier_employee_advance = newSettings.allowCashierEmployeeAdvance;
 
@@ -4557,14 +4583,16 @@ setupRealtime: () => {
 
   // ── Employees ─────────────────────────────────────────────
   loadEmployees: async () => {
-    const [empRes, transRes, leavesRes] = await Promise.all([
+    const [empRes, transRes, leavesRes, attRes] = await Promise.all([
       supabase.from('employees').select('*').order('created_at', { ascending: false }),
       supabase.from('employee_transactions').select('*').order('created_at', { ascending: false }),
       supabase.from('employee_leaves').select('*').order('created_at', { ascending: false }),
+      supabase.from('employee_attendance').select('*').order('created_at', { ascending: false }),
     ]);
     if (empRes.data) set({ employees: empRes.data as Employee[] });
     if (transRes.data) set({ employeeTransactions: transRes.data as EmployeeTransaction[] });
     if (leavesRes.data) set({ employeeLeaves: leavesRes.data as EmployeeLeave[] });
+    if (attRes.data) set({ employeeAttendance: attRes.data as EmployeeAttendance[] });
   },
 
   addEmployee: async (employee) => {
@@ -4740,6 +4768,26 @@ setupRealtime: () => {
     }
 
     set((state) => ({ employeeLeaves: state.employeeLeaves.filter(l => l.id !== id) }));
+  },
+
+  addEmployeeAttendance: async (att) => {
+    const { data, error } = await supabase.from('employee_attendance').insert(att).select().single();
+    if (error) {
+      console.error("Add Employee Attendance Error:", error);
+      throw error;
+    }
+    if (data) {
+      set((state) => ({ employeeAttendance: [data as EmployeeAttendance, ...state.employeeAttendance] }));
+    }
+  },
+
+  deleteEmployeeAttendance: async (id) => {
+    const { error } = await supabase.from('employee_attendance').delete().eq('id', id);
+    if (error) {
+      console.error("Delete Employee Attendance Error:", error);
+      return;
+    }
+    set((state) => ({ employeeAttendance: state.employeeAttendance.filter(a => a.id !== id) }));
   },
 
   // Suggestions & Notes

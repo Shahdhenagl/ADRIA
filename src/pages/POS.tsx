@@ -403,6 +403,8 @@ export default function POS() {
       const methods = [...ALL_PAYMENT_KEYS] as string[];
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
+      // تفصيل حركة اليوم (للتقفيل): مبيعات/تحصيل/مرتجعات/استبدال/مصروفات/مشتريات/رواتب.
+      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0 };
       const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) => {
         const splits = methods.map((m) => +rec[`paid_${m}`] || 0);
         const splitsSum = splits.reduce((a, b) => a + b, 0);
@@ -417,8 +419,16 @@ export default function POS() {
         const before = d < start;
         if (!inDay && !before) return;
         if ((o.type === 'sale' || o.type === 'payment')) addM(inDay ? dayIn : befIn, o, 'paid_amount');
+        if (inDay) {
+          if (o.type === 'sale') { bd.salesCount += 1; bd.salesTotal += Number(o.total) || 0; bd.collected += Number(o.paid_amount) || 0; }
+          if (o.type === 'payment') { bd.collected += Number(o.paid_amount) || 0; }
+          if (o.exchange_data) bd.exchangeCount += 1;
+        }
         const refunded = (o.items || []).reduce((s: number, it: any) => s + (+it.refunded_amount || 0), 0);
-        if (refunded > 0) addM(inDay ? dayOut : befOut, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+        if (refunded > 0) {
+          addM(inDay ? dayOut : befOut, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+          if (inDay) { bd.refundsTotal += refunded; bd.refundsCount += 1; }
+        }
       });
       const addOut = (arr: any[], field: string) => (arr || []).forEach((r: any) => {
         const d = new Date(r.created_at);
@@ -435,12 +445,17 @@ export default function POS() {
       });
       manualIncomes.forEach((r: any) => {
         const d = new Date(r.created_at);
-        if (d >= start && d < end) addM(dayIn, r, 'amount');
+        if (d >= start && d < end) { addM(dayIn, r, 'amount'); bd.otherIncome += Math.abs(+r.amount || 0); }
         else if (d < start) addM(befIn, r, 'amount');
       });
       addOut(realExpenses, 'amount');
       addOut(purRes.data as any[], 'paid_amount');
       addOut(salRes.data as any[], 'amount');
+      // تفصيل الخارج لليوم حسب النوع.
+      const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
+      bd.expensesTotal = realExpenses.filter(inDayRec).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.purchasesTotal = ((purRes.data as any[]) || []).filter(inDayRec).reduce((s, p) => s + Math.abs(+p.paid_amount || 0), 0);
+      bd.salariesTotal = ((salRes.data as any[]) || []).filter(inDayRec).reduce((s, t) => s + Math.abs(+t.amount || 0), 0);
       const sum = (o: Record<string, number>) => methods.reduce((s, m) => s + (o[m] || 0), 0);
       // الرصيد الافتتاحي = مجموع الأرصدة الافتتاحية لكل وسائل الدفع (كاش + فيزا + محافظ...) وليس الكاش فقط.
       const opening = totalOpeningBalance(storeSettings as any) + sum(befIn) - sum(befOut);
@@ -448,7 +463,7 @@ export default function POS() {
       // الرصيد الحالي في خزنة المحل لكل وسيلة (كل الفترات) = الرصيد الافتتاحي للوسيلة + صافي حركتها — للتحويل للخزنة الرئيسية.
       const shopAvail: Record<string, number> = zero();
       methods.forEach((m) => { shopAvail[m] = openingBalanceOf(storeSettings as any, m) + (befIn[m] + dayIn[m]) - (befOut[m] + dayOut[m]); });
-      setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut, shopAvail });
+      setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut, shopAvail, breakdown: bd });
     } catch (e) { console.error(e); alert('تعذّر تحميل ميزانية اليوم'); }
     setDayBudgetLoading(false);
   };
@@ -1830,6 +1845,34 @@ export default function POS() {
                     <div className="bg-green-50 dark:bg-green-900/20 rounded-xl p-3 text-center border border-green-100 dark:border-green-800"><div className="text-[11px] font-bold text-green-700 dark:text-green-400">إجمالي الداخل</div><div className="text-lg font-black text-green-700 dark:text-green-400">{dayBudget.totalIn.toFixed(2)}</div></div>
                     <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 text-center border border-red-100 dark:border-red-800"><div className="text-[11px] font-bold text-red-700 dark:text-red-400">إجمالي الخارج</div><div className="text-lg font-black text-red-700 dark:text-red-400">{dayBudget.totalOut.toFixed(2)}</div></div>
                   </div>
+
+                  {/* تفصيل حركة اليوم */}
+                  {dayBudget.breakdown && (() => {
+                    const b = dayBudget.breakdown;
+                    const cur = storeSettings.currency;
+                    const Row = ({ label, value, count, tone }: { label: string; value: number; count?: number; tone?: 'in' | 'out' }) => (
+                      <div className="flex items-center justify-between py-2 px-3 border-b border-slate-100 dark:border-slate-700/50 last:border-0">
+                        <span className="text-[13px] font-bold text-slate-600 dark:text-slate-300">{label}{count !== undefined ? <span className="text-slate-400 font-medium"> ({count})</span> : ''}</span>
+                        <span className={`text-sm font-black ${tone === 'in' ? 'text-green-600' : tone === 'out' ? 'text-red-600' : 'text-slate-800 dark:text-slate-100'}`}>{value.toFixed(2)} {cur}</span>
+                      </div>
+                    );
+                    return (
+                      <div className="bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-100 dark:border-slate-700 overflow-hidden">
+                        <div className="px-3 py-2 bg-slate-100 dark:bg-slate-900/60 text-[12px] font-black text-slate-600 dark:text-slate-300">تفصيل حركة اليوم</div>
+                        <Row label="المبيعات" value={b.salesTotal} count={b.salesCount} />
+                        <Row label="التحصيل (المدفوع فعلياً)" value={b.collected} tone="in" />
+                        {b.otherIncome > 0 && <Row label="إيرادات أخرى" value={b.otherIncome} tone="in" />}
+                        <Row label="المرتجعات" value={b.refundsTotal} count={b.refundsCount} tone="out" />
+                        <div className="flex items-center justify-between py-2 px-3 border-b border-slate-100 dark:border-slate-700/50">
+                          <span className="text-[13px] font-bold text-slate-600 dark:text-slate-300">الاستبدالات</span>
+                          <span className="text-sm font-black text-slate-800 dark:text-slate-100">{b.exchangeCount} عملية</span>
+                        </div>
+                        <Row label="المصروفات" value={b.expensesTotal} tone="out" />
+                        <Row label="المشتريات" value={b.purchasesTotal} tone="out" />
+                        <Row label="الرواتب والسلف" value={b.salariesTotal} tone="out" />
+                      </div>
+                    );
+                  })()}
                   <div>
                     <div className="text-xs font-bold text-slate-500 mb-2">الرصيد الحالي الفعلي في الخزنة (بالتقسيمة):</div>
                     <div className="grid grid-cols-2 gap-3">
