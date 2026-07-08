@@ -16,3 +16,4 @@ alter table store_settings add column if not exists whatsapp_country_code       
 alter table store_settings add column if not exists address                       text;
 alter table store_settings add column if not exists tax_rate                      numeric default 0;
 alter table store_settings add column if not exists theme_color                   text;
+alter table store_settings add column if not exists day_start_hour                integer default 3;

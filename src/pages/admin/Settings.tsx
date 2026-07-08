@@ -223,6 +223,24 @@ export default function Settings() {
           </div>
 
           <div className="col-span-2 md:col-span-1">
+            <label className="block text-sm font-bold text-slate-700 mb-2">ساعة بداية اليوم (تقفيل اليومية)</label>
+            <div className="flex items-center gap-2">
+              <select
+                value={formData.dayStartHour ?? 3}
+                onChange={(e) => setFormData({ ...formData, dayStartHour: parseInt(e.target.value, 10) })}
+                className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:outline-none transition font-bold"
+                style={{ '--tw-ring-color': formData.themeColor + '40' } as any}
+              >
+                {Array.from({ length: 24 }, (_, h) => {
+                  const label = h === 0 ? '12 ص (منتصف الليل)' : h < 12 ? `${h} ص` : h === 12 ? '12 م (الظهر)' : `${h - 12} م`;
+                  return <option key={h} value={h}>{label}</option>;
+                })}
+              </select>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">اليوم يبدأ عند هذه الساعة. أي فاتورة قبلها تُحسب على اليوم السابق (مثال: 3 ص = التقفيل يفضل مفتوح لليوم السابق حتى 3 صباحاً).</p>
+          </div>
+
+          <div className="col-span-2 md:col-span-1">
             <label className="block text-sm font-bold text-slate-700 mb-2">لون هوية النظام الأولي</label>
             <div className="flex items-center gap-4 bg-slate-50 border border-slate-200 py-2 px-4 rounded-xl transition">
               <input 

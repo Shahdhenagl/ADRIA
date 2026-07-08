@@ -343,6 +343,7 @@ export interface StoreSettings {
   savingsOpeningBalances?: Record<string, number>; // رصيد افتتاحي مستقل لكل وسيلة دفع (الخزنة الرئيسية)
   showInvoiceProfit?: boolean; // إظهار ربح الفاتورة في شاشة الكاشير
   allowCashierEmployeeAdvance?: boolean; // السماح للكاشير بصرف سلف للموظفين (افتراضياً مغلق)
+  dayStartHour?: number; // ساعة بداية اليوم (0-23) لتقفيل اليومية؛ افتراضي 3 ص — الفواتير قبلها تُحسب لليوم السابق
 }
 
 export interface Employee {
@@ -728,6 +729,7 @@ function mapSettings(row: Record<string, unknown>): StoreSettings {
     savingsOpeningBalances: (row.savings_opening_balances as Record<string, number>) ?? undefined,
     showInvoiceProfit: (row.show_invoice_profit as boolean) ?? true,
     allowCashierEmployeeAdvance: (row.allow_cashier_employee_advance as boolean) ?? false,
+    dayStartHour: (row.day_start_hour as number) ?? 3,
   };
 }
 
@@ -861,6 +863,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     initial_balance: 0,
     locationUrl: '',
     allowCashierEmployeeAdvance: false,
+    dayStartHour: 3,
   },
   products: [],
   categories: [],
@@ -3032,6 +3035,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.savingsOpeningBalances !== undefined) mapped.savings_opening_balances = newSettings.savingsOpeningBalances;
     if (newSettings.showInvoiceProfit !== undefined) mapped.show_invoice_profit = newSettings.showInvoiceProfit;
     if (newSettings.allowCashierEmployeeAdvance !== undefined) mapped.allow_cashier_employee_advance = newSettings.allowCashierEmployeeAdvance;
+    if (newSettings.dayStartHour !== undefined) mapped.day_start_hour = newSettings.dayStartHour;
 
     const { data: existing } = await supabase.from('store_settings').select('id').limit(1).maybeSingle();
 

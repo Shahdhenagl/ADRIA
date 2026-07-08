@@ -10,6 +10,7 @@ import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, tota
 import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
+import { businessDateStr, businessDayRange } from '../utils/businessDay';
 
 
 export default function POS() {
@@ -383,9 +384,10 @@ export default function POS() {
     window.open(`https://wa.me/${phone}?text=${encodeURIComponent(message)}`, '_blank');
   };
   // ── Daily treasury (تقفيل اليوم) — view only ──────────────
-  const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  // التاريخ المحاسبي الحالي (يراعي ساعة بداية اليوم — قبلها يُحسب على أمس)
+  const todayStr = () => businessDateStr(storeSettings);
   const [showDayBudget, setShowDayBudget] = useState(false);
-  const [dayBudgetDate, setDayBudgetDate] = useState(todayStr());
+  const [dayBudgetDate, setDayBudgetDate] = useState(() => businessDateStr(storeSettings));
   const [dayBudget, setDayBudget] = useState<any>(null);
   const [dayBudgetLoading, setDayBudgetLoading] = useState(false);
 
@@ -393,8 +395,8 @@ export default function POS() {
     setDayBudgetLoading(true);
     try {
       const { supabase } = await import('../lib/supabase');
-      const start = new Date(`${dayStr}T00:00:00`);
-      const end = new Date(start); end.setDate(end.getDate() + 1);
+      // اليوم المحاسبي يبدأ عند ساعة بداية اليوم (مثلاً 3 ص) وينتهي بعدها بـ 24 ساعة
+      const { start, end } = businessDayRange(dayStr, storeSettings);
       const [expRes, purRes, salRes] = await Promise.all([
         supabase.from('expenses').select('*'),
         supabase.from('purchase_invoices').select('*'),
@@ -1874,6 +1876,7 @@ export default function POS() {
                 <input type="date" value={dayBudgetDate} onChange={(e) => setDayBudgetDate(e.target.value)} className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 font-bold text-sm" />
                 <button onClick={() => setDayBudgetDate(todayStr())} className="text-xs font-bold text-emerald-600 hover:underline">اليوم</button>
               </div>
+              <p className="text-[11px] text-slate-400 font-bold mb-2">اليوم يبدأ الساعة {(() => { const h = storeSettings.dayStartHour ?? 3; return h === 0 ? '12 ص' : h < 12 ? `${h} ص` : h === 12 ? '12 م' : `${h - 12} م`; })()} — الفواتير قبلها تُحسب على اليوم السابق.</p>
               {dayBudgetLoading || !dayBudget ? (
                 <p className="text-center text-slate-400 py-10 font-bold">جاري الحساب...</p>
               ) : (
@@ -2634,11 +2637,23 @@ export default function POS() {
 
           <div className="absolute inset-0 bg-black/20 rounded-bl-[40px]"></div>
 
-          <div className="relative flex justify-between items-center mb-4">
-            <h2 className="text-xl font-black flex items-center gap-2 drop-shadow">
-              <ShoppingCart size={24} />
-              الفاتورة
-            </h2>
+          <div className="relative flex justify-between items-start mb-4 gap-2 flex-wrap">
+            <div className="flex flex-col gap-1.5">
+              <h2 className="text-xl font-black flex items-center gap-2 drop-shadow">
+                <ShoppingCart size={24} />
+                الفاتورة
+              </h2>
+              {/* التاريخ المحاسبي الحالي (يتغيّر عند ساعة بداية اليوم من الإعدادات) */}
+              {(() => {
+                const bd = businessDateStr(storeSettings);
+                const label = new Date(`${bd}T12:00:00`).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+                return (
+                  <span title="تاريخ اليوم (يبدأ عند ساعة بداية اليوم في الإعدادات)" className="inline-flex items-center gap-1.5 bg-black/20 px-2.5 py-1 rounded-lg border border-white/20 text-[11px] font-bold w-fit">
+                    📅 <span>{label}</span>
+                  </span>
+                );
+              })()}
+            </div>
             <div className="flex items-center gap-2">
               <div className="font-mono flex items-center gap-1.5 bg-black/20 px-2.5 py-1 rounded-lg border border-white/20 text-xs">
                 <span className="opacity-80 font-sans">رقم:</span> <span className="font-bold tracking-widest">{activeInvoiceId}</span>
