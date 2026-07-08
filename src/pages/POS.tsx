@@ -438,8 +438,10 @@ export default function POS() {
         else if (d < start) addM(befOut, r, field);
       });
       // المصروفات: لو المبلغ سالب فهو إيراد مسجّل يدوياً (داخل) مش خارج.
+      // نستبعد فئة «رواتب» لأن كل راتب/سلفة بيتسجّل تلقائياً كمصروف + كمعاملة موظف،
+      // والرواتب/السلف تُحسب من جدول employee_transactions (salRes) فقط لتفادي العدّ مرتين.
       const expensesArr = (expRes.data as any[]) || [];
-      const realExpenses = expensesArr.filter((e) => (Number(e.amount) || 0) >= 0);
+      const realExpenses = expensesArr.filter((e) => (Number(e.amount) || 0) >= 0 && e.category !== 'رواتب');
       const manualIncomes = expensesArr.filter((e) => (Number(e.amount) || 0) < 0).map((e) => {
         const abs: any = { ...e, amount: Math.abs(+e.amount || 0) };
         methods.forEach((m) => { abs[`paid_${m}`] = Math.abs(+e[`paid_${m}`] || 0); });
@@ -1940,7 +1942,7 @@ export default function POS() {
                       })}
                     </div>
                   </div>
-                  <p className="text-[11px] text-slate-400 text-center">اليوم من 12 منتصف الليل إلى 12 منتصف الليل.</p>
+                  <p className="text-[11px] text-slate-400 text-center">{(() => { const h = storeSettings.dayStartHour ?? 3; const lbl = h === 0 ? '12 منتصف الليل' : h < 12 ? `${h} صباحاً` : h === 12 ? '12 ظهراً' : `${h - 12} مساءً`; return `اليوم يبدأ الساعة ${lbl} وينتهي في نفس الساعة من اليوم التالي.`; })()}</p>
 
                   {/* Transfer to savings */}
                   {perm('savings') && (
