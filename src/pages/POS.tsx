@@ -2949,7 +2949,7 @@ export default function POS() {
                     <input
                       autoFocus={idx === 0}
                       type="number" dir="ltr" value={payInput[k] || ''} onChange={(e) => setPay(k, e.target.value)} placeholder="0.00"
-                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCheckoutClick(shouldPrint); } }}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCheckoutClick(shouldPrint); setShowCheckoutModal(false); } }}
                       className="w-full bg-slate-50 dark:bg-slate-900 border-2 border-transparent focus:border-indigo-500 py-3 px-4 rounded-2xl focus:outline-none transition-all font-black text-lg text-left shadow-inner"
                     />
                   </div>

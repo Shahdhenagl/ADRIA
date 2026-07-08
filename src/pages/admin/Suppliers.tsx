@@ -1,22 +1,28 @@
 import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import type { PurchaseItem, Product } from '../../store/useStore';
-import { Users, Search, Plus, Edit2, Trash2, Phone, MapPin, Calendar, ShoppingCart, FileText, X, ChevronDown, Printer, Eye, Download } from 'lucide-react';
+import { Users, Search, Plus, Edit2, Trash2, Phone, MapPin, Calendar, ShoppingCart, FileText, X, ChevronDown, Printer, Eye, Download, Upload, FileSpreadsheet } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { openPrintWindow } from '../../utils/printWindow';
+import { generateBarcode } from '../../utils/printBarcodeLabels';
 import PaymentSplitInputs from '../../components/PaymentSplitInputs';
 import { activePaymentKeys, formToSplit, sumSplit, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
+import * as XLSX from 'xlsx';
 
 function ProductSearchSelect({
-  value, 
-  onChange, 
-  products
-}: { 
-  value: string; 
-  onChange: (val: string) => void; 
+  value,
+  onChange,
+  products,
+  onEnterCommit,
+  autoOpen,
+}: {
+  value: string;
+  onChange: (val: string) => void;
   products: Product[];
+  onEnterCommit?: () => void; // يُستدعى بعد اختيار المنتج بمفتاح Enter لنقل التركيز للخانة التالية
+  autoOpen?: boolean;         // فتح الحقل والتركيز عليه تلقائياً (عند إضافة صف جديد بالكيبورد)
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -31,6 +37,11 @@ function ProductSearchSelect({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // فتح الحقل تلقائياً عند طلب ذلك (input يحمل autoFocus فيلتقط التركيز عند ظهوره)
+  useEffect(() => {
+    if (autoOpen) setIsOpen(true);
+  }, [autoOpen]);
 
   const selectedProduct = products.find(p => p.id === value);
 
@@ -74,9 +85,25 @@ function ProductSearchSelect({
           <input
             type="text"
             className="w-full outline-none bg-transparent"
-            placeholder="اكتب اسم المنتج أو الباركود..."
+            placeholder="اكتب اسم المنتج أو كود/باركود المنتج..."
             value={search}
             onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                const code = search.trim();
+                // أولوية: تطابق كامل مع كود/باركود، ثم أول نتيجة في القائمة
+                const match = (code ? products.find(p => p.barcode && String(p.barcode) === code) : undefined) || filtered[0];
+                if (match) {
+                  onChange(match.id);
+                  setIsOpen(false);
+                  setSearch('');
+                  onEnterCommit?.();
+                }
+              } else if (e.key === 'Escape') {
+                setIsOpen(false);
+              }
+            }}
             autoFocus
           />
         )}
@@ -152,6 +179,13 @@ export default function Suppliers() {
   const [invItems, setInvItems] = useState<{ product_id: string; quantity: string; purchase_price: string; to_display: string }[]>([
     { product_id: '', quantity: '1', purchase_price: '', to_display: '0' }
   ]);
+  // مراجع للتنقل بالكيبورد بين خانات الصف (Enter ينقل للخانة التالية)
+  const qtyRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const priceRefs = useRef<Record<number, HTMLInputElement | null>>({});
+  const [autoOpenRow, setAutoOpenRow] = useState<number | null>(null);
+  // استيراد/تصدير Excel لفاتورة المشتريات
+  const invFileRef = useRef<HTMLInputElement>(null);
+  const [invImporting, setInvImporting] = useState(false);
 
   // Quick Add Product State
   const [showQuickProductModal, setShowQuickProductModal] = useState(false);
@@ -269,6 +303,139 @@ export default function Suppliers() {
       if (prod) updated[idx].purchase_price = String(prod.purchase_price || prod.average_purchase_price || '');
     }
     setInvItems(updated);
+  };
+
+  // إضافة صف جديد وفتح خانة المنتج فيه تلقائياً (يُستخدم عند الضغط Enter من خانة السعر)
+  const addInvRowAndFocus = () => {
+    setInvItems(prev => {
+      const next = [...prev, { product_id: '', quantity: '1', purchase_price: '', to_display: '0' }];
+      setAutoOpenRow(next.length - 1);
+      return next;
+    });
+  };
+
+  // ── تصدير قالب Excel لفاتورة الشراء (مملوء بمنتجات المورد المختار لتعديل الكميات وإعادة الاستيراد) ──
+  const INV_TEMPLATE_HEADERS = ['كود المنتج', 'اسم المنتج', 'الوحدة', 'عدد القطع', 'سعر الشراء', 'كمية المحل'];
+  const exportInvoiceTemplate = () => {
+    const supplier = suppliers.find(s => s.id === invSupplierId);
+    const supNorm = supplier ? normalizeArabic(supplier.name) : '';
+    // منتجات مرتبطة بهذا المورد بالاسم (عمود «المورد» في المخزون) — لتسهيل التعبئة
+    const supProducts = supplier
+      ? products.filter(p => p.supplier_name && normalizeArabic(p.supplier_name) === supNorm)
+      : [];
+    const rows = supProducts.map(p => [
+      p.barcode || '',
+      p.name,
+      getUnitConfig(p.unit).label,
+      '', // عدد القطع — يملؤه المستخدم
+      p.purchase_price || p.average_purchase_price || 0,
+      '', // كمية المحل — اختياري
+    ]);
+    const ws = XLSX.utils.aoa_to_sheet([INV_TEMPLATE_HEADERS, ...rows]);
+    ws['!cols'] = INV_TEMPLATE_HEADERS.map(() => ({ wch: 18 }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'فاتورة شراء');
+    const namePart = supplier ? supplier.name.replace(/[\\/:*?"<>|]/g, '_') : 'مورد';
+    XLSX.writeFile(wb, `purchase_template_${namePart}.xlsx`);
+  };
+
+  // ── استيراد فاتورة شراء من Excel: يطابق المنتج بالكود/الباركود (أو الاسم)، وينشئ الناقص، ويملأ صفوف الفاتورة ──
+  const importInvoiceExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!invSupplierId) { alert('اختر المورد أولاً قبل الاستيراد'); if (invFileRef.current) invFileRef.current.value = ''; return; }
+    setInvImporting(true);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      if (!rows.length) { alert('الملف فارغ أو لا يحتوي على صفوف.'); return; }
+
+      const pick = (row: any, ...keys: string[]): any => {
+        for (const k of keys) if (row[k] !== undefined && row[k] !== '') return row[k];
+        const nk = keys.map(normalizeArabic);
+        for (const key of Object.keys(row)) if (nk.includes(normalizeArabic(key))) return row[key];
+        return '';
+      };
+      const num = (v: any) => { const n = parseFloat(String(v).replace(/[^\d.-]/g, '')); return isNaN(n) ? 0 : n; };
+
+      const supplier = suppliers.find(s => s.id === invSupplierId);
+      const byBarcode = new Map(products.filter(p => p.barcode).map(p => [String(p.barcode), p]));
+      const byName = new Map(products.map(p => [normalizeArabic(p.name), p]));
+      const usedBarcodes = new Set(products.map(p => p.barcode).filter(Boolean) as string[]);
+      const defaultCat = categories[0]?.id || '';
+
+      const newItems: { product_id: string; quantity: string; purchase_price: string; to_display: string }[] = [];
+      let matched = 0, created = 0, skipped = 0;
+
+      for (const row of rows) {
+        try {
+          const code = String(pick(row, 'كود المنتج', 'الكود', 'الباركود', 'code', 'barcode')).trim();
+          const name = String(pick(row, 'اسم المنتج', 'الاسم', 'name')).trim();
+          const qty = num(pick(row, 'عدد القطع', 'الكمية', 'quantity', 'qty'));
+          const price = num(pick(row, 'سعر الشراء', 'السعر', 'purchase', 'price'));
+          const toDisplay = num(pick(row, 'كمية المحل', 'المحل', 'display'));
+          if (!code && !name) { skipped++; continue; }
+          if (qty <= 0) { skipped++; continue; }
+
+          // 1) تطابق بالكود/الباركود ثم بالاسم
+          let prod = code ? byBarcode.get(code) : undefined;
+          if (!prod && name) prod = byName.get(normalizeArabic(name));
+
+          // 2) إنشاء منتج جديد لو غير موجود (يُسجَّل بالمخزون عند حفظ الفاتورة)
+          if (!prod) {
+            if (!defaultCat) { skipped++; continue; }
+            let barcode = code;
+            if (!barcode) barcode = generateBarcode(usedBarcodes);
+            usedBarcodes.add(barcode);
+            const createdProd = await addProduct({
+              name: name || barcode,
+              barcode,
+              category_id: defaultCat,
+              sale_price: 0,
+              purchase_price: price,
+              average_purchase_price: price,
+              stock_quantity: 0,
+              unit: 'قطعة',
+              supplier_name: supplier?.name || '',
+            } as any);
+            if (createdProd) {
+              prod = createdProd as any;
+              byBarcode.set(barcode, createdProd as any);
+              byName.set(normalizeArabic(createdProd.name), createdProd as any);
+              created++;
+            } else { skipped++; continue; }
+          } else {
+            matched++;
+          }
+
+          newItems.push({
+            product_id: prod!.id,
+            quantity: String(qty),
+            purchase_price: String(price > 0 ? price : (prod!.purchase_price || prod!.average_purchase_price || 0)),
+            to_display: String(Math.max(0, Math.min(toDisplay, qty))),
+          });
+        } catch (rowErr) {
+          console.error('Import invoice row error:', rowErr, row);
+          skipped++;
+        }
+      }
+
+      if (newItems.length === 0) { alert('لم يتم استيراد أي صنف. تأكد من الأعمدة (كود المنتج / عدد القطع / سعر الشراء).'); return; }
+      // إضافة الأصناف المستوردة للفاتورة (نستبدل الصف الفارغ الأول إن وُجد)
+      setInvItems(prev => {
+        const hasOnlyEmpty = prev.length === 1 && !prev[0].product_id;
+        return hasOnlyEmpty ? newItems : [...prev, ...newItems];
+      });
+      alert(`تم استيراد الأصناف ✅\nمطابقة بالكود: ${matched}\nمنتجات جديدة: ${created}${skipped ? `\nصفوف متجاهلة: ${skipped}` : ''}\n\nراجع الفاتورة ثم اضغط «حفظ الفاتورة» للتسجيل في المخزون.`);
+    } catch (err) {
+      console.error('Import invoice error:', err);
+      alert('حدث خطأ أثناء قراءة الملف. تأكد أنه ملف Excel صحيح وبنفس أعمدة القالب.');
+    } finally {
+      setInvImporting(false);
+      if (invFileRef.current) invFileRef.current.value = '';
+    }
   };
 
   const handleQuickProductSubmit = async (e: React.FormEvent) => {
@@ -490,6 +657,7 @@ export default function Suppliers() {
               setInvSupplierId('');
               setInvPay({});
               setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
+              setAutoOpenRow(null);
               setShowInvoiceModal(true);
             }
           }}
@@ -655,6 +823,7 @@ export default function Suppliers() {
                             setInvPay(pop);
                           }
                           setInvItems((inv.items && inv.items.length > 0) ? inv.items.map((i: any) => ({ product_id: i.product_id, quantity: i.quantity.toString(), purchase_price: i.purchase_price.toString(), to_display: (i.to_display ?? 0).toString() })) : [{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
+                          setAutoOpenRow(null);
                           setShowInvoiceModal(true);
                         }}
                         className="p-3 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-100 transition shadow-sm opacity-0 group-hover:opacity-100"
@@ -753,11 +922,20 @@ export default function Suppliers() {
 
                 {/* Items */}
                 <div>
-                  <div className="flex justify-between items-center mb-3">
+                  <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
                     <label className="text-sm font-bold text-slate-700">المنتجات المشتراة</label>
-                    <button type="button" onClick={addInvRow} className="text-sm font-bold flex items-center gap-1 px-3 py-1.5 rounded-lg hover:opacity-80 transition" style={{ color: tc }}>
-                      <Plus size={14} /> إضافة منتج
-                    </button>
+                    <div className="flex items-center gap-1 flex-wrap">
+                      <input ref={invFileRef} type="file" accept=".xlsx,.xls" onChange={importInvoiceExcel} className="hidden" />
+                      <button type="button" onClick={exportInvoiceTemplate} title="تحميل قالب Excel لهذا المورد (مملوء بمنتجاته لتعديل الكميات)" className="text-xs font-bold flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-slate-600 bg-slate-100 hover:bg-slate-200 transition">
+                        <FileSpreadsheet size={14} /> قالب Excel
+                      </button>
+                      <button type="button" disabled={invImporting} onClick={() => invFileRef.current?.click()} title="استيراد أصناف الفاتورة من ملف Excel (يُطابق بالكود وينشئ الناقص)" className="text-xs font-bold flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition disabled:opacity-60">
+                        <Upload size={14} /> {invImporting ? 'جارٍ الاستيراد...' : 'استيراد Excel'}
+                      </button>
+                      <button type="button" onClick={addInvRow} className="text-sm font-bold flex items-center gap-1 px-3 py-1.5 rounded-lg hover:opacity-80 transition" style={{ color: tc }}>
+                        <Plus size={14} /> إضافة منتج
+                      </button>
+                    </div>
                   </div>
                   <div className="space-y-3">
                     {invItems.map((item, idx) => {
@@ -771,11 +949,16 @@ export default function Suppliers() {
                             value={item.product_id}
                             onChange={val => updateInvRow(idx, 'product_id', val)}
                             products={products}
+                            autoOpen={autoOpenRow === idx}
+                            onEnterCommit={() => qtyRefs.current[idx]?.focus()}
                           />
                           <div className="relative w-24 shrink-0">
                             <input
+                              ref={el => { qtyRefs.current[idx] = el; }}
                               type="number" min="0" step={rowFractional ? '0.001' : '1'} placeholder="الكمية"
                               value={item.quantity} onChange={e => updateInvRow(idx, 'quantity', e.target.value)}
+                              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); priceRefs.current[idx]?.focus(); } }}
+                              onFocus={e => e.currentTarget.select()}
                               className="w-full bg-white border border-slate-200 rounded-xl pl-2 pr-10 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-medium text-center"
                             />
                             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-slate-400 pointer-events-none">{getUnitConfig(rowUnit).label}</span>
@@ -790,8 +973,11 @@ export default function Suppliers() {
                             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-emerald-500 pointer-events-none">محل</span>
                           </div>
                           <input
+                            ref={el => { priceRefs.current[idx] = el; }}
                             type="number" min="0" step="0.01" placeholder={`سعر شراء الـ${getUnitConfig(rowUnit).label}`}
                             value={item.purchase_price} onChange={e => updateInvRow(idx, 'purchase_price', e.target.value)}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); if (idx === invItems.length - 1) addInvRowAndFocus(); else setAutoOpenRow(idx + 1); } }}
+                            onFocus={e => e.currentTarget.select()}
                             className="w-28 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-medium text-center"
                           />
                           {invItems.length > 1 && (
@@ -990,6 +1176,31 @@ export default function Suppliers() {
           openPrintWindow(html);
         };
 
+        // تصدير أصناف المورد المشتراة إلى Excel (يمكن تعديله وإعادة استيراده في فاتورة شراء)
+        const exportSupplierExcel = () => {
+          const headers = ['كود المنتج', 'اسم المنتج', 'الوحدة', 'عدد القطع', 'سعر الشراء', 'متوسط الشراء', 'آخر شراء', 'المتاح بالمخزون', 'المباع'];
+          const rows = productStats.map((s: any) => {
+            const p = products.find(pr => pr.id === s.product_id);
+            return [
+              p?.barcode || '',
+              s.name,
+              getUnitConfig(s.unit).label,
+              s.totalQty,
+              s.lastPrice || 0,
+              Number(s.avgPrice.toFixed(2)),
+              Number(s.lastPrice.toFixed(2)),
+              s.currentStock,
+              s.sold,
+            ];
+          });
+          const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+          ws['!cols'] = headers.map(() => ({ wch: 16 }));
+          const wb = XLSX.utils.book_new();
+          XLSX.utils.book_append_sheet(wb, ws, 'أصناف المورد');
+          const namePart = (selectedSupplierProfile.name || 'مورد').replace(/[\\/:*?"<>|]/g, '_');
+          XLSX.writeFile(wb, `supplier_products_${namePart}.xlsx`);
+        };
+
         return (
           <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
             <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-100 flex flex-col max-h-[90vh]">
@@ -1011,6 +1222,7 @@ export default function Suppliers() {
                     <input type="date" value={supTo} onChange={(e) => setSupTo(e.target.value)} className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 font-bold" />
                     {(supFrom || supTo) && <button onClick={() => { setSupFrom(''); setSupTo(''); }} className="text-slate-400 hover:text-red-500 px-1">✕</button>}
                   </div>
+                  <button onClick={exportSupplierExcel} className="text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition"><FileSpreadsheet size={16} /> تصدير Excel</button>
                   <button onClick={exportSupplierPDF} style={{ backgroundColor: tc }} className="text-white px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 hover:opacity-90 transition"><Download size={16} /> تصدير PDF</button>
                   <button onClick={() => setShowSupplierProfile(false)} className="p-2 rounded-2xl hover:bg-slate-100 transition"><X size={24} /></button>
                 </div>
@@ -1084,6 +1296,7 @@ export default function Suppliers() {
                       <thead className="bg-slate-50 text-slate-400 font-bold uppercase tracking-wider">
                         <tr>
                           <th className="p-4">المنتج</th>
+                          <th className="p-4 text-center">الكود</th>
                           <th className="p-4 text-center">الوحدة</th>
                           <th className="p-4 text-center">الكمية المشتراة</th>
                           <th className="p-4 text-center">متوسط سعر الشراء</th>
@@ -1094,11 +1307,18 @@ export default function Suppliers() {
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {productStats.length === 0 ? (
-                          <tr><td colSpan={7} className="p-10 text-center text-slate-400 font-bold">لا توجد أصناف مشتراة من هذا المورد</td></tr>
+                          <tr><td colSpan={8} className="p-10 text-center text-slate-400 font-bold">لا توجد أصناف مشتراة من هذا المورد</td></tr>
                         ) : (
-                          productStats.map(s => (
+                          productStats.map(s => {
+                            const rowBarcode = products.find(p => p.id === s.product_id)?.barcode || '';
+                            return (
                             <tr key={s.product_id} className="hover:bg-slate-50/50 transition">
                               <td className="p-4 font-bold text-slate-800">{s.name}</td>
+                              <td className="p-4 text-center">
+                                {rowBarcode
+                                  ? <span className="text-[11px] font-mono font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{rowBarcode}</span>
+                                  : <span className="text-slate-300">—</span>}
+                              </td>
                               <td className="p-4 text-center">
                                 <span className="text-[11px] font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded-lg">{getUnitConfig(s.unit).label}</span>
                               </td>
@@ -1108,7 +1328,8 @@ export default function Suppliers() {
                               <td className="p-4 text-center font-bold text-emerald-600">{formatQty(s.currentStock, s.unit)}</td>
                               <td className="p-4 text-center font-bold text-slate-500">{formatQty(s.sold, s.unit)}</td>
                             </tr>
-                          ))
+                            );
+                          })
                         )}
                       </tbody>
                     </table>
