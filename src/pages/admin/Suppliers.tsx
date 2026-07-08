@@ -149,8 +149,8 @@ export default function Suppliers() {
   const [invPay, setInvPay] = useState<Record<string, string>>({});
   const invPayKeys = activePaymentKeys(storeSettings as any);
   const invPaidTotal = invPayKeys.reduce((s, k) => s + (parseFloat(invPay[k] || '') || 0), 0);
-  const [invItems, setInvItems] = useState<{ product_id: string; quantity: string; purchase_price: string }[]>([
-    { product_id: '', quantity: '1', purchase_price: '' }
+  const [invItems, setInvItems] = useState<{ product_id: string; quantity: string; purchase_price: string; to_display: string }[]>([
+    { product_id: '', quantity: '1', purchase_price: '', to_display: '0' }
   ]);
 
   // Quick Add Product State
@@ -205,6 +205,7 @@ export default function Suppliers() {
         product_id: i.product_id,
         quantity: parseFloat(i.quantity),
         purchase_price: parseFloat(i.purchase_price),
+        to_display: Math.max(0, Math.min(parseFloat(i.to_display) || 0, parseFloat(i.quantity) || 0)),
       }));
 
       const splitPayments: Record<string, number> = {};
@@ -244,7 +245,7 @@ export default function Suppliers() {
       setEditingPurchaseInvoice(null);
       setInvSupplierId('');
       setInvPay({});
-      setInvItems([{ product_id: '', quantity: '1', purchase_price: '' }]);
+      setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
       setActiveTab('invoices');
     } catch (error: any) {
       alert(error.message || 'حدث خطأ أثناء حفظ الفاتورة');
@@ -253,7 +254,7 @@ export default function Suppliers() {
     }
   };
 
-  const addInvRow = () => setInvItems([...invItems, { product_id: '', quantity: '1', purchase_price: '' }]);
+  const addInvRow = () => setInvItems([...invItems, { product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
   const removeInvRow = (idx: number) => setInvItems(invItems.filter((_, i) => i !== idx));
   const updateInvRow = (idx: number, field: string, value: string) => {
     if (field === 'product_id' && value === 'NEW_PRODUCT') {
@@ -488,7 +489,7 @@ export default function Suppliers() {
               setEditingPurchaseInvoice(null);
               setInvSupplierId('');
               setInvPay({});
-              setInvItems([{ product_id: '', quantity: '1', purchase_price: '' }]);
+              setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
               setShowInvoiceModal(true);
             }
           }}
@@ -653,7 +654,7 @@ export default function Suppliers() {
                             });
                             setInvPay(pop);
                           }
-                          setInvItems((inv.items && inv.items.length > 0) ? inv.items.map((i: any) => ({ product_id: i.product_id, quantity: i.quantity.toString(), purchase_price: i.purchase_price.toString() })) : [{ product_id: '', quantity: '1', purchase_price: '' }]);
+                          setInvItems((inv.items && inv.items.length > 0) ? inv.items.map((i: any) => ({ product_id: i.product_id, quantity: i.quantity.toString(), purchase_price: i.purchase_price.toString(), to_display: (i.to_display ?? 0).toString() })) : [{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
                           setShowInvoiceModal(true);
                         }}
                         className="p-3 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-100 transition shadow-sm opacity-0 group-hover:opacity-100"
@@ -764,29 +765,47 @@ export default function Suppliers() {
                       const rowUnit = rowProduct?.unit || 'قطعة';
                       const rowFractional = isFractionalUnit(rowUnit);
                       return (
-                      <div key={idx} className="flex gap-2 items-center bg-slate-50 rounded-2xl p-3 border border-slate-100">
-                        <ProductSearchSelect
-                          value={item.product_id}
-                          onChange={val => updateInvRow(idx, 'product_id', val)}
-                          products={products}
-                        />
-                        <div className="relative w-28 shrink-0">
-                          <input
-                            type="number" min="0" step={rowFractional ? '0.001' : '1'} placeholder="الكمية"
-                            value={item.quantity} onChange={e => updateInvRow(idx, 'quantity', e.target.value)}
-                            className="w-full bg-white border border-slate-200 rounded-xl pl-3 pr-12 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-medium text-center"
+                      <div key={idx} className="bg-slate-50 rounded-2xl p-3 border border-slate-100">
+                        <div className="flex gap-2 items-center flex-wrap">
+                          <ProductSearchSelect
+                            value={item.product_id}
+                            onChange={val => updateInvRow(idx, 'product_id', val)}
+                            products={products}
                           />
-                          <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 pointer-events-none">{getUnitConfig(rowUnit).label}</span>
+                          <div className="relative w-24 shrink-0">
+                            <input
+                              type="number" min="0" step={rowFractional ? '0.001' : '1'} placeholder="الكمية"
+                              value={item.quantity} onChange={e => updateInvRow(idx, 'quantity', e.target.value)}
+                              className="w-full bg-white border border-slate-200 rounded-xl pl-2 pr-10 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-medium text-center"
+                            />
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-slate-400 pointer-events-none">{getUnitConfig(rowUnit).label}</span>
+                          </div>
+                          <div className="relative w-24 shrink-0">
+                            <input
+                              type="number" min="0" max={item.quantity} step={rowFractional ? '0.001' : '1'} placeholder="المحل"
+                              value={item.to_display} onChange={e => updateInvRow(idx, 'to_display', e.target.value)}
+                              title="كمية تدخل المحل (المعروض) — الباقي يدخل المستودع"
+                              className="w-full bg-white border border-slate-200 rounded-xl pl-2 pr-10 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 font-medium text-center border-l-4 border-l-emerald-400"
+                            />
+                            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-emerald-500 pointer-events-none">محل</span>
+                          </div>
+                          <input
+                            type="number" min="0" step="0.01" placeholder={`سعر شراء الـ${getUnitConfig(rowUnit).label}`}
+                            value={item.purchase_price} onChange={e => updateInvRow(idx, 'purchase_price', e.target.value)}
+                            className="w-28 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-medium text-center"
+                          />
+                          {invItems.length > 1 && (
+                            <button type="button" onClick={() => removeInvRow(idx)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
+                              <X size={16} />
+                            </button>
+                          )}
                         </div>
-                        <input
-                          type="number" min="0" step="0.01" placeholder={`سعر شراء الـ${getUnitConfig(rowUnit).label}`}
-                          value={item.purchase_price} onChange={e => updateInvRow(idx, 'purchase_price', e.target.value)}
-                          className="w-32 bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 font-medium text-center"
-                        />
-                        {invItems.length > 1 && (
-                          <button type="button" onClick={() => removeInvRow(idx)} className="p-2 text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition">
-                            <X size={16} />
-                          </button>
+                        {(parseFloat(item.quantity) || 0) > 0 && (
+                          <p className="text-[10px] text-slate-400 mt-2 pr-1">
+                            التوزيع: <b className="text-emerald-600">محل {Math.max(0, Math.min(parseFloat(item.to_display) || 0, parseFloat(item.quantity) || 0))}</b>
+                            {' · '}<b className="text-blue-600">مستودع {Math.max(0, (parseFloat(item.quantity) || 0) - Math.min(parseFloat(item.to_display) || 0, parseFloat(item.quantity) || 0))}</b>
+                            <span className="text-slate-300"> — لو سِبت خانة المحل 0 هيدخل كله المستودع</span>
+                          </p>
                         )}
                       </div>
                       );

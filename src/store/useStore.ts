@@ -158,6 +158,7 @@ export interface PurchaseItem {
   product_id: string;
   quantity: number;
   purchase_price: number;
+  to_display?: number; // كم من الكمية المشتراة يدخل المحل (المعروض)؛ الباقي يدخل المستودع
 }
 
 export interface PurchaseInvoice {
@@ -4249,9 +4250,14 @@ setupRealtime: () => {
         const newTotalValue = (oldQty * oldAvgPrice) + (item.quantity * item.purchase_price);
         const newAvgPrice = newQty > 0 ? newTotalValue / newQty : 0;
 
+        // توزيع الكمية المشتراة: جزء يدخل المحل (المعروض) والباقي يدخل المستودع.
+        const toDisplay = Math.max(0, Math.min(Number(item.to_display) || 0, item.quantity));
+        const newDisplay = Math.min((Number(product.display_quantity) || 0) + toDisplay, newQty);
+
         // Update DB
         await supabase.from('products').update({
           stock_quantity: newQty,
+          display_quantity: newDisplay,
           average_purchase_price: newAvgPrice,
           purchase_price: item.purchase_price
         }).eq('id', product.id);
@@ -4260,6 +4266,7 @@ setupRealtime: () => {
         updatedProducts[productIndex] = {
           ...product,
           stock_quantity: newQty,
+          display_quantity: newDisplay,
           average_purchase_price: newAvgPrice,
           purchase_price: item.purchase_price
         };

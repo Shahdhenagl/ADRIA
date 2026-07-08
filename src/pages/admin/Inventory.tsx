@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
 import { useStore, type Product } from '../../store/useStore';
-import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download } from 'lucide-react';
+import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { generateBarcode, printBarcodeLabels } from '../../utils/printBarcodeLabels';
@@ -58,6 +58,12 @@ export default function Inventory() {
   const [loading, setLoading] = useState(false);
   const [importing, setImporting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // استبدال مخزون: نقل كمية من منتج لآخر بنفس سعر البيع
+  const [showSwapModal, setShowSwapModal] = useState(false);
+  const [swapFromId, setSwapFromId] = useState('');
+  const [swapToId, setSwapToId] = useState('');
+  const [swapQty, setSwapQty] = useState('');
+  const [swapBusy, setSwapBusy] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
     barcode: '',
@@ -453,6 +459,49 @@ export default function Inventory() {
     }
   };
 
+  // استبدال مخزون: ينقص من منتج ويزيد في منتج آخر بنفس سعر البيع (قيمة المخزون لا تتأثر).
+  const swapFrom = products.find(p => p.id === swapFromId);
+  const swapTo = products.find(p => p.id === swapToId);
+  // المنتجات المسموح الاستبدال إليها = نفس سعر البيع تماماً (وغير المنتج المصدر ومش مخفية)
+  const swapToCandidates = swapFrom
+    ? products.filter(p => p.id !== swapFrom.id && !p.is_hidden && (Number(p.sale_price) || 0) === (Number(swapFrom.sale_price) || 0))
+    : [];
+
+  const handleSwap = async () => {
+    const from = swapFrom, to = swapTo;
+    const qty = parseFloat(swapQty) || 0;
+    if (!from || !to) return alert('اختر المنتج الناقص والمنتج الزائد.');
+    if (from.id === to.id) return alert('اختر منتجين مختلفين.');
+    if (qty <= 0) return alert('أدخل كمية صحيحة.');
+    if ((Number(from.sale_price) || 0) !== (Number(to.sale_price) || 0))
+      return alert('لا يمكن الاستبدال إلا بين منتجين لهما نفس سعر البيع (حتى لا تتأثر قيمة المخزون).');
+    if (qty > (Number(from.stock_quantity) || 0))
+      return alert(`الكمية (${qty}) أكبر من مخزون «${from.name}» المتاح (${from.stock_quantity}).`);
+    try {
+      setSwapBusy(true);
+      const fromNewStock = (Number(from.stock_quantity) || 0) - qty;
+      const fromNewDisplay = Math.min(Number(from.display_quantity) || 0, fromNewStock);
+      const toNewStock = (Number(to.stock_quantity) || 0) + qty;
+      await updateProduct(from.id, { stock_quantity: fromNewStock, display_quantity: fromNewDisplay });
+      await updateProduct(to.id, { stock_quantity: toNewStock });
+      // تسجيل الحركة في تعديلات المخزون (للمتابعة)
+      try {
+        const { supabase } = await import('../../lib/supabase');
+        const note = `استبدال مخزون: نقص «${from.name}» وزيادة «${to.name}»`;
+        await supabase.from('stock_adjustments').insert([
+          { product_id: from.id, product_name: from.name, system_qty: Number(from.stock_quantity) || 0, counted_qty: fromNewStock, diff: -qty, cost: Number(from.average_purchase_price ?? from.purchase_price) || 0, note },
+          { product_id: to.id, product_name: to.name, system_qty: Number(to.stock_quantity) || 0, counted_qty: toNewStock, diff: qty, cost: Number(to.average_purchase_price ?? to.purchase_price) || 0, note },
+        ]);
+      } catch (e) { console.warn('تعذّر تسجيل حركة الاستبدال', e); }
+      alert(`تم الاستبدال ✅\n«${from.name}»: ${from.stock_quantity} ← ${fromNewStock}\n«${to.name}»: ${to.stock_quantity} ← ${toNewStock}`);
+      setShowSwapModal(false); setSwapFromId(''); setSwapToId(''); setSwapQty('');
+    } catch (e) {
+      console.error('Swap error:', e); alert('تعذّر تنفيذ الاستبدال.');
+    } finally {
+      setSwapBusy(false);
+    }
+  };
+
   const exportPDF = async () => {
     const element = document.getElementById('inventory-table');
     if (!element) return;
@@ -726,6 +775,70 @@ export default function Inventory() {
         </div>
       )}
 
+      {/* SWAP STOCK MODAL */}
+      {showSwapModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b flex justify-between items-center bg-orange-50 shrink-0">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><ArrowLeftRight size={22} className="text-orange-500" /> استبدال مخزون</h2>
+              <button onClick={() => setShowSwapModal(false)} className="text-slate-400 hover:text-slate-600 bg-white p-2 rounded-xl shadow-sm border border-slate-200"><X size={20} /></button>
+            </div>
+            <div className="p-6 space-y-4 overflow-y-auto">
+              <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3">
+                يُستخدم لتصحيح بيع قطعة بكود بدل كود آخر: يُنقص الكمية من منتج ويزيدها في منتج آخر <b>بنفس سعر البيع</b> فقط، حتى لا تتأثر قيمة المخزون.
+              </p>
+
+              {/* المنتج الناقص */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">المنتج اللي هينقص من المخزون <span className="text-red-500">*</span></label>
+                <select value={swapFromId} onChange={e => { setSwapFromId(e.target.value); setSwapToId(''); }} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-orange-400 focus:outline-none">
+                  <option value="">-- اختر المنتج --</option>
+                  {products.filter(p => !p.is_hidden).map(p => (
+                    <option key={p.id} value={p.id}>{p.name} — {p.barcode || 'بدون كود'} — {p.sale_price} {storeSettings.currency} (متاح {formatQty(p.stock_quantity, p.unit)})</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* المنتج الزائد — نفس سعر البيع فقط */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">المنتج اللي هيزيد في المخزون <span className="text-red-500">*</span></label>
+                <select value={swapToId} onChange={e => setSwapToId(e.target.value)} disabled={!swapFrom} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-orange-400 focus:outline-none disabled:opacity-50">
+                  <option value="">{swapFrom ? '-- اختر منتج بنفس السعر --' : 'اختر المنتج الناقص أولاً'}</option>
+                  {swapToCandidates.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} — {p.barcode || 'بدون كود'} — {p.sale_price} {storeSettings.currency} (متاح {formatQty(p.stock_quantity, p.unit)})</option>
+                  ))}
+                </select>
+                {swapFrom && swapToCandidates.length === 0 && (
+                  <p className="text-xs text-red-500 mt-1 font-bold">لا يوجد منتج آخر بنفس سعر البيع ({swapFrom.sale_price} {storeSettings.currency}).</p>
+                )}
+              </div>
+
+              {/* الكمية */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">الكمية <span className="text-red-500">*</span></label>
+                <input type="number" min="0" step={swapFrom && isFractionalUnit(swapFrom.unit) ? '0.001' : '1'} value={swapQty}
+                  onChange={e => setSwapQty(e.target.value)}
+                  placeholder="عدد القطع المراد استبدالها"
+                  className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-orange-400 focus:outline-none border-l-4 border-l-orange-500" />
+              </div>
+
+              {swapFrom && swapTo && (
+                <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 text-sm space-y-1">
+                  <div className="flex justify-between"><span className="text-slate-500">🔻 {swapFrom.name}</span><span className="font-bold text-red-600">{formatQty(swapFrom.stock_quantity, swapFrom.unit)} ← {formatQty(Math.max(0, (Number(swapFrom.stock_quantity)||0) - (parseFloat(swapQty)||0)), swapFrom.unit)}</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">🔺 {swapTo.name}</span><span className="font-bold text-emerald-600">{formatQty(swapTo.stock_quantity, swapTo.unit)} ← {formatQty((Number(swapTo.stock_quantity)||0) + (parseFloat(swapQty)||0), swapTo.unit)}</span></div>
+                </div>
+              )}
+            </div>
+            <div className="p-6 border-t flex gap-3 shrink-0">
+              <button onClick={handleSwap} disabled={swapBusy || !swapFrom || !swapTo} className="flex-1 bg-orange-500 hover:bg-orange-600 text-white py-3.5 rounded-xl font-bold shadow-lg transition disabled:opacity-50 flex items-center justify-center gap-2">
+                <ArrowLeftRight size={18} /> {swapBusy ? 'جاري التنفيذ...' : 'تأكيد الاستبدال'}
+              </button>
+              <button onClick={() => setShowSwapModal(false)} className="flex-1 bg-slate-100 text-slate-700 py-3.5 rounded-xl font-bold hover:bg-slate-200 transition">إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CATEGORIES SECTION */}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
@@ -827,6 +940,10 @@ export default function Inventory() {
               {loading ? '...جاري التصدير' : <><FileText size={16} /> PDF</>}
             </button>
           </div>
+          <button onClick={() => { setSwapFromId(''); setSwapToId(''); setSwapQty(''); setShowSwapModal(true); }} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-3 rounded-xl font-bold transition flex items-center gap-2 shadow-lg">
+            <ArrowLeftRight size={20} />
+            استبدال
+          </button>
           <button onClick={openAddModal} style={{ backgroundColor: storeSettings.themeColor }} className="text-white px-6 py-3 rounded-xl font-bold transition flex items-center gap-2 shadow-lg">
             <Plus size={20} />
             إضافة منتج
