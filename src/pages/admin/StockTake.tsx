@@ -2,21 +2,41 @@ import { useState, useMemo } from 'react';
 import { useStore } from '../../store/useStore';
 import { ClipboardCheck, Search, Save } from 'lucide-react';
 
+type Location = 'all' | 'warehouse' | 'display';
+type Season = 'all' | 'summer' | 'winter' | 'annual';
+
+const SEASON_LABEL: Record<string, string> = { summer: 'صيفي', winter: 'شتوي', annual: 'سنوي', all: 'كل المواسم' };
+const LOCATION_LABEL: Record<Location, string> = { all: 'كل المخزن', warehouse: 'المستودع', display: 'المحل' };
+
 export default function StockTake() {
   const { products, storeSettings, adjustStock } = useStore();
   const cur = storeSettings.currency;
   const [search, setSearch] = useState('');
+  const [seasonFilter, setSeasonFilter] = useState<Season>('all');
+  const [stockLocation, setStockLocation] = useState<Location>('all');
   const [counts, setCounts] = useState<Record<string, string>>({});
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // الكمية حسب المخزن المختار: الكل = الإجمالي، المحل = المعروض، المستودع = الباقي.
+  const dispOf = (p: any) => Math.min(Number(p.display_quantity) || 0, Number(p.stock_quantity) || 0);
+  const systemOf = (p: any) => {
+    const total = Number(p.stock_quantity) || 0;
+    if (stockLocation === 'display') return dispOf(p);
+    if (stockLocation === 'warehouse') return Math.max(0, total - dispOf(p));
+    return total;
+  };
+
   const list = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return products.filter((p) => !p.is_hidden).filter((p) => !q || p.name.toLowerCase().includes(q) || (p.barcode || '').includes(q));
-  }, [products, search]);
+    return products
+      .filter((p) => !p.is_hidden)
+      .filter((p) => seasonFilter === 'all' || p.season === seasonFilter)
+      .filter((p) => !q || p.name.toLowerCase().includes(q) || (p.barcode || '').includes(q));
+  }, [products, search, seasonFilter]);
 
   const rows = list.map((p) => {
-    const system = Number(p.stock_quantity) || 0;
+    const system = systemOf(p);
     const raw = counts[p.id];
     const counted = raw === undefined || raw === '' ? null : Number(raw);
     const diff = counted === null ? 0 : counted - system;
@@ -30,9 +50,13 @@ export default function StockTake() {
 
   const save = async () => {
     if (changed.length === 0) { alert('لا توجد فروقات للتسوية. أدخل الكميات المجرودة المختلفة عن النظام.'); return; }
-    if (!confirm(`تأكيد تسوية ${changed.length} صنف؟ سيتم تعديل المخزون للكميات المجرودة.`)) return;
+    const locNote = stockLocation === 'all' ? '' : ` (جرد ${LOCATION_LABEL[stockLocation]})`;
+    if (!confirm(`تأكيد تسوية ${changed.length} صنف${locNote}؟ سيتم تعديل المخزون للكميات المجرودة.`)) return;
     setSaving(true);
-    const n = await adjustStock(changed.map((r) => ({ product_id: r.p.id, counted_qty: r.counted as number })), note.trim());
+    const n = await adjustStock(
+      changed.map((r) => ({ product_id: r.p.id, counted_qty: r.counted as number, location: stockLocation })),
+      (note.trim() + locNote).trim()
+    );
     setSaving(false);
     alert(`تمت تسوية ${n} صنف ✅`);
     setCounts({}); setNote('');
@@ -51,6 +75,28 @@ export default function StockTake() {
         </div>
       </div>
 
+      {/* فلاتر: الموسم + المخزن */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-2 bg-white dark:bg-slate-800 rounded-2xl p-2 shadow-sm border border-slate-100 dark:border-slate-700 w-fit">
+          <span className="text-xs font-bold text-slate-500 px-2">الموسم:</span>
+          {([['all', 'الكل'], ['summer', 'صيفي'], ['winter', 'شتوي'], ['annual', 'سنوي']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setSeasonFilter(k)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition ${seasonFilter === k ? 'bg-amber-500 text-white shadow' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-2 bg-white dark:bg-slate-800 rounded-2xl p-2 shadow-sm border border-slate-100 dark:border-slate-700 w-fit">
+          <span className="text-xs font-bold text-slate-500 px-2">المخزن:</span>
+          {([['all', 'الكل'], ['warehouse', 'المستودع'], ['display', 'المحل']] as const).map(([k, label]) => (
+            <button key={k} onClick={() => setStockLocation(k)}
+              className={`px-4 py-2 rounded-xl text-sm font-bold transition ${stockLocation === k ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="flex flex-wrap gap-3 items-center">
         <div className="relative flex-1 min-w-[220px]">
           <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -66,7 +112,7 @@ export default function StockTake() {
             <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 sticky top-0">
               <tr>
                 <th className="p-3">المنتج</th><th className="p-3">الباركود</th>
-                <th className="p-3 text-center">رصيد النظام</th><th className="p-3 text-center">المجرود فعلياً</th>
+                <th className="p-3 text-center">رصيد النظام{stockLocation !== 'all' ? ` (${LOCATION_LABEL[stockLocation]})` : ''}</th><th className="p-3 text-center">المجرود فعلياً</th>
                 <th className="p-3 text-center">الفرق</th><th className="p-3 text-center">قيمة الفرق</th>
               </tr>
             </thead>
@@ -74,7 +120,7 @@ export default function StockTake() {
               {rows.length === 0 ? <tr><td colSpan={6} className="text-center text-slate-400 py-8">لا توجد منتجات</td></tr>
                 : rows.map((r) => (
                   <tr key={r.p.id} className={`border-b border-slate-100 dark:border-slate-700/50 ${r.counted !== null && Math.abs(r.diff) > 0.0001 ? (r.diff < 0 ? 'bg-red-50/40 dark:bg-red-900/10' : 'bg-emerald-50/40 dark:bg-emerald-900/10') : ''}`}>
-                    <td className="p-3 font-bold text-slate-800 dark:text-slate-100">{r.p.name}</td>
+                    <td className="p-3 font-bold text-slate-800 dark:text-slate-100">{r.p.name}{r.p.season ? <span className="mr-1 text-[10px] font-bold text-amber-600">· {SEASON_LABEL[r.p.season] || r.p.season}</span> : ''}</td>
                     <td className="p-3 font-mono text-xs text-slate-500">{r.p.barcode || '-'}</td>
                     <td className="p-3 text-center font-bold">{r.system}</td>
                     <td className="p-3 text-center">
@@ -88,7 +134,11 @@ export default function StockTake() {
           </table>
         </div>
       </div>
-      <p className="text-[12px] text-slate-400">الأصناف اللي متكتبش ليها كمية بتفضل زي ما هي. الحفظ بيعدّل المخزون للكمية المجرودة ويسجّل الفرق في سجل التسويات.</p>
+      <p className="text-[12px] text-slate-400">
+        الأصناف اللي متكتبش ليها كمية بتفضل زي ما هي. الحفظ بيعدّل المخزون للكمية المجرودة ويسجّل الفرق في سجل التسويات.
+        {stockLocation === 'display' && ' — جرد المحل بيعدّل الكمية المعروضة فقط، والمستودع بيفضل زي ما هو.'}
+        {stockLocation === 'warehouse' && ' — جرد المستودع بيعدّل كمية المستودع فقط، والمعروض في المحل بيفضل زي ما هو.'}
+      </p>
     </div>
   );
 }

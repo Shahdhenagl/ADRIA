@@ -541,7 +541,7 @@ interface CashierStore {
   updateSettings: (settings: Partial<StoreSettings>) => Promise<void>;
   addProduct: (product: Omit<Product, 'id'>) => Promise<Product | undefined>;
   updateProduct: (id: string, product: Partial<Product>) => Promise<void>;
-  adjustStock: (items: { product_id: string; counted_qty: number }[], note?: string) => Promise<number>;
+  adjustStock: (items: { product_id: string; counted_qty: number; location?: 'all' | 'display' | 'warehouse' }[], note?: string) => Promise<number>;
   deleteProduct: (id: string) => Promise<void>;
 
   // الديڤو والإهلاك
@@ -3588,16 +3588,28 @@ setupRealtime: () => {
     for (const it of items) {
       const p = state.products.find((x) => x.id === it.product_id);
       if (!p) continue;
-      const system = Number(p.stock_quantity) || 0;
+      const totalStock = Number(p.stock_quantity) || 0;
+      const display = Math.min(Number(p.display_quantity) || 0, totalStock);
+      const warehouse = Math.max(0, totalStock - display);
+      const location = it.location || 'all';
+      // الرصيد المُقارَن والتحديث حسب المخزن الذي يتم جرده.
+      const system = location === 'display' ? display : location === 'warehouse' ? warehouse : totalStock;
       const counted = Number(it.counted_qty);
       if (isNaN(counted) || Math.abs(counted - system) < 0.0001) continue; // تجاهل غير المتغيّر
       const diff = counted - system;
       const cost = Number(p.average_purchase_price ?? p.purchase_price) || 0;
-      const { error } = await supabase.from('products').update({ stock_quantity: counted }).eq('id', it.product_id);
+
+      let newStock: number, newDisplay: number;
+      if (location === 'display') { newDisplay = counted; newStock = warehouse + counted; }
+      else if (location === 'warehouse') { newStock = display + counted; newDisplay = display; }
+      else { newStock = counted; newDisplay = Math.min(display, counted); }
+
+      const patch: any = { stock_quantity: newStock, display_quantity: newDisplay };
+      const { error } = await supabase.from('products').update(patch).eq('id', it.product_id);
       if (error) continue;
       rows.push({ product_id: it.product_id, product_name: p.name, system_qty: system, counted_qty: counted, diff, cost, note: note || null });
       const idx = updatedProducts.findIndex((x) => x.id === it.product_id);
-      if (idx >= 0) updatedProducts[idx] = { ...updatedProducts[idx], stock_quantity: counted };
+      if (idx >= 0) updatedProducts[idx] = { ...updatedProducts[idx], ...patch };
     }
     if (rows.length) await supabase.from('stock_adjustments').insert(rows);
     set({ products: updatedProducts });
