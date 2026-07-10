@@ -500,8 +500,10 @@ export default function POS() {
   const [lastOrderDetails, setLastOrderDetails] = useState<any>(null);
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
-  // تاريخ فاتورة مخصّص (لإدخال فواتير قديمة من الكاشير) — فاضي = دلوقتي. للمستخدم الرئيسي فقط.
-  const [saleDate, setSaleDate] = useState('');
+  // تاريخ عمل مخصّص (لإدخال فواتير قديمة) — YYYY-MM-DD، فاضي = اليوم الحالي. للمستخدم الرئيسي فقط.
+  // كل الفواتير الجديدة تتسجّل في اليوم ده لحد ما يترجّع لليوم.
+  const [workDateOverride, setWorkDateOverride] = useState('');
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [showHeldModal, setShowHeldModal] = useState(false);
   const [holdBusy, setHoldBusy] = useState(false);
   // نموذج حفظ فاتورة معلّقة مع عربون
@@ -1156,10 +1158,10 @@ export default function POS() {
       }
     }
 
-    // تاريخ مخصّص للفاتورة (فواتير قديمة) — فاضي أو غير صالح = تاريخ الآن.
-    const saleDateISO = saleDate ? (() => { const d = new Date(saleDate); return isNaN(d.getTime()) ? undefined : d.toISOString(); })() : undefined;
+    // تاريخ مخصّص للفاتورة (فواتير قديمة) من شارة التاريخ — فاضي = تاريخ الآن.
+    // نستخدم منتصف اليوم المحاسبي المختار عشان يقع مضمون داخل نطاق تقفيله.
+    const saleDateISO = workDateOverride ? timestampForBusinessDate(workDateOverride, storeSettings) : undefined;
     const invoiceId = await checkout(currentTotal, { name: currentCustomerName, phone: currentCustomerPhone, custom_id: currentCustomId }, effectivePaidAmount, 'sale', primaryMethod as any, finalSplit as any, undefined, deferredNote, currentCouponCode, currentCouponDiscount, undefined, saleDateISO);
-    setSaleDate('');
 
     // العربون كان دخل الخزنة وقت الحجز؛ الفاتورة سجّلته ضمن المدفوع، فنسجّل تحويله
     // (صرف بقيمة العربون) عشان ما يتحسبش مرتين.
@@ -2664,14 +2666,36 @@ export default function POS() {
                 <ShoppingCart size={24} />
                 الفاتورة
               </h2>
-              {/* التاريخ المحاسبي الحالي (يتغيّر عند ساعة بداية اليوم من الإعدادات) */}
+              {/* التاريخ المحاسبي الحالي — قابل للتغيير للمستخدم الرئيسي لإدخال فواتير قديمة */}
               {(() => {
-                const bd = businessDateStr(storeSettings);
-                const label = new Date(`${bd}T12:00:00`).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+                const effBd = workDateOverride || businessDateStr(storeSettings);
+                const overridden = !!workDateOverride;
+                const label = new Date(`${effBd}T12:00:00`).toLocaleDateString('ar-EG', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
                 return (
-                  <span title="تاريخ اليوم (يبدأ عند ساعة بداية اليوم في الإعدادات)" className="inline-flex items-center gap-1.5 bg-black/20 px-2.5 py-1 rounded-lg border border-white/20 text-[11px] font-bold w-fit">
-                    📅 <span>{label}</span>
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => { if (isMaster) setShowDatePicker((v) => !v); }}
+                      title={isMaster ? 'اضغطي لتغيير تاريخ الفواتير الجديدة (لإدخال فواتير قديمة)' : 'تاريخ اليوم'}
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-[11px] font-bold w-fit transition ${overridden ? 'bg-amber-500 border-amber-300 text-white shadow' : 'bg-black/20 border-white/20'} ${isMaster ? 'cursor-pointer hover:brightness-110' : 'cursor-default'}`}
+                    >
+                      📅 <span>{label}</span>
+                      {overridden && <span className="opacity-90">• تاريخ قديم</span>}
+                    </button>
+                    {overridden && (
+                      <button type="button" onClick={() => { setWorkDateOverride(''); setShowDatePicker(false); }} className="inline-flex items-center gap-1 bg-black/25 border border-white/20 rounded-lg px-2 py-1 text-[11px] font-bold hover:brightness-110" title="رجوع لتاريخ اليوم">↺ اليوم</button>
+                    )}
+                    {isMaster && showDatePicker && (
+                      <input
+                        type="date"
+                        autoFocus
+                        value={workDateOverride || businessDateStr(storeSettings)}
+                        max={businessDateStr(storeSettings)}
+                        onChange={(e) => setWorkDateOverride(e.target.value)}
+                        className="text-slate-800 bg-white rounded-lg px-2 py-1 text-[11px] font-bold outline-none"
+                      />
+                    )}
+                  </div>
                 );
               })()}
             </div>
@@ -3019,23 +3043,6 @@ export default function POS() {
                 </div>
               </div>
               ); })()}
-
-              {/* Custom invoice date (backdating old invoices) — master only */}
-              {isMaster && (
-                <div className="mt-4">
-                  <label className="text-sm font-bold text-slate-600 dark:text-slate-300 block mb-2 flex items-center gap-2">
-                    <Clock size={16} />
-                    تاريخ الفاتورة (اختياري — لإدخال فواتير قديمة)
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={saleDate}
-                    onChange={(e) => setSaleDate(e.target.value)}
-                    className="w-full bg-slate-50 dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-700 focus:border-indigo-500 rounded-xl p-3 outline-none text-sm font-bold"
-                  />
-                  <p className="text-[11px] text-slate-400 mt-1 font-bold">اتركيه فاضي = تاريخ ووقت دلوقتي.</p>
-                </div>
-              )}
 
               {/* Deferred Note Input */}
               {Math.max(0, total - paidTotal - (activeDeposit?.amount || 0)) > 0 && (
