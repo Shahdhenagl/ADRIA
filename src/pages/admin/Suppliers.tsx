@@ -1157,9 +1157,11 @@ export default function Suppliers() {
           const availableBalance = isCollection ? Math.max(0, -netBalance) : Math.max(0, netBalance);
 
           if (totalPaid <= 0) return alert('أدخل مبلغاً صحيحاً للمعاملة');
-          if (availableBalance <= 0.009) return alert('لا يوجد رصيد مفتوح لهذه المعاملة حالياً');
-          if (totalPaid > availableBalance + 0.01) {
-            return alert(isCollection ? 'المبلغ أكبر من الرصيد لنا عند المورد' : 'المبلغ أكبر من المديونية الحالية للمورد');
+          // التحصيل محدود بالرصيد اللي لينا فعلاً. أما السداد فمسموح يتخطى المديونية،
+          // والزيادة تتسجّل كدفعة مقدمة (رصيد لينا عند المورد).
+          if (isCollection) {
+            if (availableBalance <= 0.009) return alert('لا يوجد رصيد لنا عند المورد لتحصيله');
+            if (totalPaid > availableBalance + 0.01) return alert('المبلغ أكبر من الرصيد لنا عند المورد');
           }
 
           try {
@@ -1476,13 +1478,20 @@ export default function Suppliers() {
                         </button>
                       </div>
 
-                      <div className="bg-slate-50 rounded-2xl p-4 flex items-center justify-between">
-                        <span className="text-sm font-bold text-slate-500">
-                          {supplierFinancialType === 'collect_from_supplier' ? 'المتاح تحصيله' : 'المتاح سداده'}
-                        </span>
-                        <span className="text-lg font-black text-slate-800">
-                          {(supplierFinancialType === 'collect_from_supplier' ? Math.max(0, -netBalance) : Math.max(0, netBalance)).toLocaleString()} {storeSettings.currency}
-                        </span>
+                      <div className="bg-slate-50 rounded-2xl p-4 flex flex-col gap-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-bold text-slate-500">
+                            {supplierFinancialType === 'collect_from_supplier' ? 'المتاح تحصيله' : 'المديونية الحالية'}
+                          </span>
+                          <span className="text-lg font-black text-slate-800">
+                            {(supplierFinancialType === 'collect_from_supplier' ? Math.max(0, -netBalance) : Math.max(0, netBalance)).toLocaleString()} {storeSettings.currency}
+                          </span>
+                        </div>
+                        {supplierFinancialType === 'pay_to_supplier' && (
+                          <p className="text-[11px] font-bold text-slate-400">
+                            أي مبلغ يزيد عن المديونية يُسجَّل كدفعة مقدمة (رصيد لينا عند المورد)
+                          </p>
+                        )}
                       </div>
 
                       <div>

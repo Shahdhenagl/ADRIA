@@ -4569,20 +4569,22 @@ setupRealtime: () => {
     const state = get();
     const invoiceNumber = `PAY-${Date.now()}`;
 
-    // Validate: don't accept more than what's owed to this supplier
-    const supplierInvoices = state.purchaseInvoices.filter(inv => inv.supplier_id === supplierId);
-    const totalSupplierDebt = supplierInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0);
-    if (amount > totalSupplierDebt + 0.01) {
-      alert(`المبلغ المدخل (${amount.toFixed(2)}) أكبر من إجمالي مديونية المورد (${Math.max(0, totalSupplierDebt).toFixed(2)})`);
+    // Paying beyond the current debt is allowed: the excess is an advance, and
+    // it shows up as a negative net balance (لينا عند المورد) that
+    // collectSupplierCredit can draw back later.
+    if (amount <= 0) {
+      alert('أدخل مبلغاً صحيحاً للسداد');
       return;
     }
-    
+
     try {
       const methods = [
         { name: 'cash', amount: splitPayments?.cash || 0 },
         { name: 'visa', amount: splitPayments?.visa || 0 },
         { name: 'wallet', amount: splitPayments?.wallet || 0 },
-        { name: 'instapay', amount: splitPayments?.instapay || 0 }
+        { name: 'instapay', amount: splitPayments?.instapay || 0 },
+        { name: 'method5', amount: splitPayments?.method5 || 0 },
+        { name: 'method6', amount: splitPayments?.method6 || 0 }
       ];
       // If splitPayments is undefined, default to cash or the primary method
       const primaryMethod = splitPayments ? methods.sort((a, b) => b.amount - a.amount)[0].name : 'cash';
