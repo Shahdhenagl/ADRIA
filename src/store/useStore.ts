@@ -1328,6 +1328,8 @@ export const useStore = create<CashierStore>((set, get) => ({
           paid_visa: offlineOrder.paid_visa,
           paid_wallet: offlineOrder.paid_wallet,
           paid_instapay: offlineOrder.paid_instapay,
+          paid_method5: offlineOrder.paid_method5 || 0,
+          paid_method6: offlineOrder.paid_method6 || 0,
           type: offlineOrder.type,
           customer_id: customerId,
           payment_method: offlineOrder.payment_method,
@@ -2471,6 +2473,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         paid_visa: updatedData.paid_visa ?? order.paid_visa,
         paid_wallet: updatedData.paid_wallet ?? order.paid_wallet,
         paid_instapay: updatedData.paid_instapay ?? order.paid_instapay,
+        paid_method5: (updatedData as any).paid_method5 ?? (order as any).paid_method5 ?? 0,
+        paid_method6: (updatedData as any).paid_method6 ?? (order as any).paid_method6 ?? 0,
         payment_method: updatedData.payment_method ?? order.payment_method,
         created_at: updatedData.date ?? order.date,
       };

@@ -11,6 +11,7 @@ import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
+import { applySplit, isInternalTransfer, routeInternalTransfer } from '../utils/treasury';
 
 
 export default function POS() {
@@ -414,15 +415,9 @@ export default function POS() {
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
       // تفصيل حركة اليوم (للتقفيل): مبيعات/تحصيل/مرتجعات/استبدال/مصروفات/مشتريات/رواتب.
       const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0, savingsOut: 0, savingsIn: 0 };
-      // توزيع مبلغ على وسائل الدفع. لو فيه أي تقسيمة (paid_*) غير صفر نستخدمها بإشارتها
-      // (القيم السالبة = فلوس داخلة زي تحصيل رصيد لينا عند المورد → تقلّل الخارج = صح).
-      const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) => {
-        const splits = methods.map((m) => +rec[`paid_${m}`] || 0);
-        if (splits.some((v) => v !== 0)) { methods.forEach((m, idx) => { t[m] += splits[idx]; }); return; }
-        const amt = Math.abs(+rec[field] || 0);
-        const m = mOverride || rec.payment_method || 'cash';
-        if (methods.includes(m)) t[m] += amt; else t.cash += amt;
-      };
+      // توزيع مبلغ على وسائل الدفع (منطق مشترك في src/utils/treasury.ts).
+      const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) =>
+        applySplit(t, rec, field, { methodOverride: mOverride });
       allOrders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
         const d = new Date(o.date);
         const inDay = d >= start && d < end;
@@ -455,21 +450,12 @@ export default function POS() {
       // نستبعد فئة «رواتب» لأن كل راتب/سلفة بيتسجّل تلقائياً كمصروف + كمعاملة موظف،
       // والرواتب/السلف تُحسب من جدول employee_transactions (salRes) فقط لتفادي العدّ مرتين.
       const expensesArr = (expRes.data as any[]) || [];
-      // التحويل الداخلي بين وسائل الدفع (كاش↔فيزا…): مالوش تأثير على الإجمالي، بس
-      // بيحرّك الرصيد بين الوسائل. بنعالجه لوحده: السالب = خارج من وسيلته، الموجب = داخل لوسيلته.
-      const isInternalXfer = (c: any) => c === 'تحويل داخلي';
-      const realExpenses = expensesArr.filter((e) => (Number(e.amount) || 0) >= 0 && e.category !== 'رواتب' && !isInternalXfer(e.category));
-      const routeXfer = (rec: any, inDay: boolean) => {
-        methods.forEach((m) => {
-          const v = +rec[`paid_${m}`] || 0;
-          if (v > 0) (inDay ? dayIn : befIn)[m] += v;
-          else if (v < 0) (inDay ? dayOut : befOut)[m] += -v;
-        });
-      };
-      expensesArr.filter((e) => isInternalXfer(e.category)).forEach((r) => {
+      // التحويل الداخلي بين وسائل الدفع (كاش↔فيزا…): معالجة اتجاهية مشتركة.
+      const realExpenses = expensesArr.filter((e) => (Number(e.amount) || 0) >= 0 && e.category !== 'رواتب' && !isInternalTransfer(e.category));
+      expensesArr.filter((e) => isInternalTransfer(e.category)).forEach((r) => {
         const d = new Date(r.created_at);
-        if (d >= start && d < end) routeXfer(r, true);
-        else if (d < start) routeXfer(r, false);
+        if (d >= start && d < end) routeInternalTransfer(dayIn, dayOut, r);
+        else if (d < start) routeInternalTransfer(befIn, befOut, r);
       });
       const manualIncomes = expensesArr.filter((e) => (Number(e.amount) || 0) < 0).map((e) => {
         const abs: any = { ...e, amount: Math.abs(+e.amount || 0) };

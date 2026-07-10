@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { PiggyBank, ArrowLeftRight, Banknote, Save } from 'lucide-react';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf } from '../../utils/paymentMethods';
+import { applySplit, applyInternalTransferNet, isInternalTransfer } from '../../utils/treasury';
 
 type Split = Record<string, number>;
 const zero = (): Split => { const z: Split = {}; ALL_PAYMENT_KEYS.forEach((k) => { z[k] = 0; }); return z; };
@@ -62,19 +63,9 @@ export default function Savings() {
       ]);
       const savRes = { data: savRows };
       const allOrders = (ordData as any[]).map((o) => ({ ...o, items: o.order_items || [] }));
-      // خزنة المحل المتاح لكل وسيلة (كل الفترات)
+      // خزنة المحل المتاح لكل وسيلة (كل الفترات) — منطق التوزيع مشترك في utils/treasury.
       const net = zero();
-      // sign=1 داخل / sign=-1 خارج. لو فيه تقسيمة غير صفر نستخدمها بإشارتها (السالب داخل زي
-      // تحصيل رصيد المورد → sign*(-قيمة) = يزيد الرصيد = صح).
-      const add = (sign: number, rec: any, field: string) => {
-        const vals = ALL_PAYMENT_KEYS.map((k) => +rec['paid_' + k] || 0);
-        if (vals.some((v) => v !== 0)) { ALL_PAYMENT_KEYS.forEach((k, idx) => { net[k] += sign * vals[idx]; }); return; }
-        const a = Math.abs(+rec[field] || 0);
-        const m = (ALL_PAYMENT_KEYS as readonly string[]).includes(rec.payment_method) ? rec.payment_method : 'cash';
-        net[m] += sign * a;
-      };
-      // التحويل الداخلي بين وسائل الدفع: يُطبَّق مباشرةً (paid السالب ينقص وسيلته، الموجب يزيدها).
-      const isInternalXfer = (c: any) => c === 'تحويل داخلي';
+      const add = (sign: number, rec: any, field: string) => applySplit(net, rec, field, { sign });
       allOrders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
         if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
         const ref = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
@@ -82,7 +73,7 @@ export default function Savings() {
       });
       (expData || []).forEach((e: any) => {
         const amount = Number(e.amount) || 0;
-        if (isInternalXfer(e.category)) { ALL_PAYMENT_KEYS.forEach((k) => { net[k] += +e['paid_' + k] || 0; }); return; }
+        if (isInternalTransfer(e.category)) { applyInternalTransferNet(net, e); return; }
         if (amount < 0) { const absRec: any = { ...e, amount: Math.abs(amount) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(1, absRec, 'amount'); }
         else add(-1, e, 'amount');
       });

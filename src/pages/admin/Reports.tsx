@@ -4,6 +4,7 @@ import { FileBarChart, Printer } from 'lucide-react';
 import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } from '../../utils/paymentMethods';
+import { applySplit, isInternalTransfer, routeInternalTransfer } from '../../utils/treasury';
 
 const todayStr = () => { const d = new Date(); return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); };
 
@@ -47,14 +48,8 @@ export default function Reports() {
     const inN: Record<string, number> = {}; ALL_PAYMENT_KEYS.forEach((k) => { inN[k] = 0; });
     const outN: Record<string, number> = {}; ALL_PAYMENT_KEYS.forEach((k) => { outN[k] = 0; });
     const pass = (dt: any) => beforeStart ? new Date(dt) < start : (rangeOnly ? inRange(dt) : true);
-    const add = (target: Record<string, number>, rec: any, field: string, methodOverride?: string) => {
-      const vals = ALL_PAYMENT_KEYS.map((k) => +rec['paid_' + k] || 0);
-      if (vals.some((v) => v !== 0)) { ALL_PAYMENT_KEYS.forEach((k, idx) => { target[k] += vals[idx]; }); return; }
-      const a = Math.abs(+rec[field] || 0); const m = methodOverride || ((ALL_PAYMENT_KEYS as readonly string[]).includes(rec.payment_method) ? rec.payment_method : 'cash');
-      target[m] += a;
-    };
-    // التحويل الداخلي بين الوسائل: السالب = خارج من وسيلته، الموجب = داخل لوسيلته.
-    const isInternalXfer = (c: any) => c === 'تحويل داخلي';
+    const add = (target: Record<string, number>, rec: any, field: string, methodOverride?: string) =>
+      applySplit(target, rec, field, { methodOverride });
     orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
       if ((o.type === 'sale' || o.type === 'payment') && pass(o.date)) add(inN, o, 'paid_amount');
       const ref = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
@@ -63,7 +58,7 @@ export default function Reports() {
     });
     extra.expenses.filter((e) => pass(e.created_at)).forEach((e) => {
       const amt = Number(e.amount) || 0;
-      if (isInternalXfer(e.category)) { ALL_PAYMENT_KEYS.forEach((k) => { const v = +e['paid_' + k] || 0; if (v > 0) inN[k] += v; else if (v < 0) outN[k] += -v; }); return; }
+      if (isInternalTransfer(e.category)) { routeInternalTransfer(inN, outN, e); return; }
       if (amt < 0) { const absRec: any = { ...e, amount: Math.abs(amt) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(inN, absRec, 'amount'); }
       else add(outN, e, 'amount');
     });
