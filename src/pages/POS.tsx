@@ -408,7 +408,7 @@ export default function POS() {
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
       // تفصيل حركة اليوم (للتقفيل): مبيعات/تحصيل/مرتجعات/استبدال/مصروفات/مشتريات/رواتب.
-      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0 };
+      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0, savingsOut: 0, savingsIn: 0 };
       const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) => {
         const splits = methods.map((m) => +rec[`paid_${m}`] || 0);
         const splitsSum = splits.reduce((a, b) => a + b, 0);
@@ -451,10 +451,13 @@ export default function POS() {
       });
       // فئات الحجز: 'حجز' = تحصيل/رد عربون، 'تحويل حجز' = تحويل العربون لفاتورة عند الإتمام.
       const isResv = (c: any) => c === 'حجز' || c === 'تحويل حجز';
+      // تحويلات الخزنة الرئيسية: نقل فلوس بين خزنة المحل والخزنة الرئيسية — مش مصروف/إيراد،
+      // بيفضل ضمن الداخل/الخارج (لأن الفلوس فعلاً بتتحرّك من الدرج) لكن ليه خانته المستقلة.
+      const isSavingsXfer = (c: any) => c === 'تحويل للخزنة الرئيسية' || c === 'تحويل من الخزنة الرئيسية';
       manualIncomes.forEach((r: any) => {
         const d = new Date(r.created_at);
         // العربون داخل ضمن totalIn لكنه يُعرض في خانة الحجوزات مش «إيرادات أخرى».
-        if (d >= start && d < end) { addM(dayIn, r, 'amount'); if (!isResv(r.category)) bd.otherIncome += Math.abs(+r.amount || 0); }
+        if (d >= start && d < end) { addM(dayIn, r, 'amount'); if (isSavingsXfer(r.category)) bd.savingsIn += Math.abs(+r.amount || 0); else if (!isResv(r.category)) bd.otherIncome += Math.abs(+r.amount || 0); }
         else if (d < start) addM(befIn, r, 'amount');
       });
       addOut(realExpenses, 'amount');
@@ -462,7 +465,10 @@ export default function POS() {
       addOut(salRes.data as any[], 'amount');
       // تفصيل الخارج لليوم حسب النوع (باستثناء حركات الحجز — لها خانتها).
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
-      bd.expensesTotal = realExpenses.filter(inDayRec).filter((e) => !isResv(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      // المصروفات الحقيقية = بدون الحجز وبدون تحويلات الخزنة الرئيسية (كلٌّ في خانته).
+      bd.expensesTotal = realExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      // محوّل للخزنة الرئيسية اليوم (فلوس طالعة من درج المحل للخزنة — مش مصروف).
+      bd.savingsOut = realExpenses.filter(inDayRec).filter((e) => isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // صافي المحصّل من الحجوزات اليوم = عرابين محصّلة − عرابين مرتجعة (category='حجز').
       bd.reservationsNet = expensesArr.filter(inDayRec).filter((e) => e.category === 'حجز').reduce((s, e) => s - (Number(e.amount) || 0), 0);
       bd.purchasesTotal = ((purRes.data as any[]) || []).filter(inDayRec).reduce((s, p) => s + Math.abs(+p.paid_amount || 0), 0);
@@ -1925,6 +1931,8 @@ export default function POS() {
                         <Row label="المصروفات" value={b.expensesTotal} tone="out" />
                         <Row label="المشتريات" value={b.purchasesTotal} tone="out" />
                         <Row label="الرواتب والسلف" value={b.salariesTotal} tone="out" />
+                        {b.savingsOut > 0 && <Row label="محوّل للخزنة الرئيسية" value={b.savingsOut} tone="out" />}
+                        {b.savingsIn > 0 && <Row label="محوّل من الخزنة الرئيسية" value={b.savingsIn} tone="in" />}
                       </div>
                     );
                   })()}
