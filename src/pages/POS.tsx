@@ -500,6 +500,8 @@ export default function POS() {
   const [lastOrderDetails, setLastOrderDetails] = useState<any>(null);
   const [showCustomerSuggestions, setShowCustomerSuggestions] = useState(false);
   const [showCheckoutModal, setShowCheckoutModal] = useState(false);
+  // تاريخ فاتورة مخصّص (لإدخال فواتير قديمة من الكاشير) — فاضي = دلوقتي. للمستخدم الرئيسي فقط.
+  const [saleDate, setSaleDate] = useState('');
   const [showHeldModal, setShowHeldModal] = useState(false);
   const [holdBusy, setHoldBusy] = useState(false);
   // نموذج حفظ فاتورة معلّقة مع عربون
@@ -1154,7 +1156,10 @@ export default function POS() {
       }
     }
 
-    const invoiceId = await checkout(currentTotal, { name: currentCustomerName, phone: currentCustomerPhone, custom_id: currentCustomId }, effectivePaidAmount, 'sale', primaryMethod as any, finalSplit as any, undefined, deferredNote, currentCouponCode, currentCouponDiscount);
+    // تاريخ مخصّص للفاتورة (فواتير قديمة) — فاضي أو غير صالح = تاريخ الآن.
+    const saleDateISO = saleDate ? (() => { const d = new Date(saleDate); return isNaN(d.getTime()) ? undefined : d.toISOString(); })() : undefined;
+    const invoiceId = await checkout(currentTotal, { name: currentCustomerName, phone: currentCustomerPhone, custom_id: currentCustomId }, effectivePaidAmount, 'sale', primaryMethod as any, finalSplit as any, undefined, deferredNote, currentCouponCode, currentCouponDiscount, undefined, saleDateISO);
+    setSaleDate('');
 
     // العربون كان دخل الخزنة وقت الحجز؛ الفاتورة سجّلته ضمن المدفوع، فنسجّل تحويله
     // (صرف بقيمة العربون) عشان ما يتحسبش مرتين.
@@ -3014,6 +3019,23 @@ export default function POS() {
                 </div>
               </div>
               ); })()}
+
+              {/* Custom invoice date (backdating old invoices) — master only */}
+              {isMaster && (
+                <div className="mt-4">
+                  <label className="text-sm font-bold text-slate-600 dark:text-slate-300 block mb-2 flex items-center gap-2">
+                    <Clock size={16} />
+                    تاريخ الفاتورة (اختياري — لإدخال فواتير قديمة)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={saleDate}
+                    onChange={(e) => setSaleDate(e.target.value)}
+                    className="w-full bg-slate-50 dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-700 focus:border-indigo-500 rounded-xl p-3 outline-none text-sm font-bold"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1 font-bold">اتركيه فاضي = تاريخ ووقت دلوقتي.</p>
+                </div>
+              )}
 
               {/* Deferred Note Input */}
               {Math.max(0, total - paidTotal - (activeDeposit?.amount || 0)) > 0 && (
