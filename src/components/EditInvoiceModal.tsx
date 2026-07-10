@@ -37,6 +37,14 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
 
+  // تعديل تاريخ/وقت الفاتورة (وضع التعديل الكامل من لوحة التحكم — مش الاستبدال).
+  const toDateInput = (iso?: string) => {
+    const d = iso ? new Date(iso) : new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const [orderDate, setOrderDate] = useState<string>(() => toDateInput(invoice.date));
+
   const total = cart.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
   const paidAmount = payKeys.reduce((s, k) => s + (pay[k] || 0), 0);
   const debt = Math.max(0, total - paidAmount);
@@ -171,7 +179,8 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       if (payKeys.reduce((s, k) => s + base[k], 0) === 0) base[invoice.payment_method || 'cash'] = oldPaid;
       updatedData = { total, paid_amount: total, paid_cash: base.cash || 0, paid_visa: base.visa || 0, paid_wallet: base.wallet || 0, paid_instapay: base.instapay || 0, paid_method5: base.method5 || 0, paid_method6: base.method6 || 0, payment_method: invoice.payment_method as any };
     } else {
-      updatedData = { total, paid_amount: paidAmount, paid_cash: pay.cash || 0, paid_visa: pay.visa || 0, paid_wallet: pay.wallet || 0, paid_instapay: pay.instapay || 0, paid_method5: pay.method5 || 0, paid_method6: pay.method6 || 0, payment_method: paymentMethod as any };
+      const newDateISO = (() => { const d = new Date(orderDate); return isNaN(d.getTime()) ? invoice.date : d.toISOString(); })();
+      updatedData = { total, paid_amount: paidAmount, paid_cash: pay.cash || 0, paid_visa: pay.visa || 0, paid_wallet: pay.wallet || 0, paid_instapay: pay.instapay || 0, paid_method5: pay.method5 || 0, paid_method6: pay.method6 || 0, payment_method: paymentMethod as any, date: newDateISO };
     }
 
     const success = await editOrder(invoice.id, updatedData, cart, reason);
@@ -358,6 +367,19 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                   </div>
                 ))}
               </div>
+              )}
+
+              {!exchangeMode && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">تاريخ ووقت الفاتورة</label>
+                  <input
+                    type="datetime-local"
+                    value={orderDate}
+                    onChange={(e) => setOrderDate(e.target.value)}
+                    className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-bold"
+                  />
+                  <p className="text-[11px] text-slate-400 mt-1 font-bold">تغيير التاريخ بيحرّك الفاتورة لتقفيل اليوم اللي بيقع فيه.</p>
+                </div>
               )}
 
               <div>
