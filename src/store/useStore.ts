@@ -194,6 +194,7 @@ export interface Order {
   date: string;
   payment_method: 'cash' | 'visa' | 'wallet' | 'instapay' | 'method5' | 'method6';
   refund_method?: string;
+  refunded_at?: string | null; // تاريخ آخر استرجاع — يُحسب المرتجع على يومه في التقفيل
   customer?: Customer;
   cashier_name?: string;
   salesperson_id?: string; // الموظف البائع (لحساب مبيعاته/أرباحه للعمولة)
@@ -1093,6 +1094,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           type: (o.type as string) as 'sale' | 'payment' ?? 'sale',
           payment_method: (o.payment_method as any) ?? 'cash',
           refund_method: (o.refund_method as string) ?? undefined,
+          refunded_at: (o.refunded_at as string) ?? undefined,
           date: o.created_at as string,
           items,
           cashier_name: (o.cashier_name as string) ?? undefined,
@@ -2222,6 +2224,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       const totalRefundAmount = returns.reduce((sum, ret) => sum + (ret.refundAmount || 0), 0);
       let finalPaidAmount = order.paid_amount || 0;
       
+      const refundedAt = new Date().toISOString();
       if (totalRefundAmount > 0) {
         finalPaidAmount = finalPaidAmount - totalRefundAmount;
         const { error: paidError } = await supabase
@@ -2240,11 +2243,20 @@ export const useStore = create<CashierStore>((set, get) => ({
         if (methodError) {
           console.warn('Could not store refund_method (column may be missing):', methodError.message);
         }
+        // تاريخ الاسترجاع — عشان التقفيل يحسب المرتجع على يومه لا يوم البيع (best-effort:
+        // العمود refunded_at ممكن يكون ناقص في قواعد قديمة → شغّلي db/36).
+        const { error: refundedAtError } = await supabase
+          .from('orders')
+          .update({ refunded_at: refundedAt })
+          .eq('id', orderId);
+        if (refundedAtError) {
+          console.warn('Could not store refunded_at (column may be missing):', refundedAtError.message);
+        }
       }
 
       const updatedOrders = state.orders.map((o, idx) =>
         idx === orderIndex
-          ? { ...o, items: updatedItems, paid_amount: finalPaidAmount, refund_method: totalRefundAmount > 0 ? refundMethod : o.refund_method }
+          ? { ...o, items: updatedItems, paid_amount: finalPaidAmount, refund_method: totalRefundAmount > 0 ? refundMethod : o.refund_method, refunded_at: totalRefundAmount > 0 ? refundedAt : (o as any).refunded_at }
           : o
       );
 

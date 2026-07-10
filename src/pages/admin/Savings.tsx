@@ -7,7 +7,7 @@ type Split = Record<string, number>;
 const zero = (): Split => { const z: Split = {}; ALL_PAYMENT_KEYS.forEach((k) => { z[k] = 0; }); return z; };
 
 export default function Savings() {
-  const { orders, storeSettings, savingsTransfer, updateSettings } = useStore();
+  const { storeSettings, savingsTransfer, updateSettings } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
@@ -51,35 +51,43 @@ export default function Savings() {
   const load = async () => {
     setLoading(true);
     try {
-      const { supabase } = await import('../../lib/supabase');
-      const [expRes, purRes, salRes, savRes] = await Promise.all([
-        supabase.from('expenses').select('*'),
-        supabase.from('purchase_invoices').select('*'),
-        supabase.from('employee_transactions').select('*'),
-        supabase.from('savings_transactions').select('*').order('created_at', { ascending: false }),
+      const { fetchAllRows } = await import('../../lib/supabase');
+      // جلب كل الصفوف (تخطّي حد 1000) عشان رصيد خزنة المحل يطلع صح مهما كثرت الحركات.
+      const [expData, purData, salData, ordData, savRows] = await Promise.all([
+        fetchAllRows('expenses'),
+        fetchAllRows('purchase_invoices'),
+        fetchAllRows('employee_transactions'),
+        fetchAllRows('orders', '*, order_items(refunded_amount)'),
+        fetchAllRows('savings_transactions'),
       ]);
+      const savRes = { data: savRows };
+      const allOrders = (ordData as any[]).map((o) => ({ ...o, items: o.order_items || [] }));
       // خزنة المحل المتاح لكل وسيلة (كل الفترات)
       const net = zero();
+      // sign=1 داخل / sign=-1 خارج. لو فيه تقسيمة غير صفر نستخدمها بإشارتها (السالب داخل زي
+      // تحصيل رصيد المورد → sign*(-قيمة) = يزيد الرصيد = صح).
       const add = (sign: number, rec: any, field: string) => {
         const vals = ALL_PAYMENT_KEYS.map((k) => +rec['paid_' + k] || 0);
-        const sum = vals.reduce((a, b) => a + b, 0);
-        if (sum > 0) { ALL_PAYMENT_KEYS.forEach((k, idx) => { net[k] += sign * vals[idx]; }); return; }
+        if (vals.some((v) => v !== 0)) { ALL_PAYMENT_KEYS.forEach((k, idx) => { net[k] += sign * vals[idx]; }); return; }
         const a = Math.abs(+rec[field] || 0);
         const m = (ALL_PAYMENT_KEYS as readonly string[]).includes(rec.payment_method) ? rec.payment_method : 'cash';
         net[m] += sign * a;
       };
-      orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
+      // التحويل الداخلي بين وسائل الدفع: يُطبَّق مباشرةً (paid السالب ينقص وسيلته، الموجب يزيدها).
+      const isInternalXfer = (c: any) => c === 'تحويل داخلي';
+      allOrders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
         if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
         const ref = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
         if (ref > 0) add(-1, { paid_amount: ref, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
       });
-      (expRes.data || []).forEach((e: any) => {
+      (expData || []).forEach((e: any) => {
         const amount = Number(e.amount) || 0;
+        if (isInternalXfer(e.category)) { ALL_PAYMENT_KEYS.forEach((k) => { net[k] += +e['paid_' + k] || 0; }); return; }
         if (amount < 0) { const absRec: any = { ...e, amount: Math.abs(amount) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(1, absRec, 'amount'); }
         else add(-1, e, 'amount');
       });
-      (purRes.data || []).forEach((p: any) => add(-1, p, 'paid_amount'));
-      (salRes.data || []).forEach((s: any) => add(-1, s, 'amount'));
+      (purData || []).forEach((p: any) => add(-1, p, 'paid_amount'));
+      (salData || []).forEach((s: any) => add(-1, s, 'amount'));
       ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(storeSettings as any, k); });
       setShopAvail(net);
 

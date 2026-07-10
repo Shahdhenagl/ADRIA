@@ -396,28 +396,34 @@ export default function POS() {
   const computeDayBudget = async (dayStr: string) => {
     setDayBudgetLoading(true);
     try {
-      const { supabase } = await import('../lib/supabase');
+      const { fetchAllRows } = await import('../lib/supabase');
       // اليوم المحاسبي يبدأ عند ساعة بداية اليوم (مثلاً 3 ص) وينتهي بعدها بـ 24 ساعة
       const { start, end } = businessDayRange(dayStr, storeSettings);
-      const [expRes, purRes, salRes] = await Promise.all([
-        supabase.from('expenses').select('*'),
-        supabase.from('purchase_invoices').select('*'),
-        supabase.from('employee_transactions').select('*'),
+      // جلب كل الصفوف (تخطّي حد 1000) عشان الرصيد الافتتاحي وحركة «قبل اليوم» تطلع صح.
+      // للطلبات: select('*') عشان نتفادى خطأ عمود refunded_at لو الـmigration لسه ما اتشغّلتش.
+      const [expData, purData, salData, ordData] = await Promise.all([
+        fetchAllRows('expenses'),
+        fetchAllRows('purchase_invoices'),
+        fetchAllRows('employee_transactions'),
+        fetchAllRows('orders', '*, order_items(refunded_amount)'),
       ]);
+      const expRes = { data: expData }, purRes = { data: purData }, salRes = { data: salData };
+      const allOrders = (ordData as any[]).map((o) => ({ ...o, date: o.created_at, items: o.order_items || [] }));
       const methods = [...ALL_PAYMENT_KEYS] as string[];
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
       // تفصيل حركة اليوم (للتقفيل): مبيعات/تحصيل/مرتجعات/استبدال/مصروفات/مشتريات/رواتب.
       const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0, savingsOut: 0, savingsIn: 0 };
+      // توزيع مبلغ على وسائل الدفع. لو فيه أي تقسيمة (paid_*) غير صفر نستخدمها بإشارتها
+      // (القيم السالبة = فلوس داخلة زي تحصيل رصيد لينا عند المورد → تقلّل الخارج = صح).
       const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) => {
         const splits = methods.map((m) => +rec[`paid_${m}`] || 0);
-        const splitsSum = splits.reduce((a, b) => a + b, 0);
-        if (splitsSum > 0) { methods.forEach((m, idx) => { t[m] += splits[idx]; }); return; }
+        if (splits.some((v) => v !== 0)) { methods.forEach((m, idx) => { t[m] += splits[idx]; }); return; }
         const amt = Math.abs(+rec[field] || 0);
         const m = mOverride || rec.payment_method || 'cash';
         if (methods.includes(m)) t[m] += amt; else t.cash += amt;
       };
-      orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
+      allOrders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
         const d = new Date(o.date);
         const inDay = d >= start && d < end;
         const before = d < start;
@@ -430,8 +436,14 @@ export default function POS() {
         }
         const refunded = (o.items || []).reduce((s: number, it: any) => s + (+it.refunded_amount || 0), 0);
         if (refunded > 0) {
-          addM(inDay ? dayOut : befOut, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
-          if (inDay) { bd.refundsTotal += refunded; bd.refundsCount += 1; }
+          // المرتجع يُحسب على يوم الاسترجاع (refunded_at) لا يوم البيع؛ لو مفيش
+          // (بيانات قديمة) نرجع لتاريخ الفاتورة كما كان.
+          const rd = new Date(o.refunded_at || o.date);
+          const rInDay = rd >= start && rd < end;
+          if (rInDay || rd < start) {
+            addM(rInDay ? dayOut : befOut, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+            if (rInDay) { bd.refundsTotal += refunded; bd.refundsCount += 1; }
+          }
         }
       });
       const addOut = (arr: any[], field: string) => (arr || []).forEach((r: any) => {
@@ -443,7 +455,22 @@ export default function POS() {
       // نستبعد فئة «رواتب» لأن كل راتب/سلفة بيتسجّل تلقائياً كمصروف + كمعاملة موظف،
       // والرواتب/السلف تُحسب من جدول employee_transactions (salRes) فقط لتفادي العدّ مرتين.
       const expensesArr = (expRes.data as any[]) || [];
-      const realExpenses = expensesArr.filter((e) => (Number(e.amount) || 0) >= 0 && e.category !== 'رواتب');
+      // التحويل الداخلي بين وسائل الدفع (كاش↔فيزا…): مالوش تأثير على الإجمالي، بس
+      // بيحرّك الرصيد بين الوسائل. بنعالجه لوحده: السالب = خارج من وسيلته، الموجب = داخل لوسيلته.
+      const isInternalXfer = (c: any) => c === 'تحويل داخلي';
+      const realExpenses = expensesArr.filter((e) => (Number(e.amount) || 0) >= 0 && e.category !== 'رواتب' && !isInternalXfer(e.category));
+      const routeXfer = (rec: any, inDay: boolean) => {
+        methods.forEach((m) => {
+          const v = +rec[`paid_${m}`] || 0;
+          if (v > 0) (inDay ? dayIn : befIn)[m] += v;
+          else if (v < 0) (inDay ? dayOut : befOut)[m] += -v;
+        });
+      };
+      expensesArr.filter((e) => isInternalXfer(e.category)).forEach((r) => {
+        const d = new Date(r.created_at);
+        if (d >= start && d < end) routeXfer(r, true);
+        else if (d < start) routeXfer(r, false);
+      });
       const manualIncomes = expensesArr.filter((e) => (Number(e.amount) || 0) < 0).map((e) => {
         const abs: any = { ...e, amount: Math.abs(+e.amount || 0) };
         methods.forEach((m) => { abs[`paid_${m}`] = Math.abs(+e[`paid_${m}`] || 0); });

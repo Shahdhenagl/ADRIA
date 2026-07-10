@@ -8,7 +8,7 @@ import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } 
 const todayStr = () => { const d = new Date(); return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); };
 
 export default function Reports() {
-  const { orders, storeSettings } = useStore();
+  const { storeSettings } = useStore();
   const cur = storeSettings.currency;
   // الوسائل المعروضة = الأربع الأساسية + أي طريقة إضافية (5/6) مفعّلة في الإعدادات
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => [k, payLabelOf(storeSettings as any, k)] as const);
@@ -16,19 +16,23 @@ export default function Reports() {
   const [to, setTo] = useState(todayStr());
   const [tab, setTab] = useState<'sales' | 'methods' | 'treasury'>('sales');
   const [extra, setExtra] = useState<{ expenses: any[]; purchases: any[]; salaries: any[] }>({ expenses: [], purchases: [], salaries: [] });
+  const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
       setLoading(true);
       try {
-        const { supabase } = await import('../../lib/supabase');
-        const [e, p, s] = await Promise.all([
-          supabase.from('expenses').select('*'),
-          supabase.from('purchase_invoices').select('*'),
-          supabase.from('employee_transactions').select('*'),
+        const { fetchAllRows } = await import('../../lib/supabase');
+        // جلب كل الصفوف (تخطّي حد 1000) عشان الرصيد الافتتاحي والخزنة يطلعوا صح.
+        const [e, p, s, o] = await Promise.all([
+          fetchAllRows('expenses'),
+          fetchAllRows('purchase_invoices'),
+          fetchAllRows('employee_transactions'),
+          fetchAllRows('orders', '*, order_items(refunded_amount)'),
         ]);
-        setExtra({ expenses: (e.data as any[]) || [], purchases: (p.data as any[]) || [], salaries: (s.data as any[]) || [] });
+        setExtra({ expenses: (e as any[]) || [], purchases: (p as any[]) || [], salaries: (s as any[]) || [] });
+        setOrders(((o as any[]) || []).map((r) => ({ ...r, date: r.created_at, items: r.order_items || [] })));
       } catch (err) { console.error(err); }
       setLoading(false);
     })();
@@ -45,18 +49,21 @@ export default function Reports() {
     const pass = (dt: any) => beforeStart ? new Date(dt) < start : (rangeOnly ? inRange(dt) : true);
     const add = (target: Record<string, number>, rec: any, field: string, methodOverride?: string) => {
       const vals = ALL_PAYMENT_KEYS.map((k) => +rec['paid_' + k] || 0);
-      const total = vals.reduce((s, x) => s + x, 0);
-      if (total > 0) { ALL_PAYMENT_KEYS.forEach((k, idx) => { target[k] += vals[idx]; }); return; }
+      if (vals.some((v) => v !== 0)) { ALL_PAYMENT_KEYS.forEach((k, idx) => { target[k] += vals[idx]; }); return; }
       const a = Math.abs(+rec[field] || 0); const m = methodOverride || ((ALL_PAYMENT_KEYS as readonly string[]).includes(rec.payment_method) ? rec.payment_method : 'cash');
       target[m] += a;
     };
-    orders.filter((o: any) => !o.is_deleted && pass(o.date)).forEach((o: any) => {
-      if (o.type === 'sale' || o.type === 'payment') add(inN, o, 'paid_amount');
+    // التحويل الداخلي بين الوسائل: السالب = خارج من وسيلته، الموجب = داخل لوسيلته.
+    const isInternalXfer = (c: any) => c === 'تحويل داخلي';
+    orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
+      if ((o.type === 'sale' || o.type === 'payment') && pass(o.date)) add(inN, o, 'paid_amount');
       const ref = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
-      if (ref > 0) add(outN, { paid_amount: ref, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+      // المرتجع على يوم الاسترجاع (refunded_at) لا يوم البيع؛ fallback للتاريخ القديم.
+      if (ref > 0 && pass(o.refunded_at || o.date)) add(outN, { paid_amount: ref, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
     });
     extra.expenses.filter((e) => pass(e.created_at)).forEach((e) => {
       const amt = Number(e.amount) || 0;
+      if (isInternalXfer(e.category)) { ALL_PAYMENT_KEYS.forEach((k) => { const v = +e['paid_' + k] || 0; if (v > 0) inN[k] += v; else if (v < 0) outN[k] += -v; }); return; }
       if (amt < 0) { const absRec: any = { ...e, amount: Math.abs(amt) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(inN, absRec, 'amount'); }
       else add(outN, e, 'amount');
     });
