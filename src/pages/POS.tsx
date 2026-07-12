@@ -11,11 +11,11 @@ import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
-import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase } from '../utils/treasury';
+import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../utils/treasury';
 
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, recordHeldDepositConversion } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, recordHeldDepositConversion } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -469,7 +469,7 @@ export default function POS() {
         if (d >= start && d < end) routeInternalTransfer(dayIn, dayOut, r);
         else if (d < start) routeInternalTransfer(befIn, befOut, r);
       });
-      const manualIncomes = expensesArr.filter((e) => (Number(e.amount) || 0) < 0).map((e) => {
+      const manualIncomes = expensesArr.filter((e) => (Number(e.amount) || 0) < 0 && !isMainTreasuryExpense(e)).map((e) => {
         const abs: any = { ...e, amount: Math.abs(+e.amount || 0) };
         methods.forEach((m) => { abs[`paid_${m}`] = Math.abs(+e[`paid_${m}`] || 0); });
         return abs;
@@ -553,6 +553,8 @@ export default function POS() {
   const [financeTransferFrom, setFinanceTransferFrom] = useState('instapay');
   const [financeTransferTo, setFinanceTransferTo] = useState('cash');
   const [financeTransferAmount, setFinanceTransferAmount] = useState('');
+  const [financeTreasury, setFinanceTreasury] = useState<'shop' | 'main'>('shop');
+  const [financeDate, setFinanceDate] = useState(() => businessDateStr(storeSettings));
   const [isSubmittingFinance, setIsSubmittingFinance] = useState(false);
 
   // ── سلفة موظف (صرف سلفة تُخصم من راتب الشهر) ──
@@ -690,48 +692,88 @@ export default function POS() {
     }
   };
 
+  // تأكيد الصرف من الخزنة الرئيسية بـ OTP للمدير (نفس مسار تحويل الخزنة).
+  const confirmMainSpendOtp = async (amount: number, details: string): Promise<boolean> => {
+    const confirmed = window.confirm(`سيتم الصرف من الخزنة الرئيسية بمبلغ ${amount.toFixed(2)} ${storeSettings.currency}.\nسيتم إرسال رمز تأكيد للمدير.`);
+    if (!confirmed) return false;
+    try {
+      const t = await saveXferToken();
+      const headers = { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) };
+      const r1 = await fetch('/api/wholesale-otp', { method: 'POST', headers, body: JSON.stringify({ action: 'request', purpose: 'savings', details }) });
+      const j1 = await r1.json();
+      if (!j1.ok) { alert('تعذّر إرسال رمز التأكيد: ' + (j1.error || '')); return false; }
+      const code = window.prompt('تم إرسال رمز التأكيد للمدير على تليجرام.\nأدخل الرمز لتأكيد الصرف من الخزنة الرئيسية:');
+      if (!code) return false;
+      const r2 = await fetch('/api/wholesale-otp', { method: 'POST', headers, body: JSON.stringify({ action: 'verify', purpose: 'savings', code: code.trim() }) });
+      const j2 = await r2.json();
+      if (!j2.ok) { alert(j2.error || 'رمز غير صحيح'); return false; }
+      return true;
+    } catch { alert('تعذّر التحقق من رمز الخزنة الرئيسية'); return false; }
+  };
+
   const handleFinanceSubmit = async () => {
     const actorName = activeCashier?.name || 'كاشير';
+    const createdAt = timestampForBusinessDate(financeDate, storeSettings);
+    const toMain = financeTreasury === 'main';
     setIsSubmittingFinance(true);
     try {
       if (financeType === 'transfer') {
         const amt = parseFloat(financeTransferAmount) || 0;
         if (amt <= 0) { alert('يرجى إدخال مبلغ صحيح'); return; }
         if (financeTransferFrom === financeTransferTo) { alert('لا يمكن التحويل لنفس وسيلة الدفع'); return; }
-        const splits: Record<string, number> = {};
-        activePayKeys.forEach((k) => { splits[k] = 0; });
-        splits[financeTransferFrom] = -amt;
-        splits[financeTransferTo] = amt;
-        await addExpense({
-          category: 'تحويل داخلي',
-          amount: 0,
-          paid_cash: splits.cash || 0,
-          paid_visa: splits.visa || 0,
-          paid_wallet: splits.wallet || 0,
-          paid_instapay: splits.instapay || 0,
-          paid_method5: splits.method5 || 0,
-          paid_method6: splits.method6 || 0,
-          note: financeNote || `تحويل ${amt} من ${payLabel(financeTransferFrom)} إلى ${payLabel(financeTransferTo)} - بواسطة ${actorName}`,
-          payment_method: 'cash'
-        } as any);
-        // Send telegram
-        fetch('/api/telegram-alert', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'transfer',
-            actor: actorName,
-            date: new Date().toISOString(),
-            description: `تحويل ${amt} من ${payLabel(financeTransferFrom)} إلى ${payLabel(financeTransferTo)}`,
-            amount: amt,
-            noteText: financeNote || ''
-          })
-        }).catch(() => {});
+
+        if (toMain) {
+          // تحويل بين طرق الدفع داخل الخزنة الرئيسية (لا يمسّ خزنة المحل)
+          const ok = await savingsConvert(financeTransferFrom, financeTransferTo, amt, `${financeNote || ''} - بواسطة ${actorName}`.trim(), createdAt);
+          if (!ok) { alert('تعذّر تنفيذ التحويل داخل الخزنة الرئيسية'); return; }
+        } else {
+          const splits: Record<string, number> = {};
+          activePayKeys.forEach((k) => { splits[k] = 0; });
+          splits[financeTransferFrom] = -amt;
+          splits[financeTransferTo] = amt;
+          await addExpense({
+            category: 'تحويل داخلي',
+            amount: 0,
+            paid_cash: splits.cash || 0,
+            paid_visa: splits.visa || 0,
+            paid_wallet: splits.wallet || 0,
+            paid_instapay: splits.instapay || 0,
+            paid_method5: splits.method5 || 0,
+            paid_method6: splits.method6 || 0,
+            note: financeNote || `تحويل ${amt} من ${payLabel(financeTransferFrom)} إلى ${payLabel(financeTransferTo)} - بواسطة ${actorName}`,
+            payment_method: 'cash',
+            created_at: createdAt
+          } as any);
+          // Send telegram
+          fetch('/api/telegram-alert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              type: 'transfer',
+              actor: actorName,
+              date: new Date().toISOString(),
+              description: `تحويل ${amt} من ${payLabel(financeTransferFrom)} إلى ${payLabel(financeTransferTo)}`,
+              amount: amt,
+              noteText: financeNote || ''
+            })
+          }).catch(() => {});
+        }
       } else {
         const total = financeTotal;
         if (total <= 0) { alert('يرجى إدخال مبالغ الدفع أولاً'); return; }
         const multiplier = financeType === 'income' ? -1 : 1;
         const primaryM = activePayKeys.map((k) => ({ name: k, amount: financeVal(k) })).sort((a, b) => b.amount - a.amount)[0].name;
+        const split: Record<string, number> = {};
+        activePayKeys.forEach((k) => { split[k] = financeVal(k); });
+
+        // صرف من الخزنة الرئيسية يتطلب OTP للمدير
+        if (toMain && financeType === 'expense') {
+          const details = `صرف من الخزنة الرئيسية (كاشير: ${actorName})\nالفئة: ${financeCategory}\nالمبلغ: ${total.toFixed(2)} ${storeSettings.currency}\nملاحظة: ${financeNote || '-'}`;
+          const ok = await confirmMainSpendOtp(total, details);
+          if (!ok) return;
+        }
+
+        const baseNote = `${financeNote || (financeType === 'income' ? 'إيراد' : 'مصروف')} - بواسطة ${actorName}`;
         await addExpense({
           category: financeCategory,
           amount: total * multiplier,
@@ -741,9 +783,17 @@ export default function POS() {
           paid_instapay: financeVal('instapay') * multiplier,
           paid_method5: financeVal('method5') * multiplier,
           paid_method6: financeVal('method6') * multiplier,
-          note: (financeNote || (financeType === 'income' ? 'إيراد' : 'مصروف')) + ` - بواسطة ${actorName}`,
-          payment_method: primaryM
+          note: toMain ? markMainTreasuryNote(baseNote) : baseNote,
+          payment_method: primaryM,
+          created_at: createdAt
         } as any);
+
+        if (toMain && financeType === 'expense') {
+          await recordMainTreasuryOut(split as any, 'main_expense', `${financeCategory}${financeNote ? ` - ${financeNote}` : ''} - ${actorName}`, createdAt);
+        } else if (toMain && financeType === 'income') {
+          await recordMainTreasuryIn(split as any, 'main_income', `${financeCategory}${financeNote ? ` - ${financeNote}` : ''} - ${actorName}`, createdAt);
+        }
+
         // Send telegram
         fetch('/api/telegram-alert', {
           method: 'POST',
@@ -753,7 +803,7 @@ export default function POS() {
             actor: actorName,
             date: new Date().toISOString(),
             amount: total,
-            description: `${financeType === 'income' ? 'إيراد' : 'مصروف'}: ${financeCategory}`,
+            description: `${financeType === 'income' ? 'إيراد' : 'مصروف'}${toMain ? ' (الخزنة الرئيسية)' : ''}: ${financeCategory}`,
             noteText: financeNote || '',
             paymentMethod: payLabel(primaryM)
           })
@@ -764,6 +814,9 @@ export default function POS() {
       setFinancePay({});
       setFinanceNote(''); setFinanceTransferAmount(''); setFinanceCategory('عام');
       setFinanceType('expense');
+      setFinanceTreasury('shop');
+      setFinanceDate(businessDateStr(storeSettings));
+      if (showDayBudget) computeDayBudget(dayBudgetDate);
     } catch (e) {
       console.error(e);
       alert('حدث خطأ أثناء حفظ المعاملة');
@@ -1657,6 +1710,50 @@ export default function POS() {
                 </button>
               </div>
 
+              {/* اختيار الخزنة: المحل أو الرئيسية */}
+              <div className="bg-gray-50 dark:bg-slate-700/40 border border-gray-200 dark:border-slate-600 rounded-2xl p-3">
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">
+                  {financeType === 'expense' ? 'مصدر الصرف' : financeType === 'income' ? 'وجهة الإيراد' : 'خزنة التحويل'}
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setFinanceTreasury('shop')}
+                    className={`py-2.5 rounded-xl font-black text-sm transition ${financeTreasury === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600'}`}
+                  >
+                    خزنة المحل
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFinanceTreasury('main')}
+                    className={`py-2.5 rounded-xl font-black text-sm transition ${financeTreasury === 'main' ? 'bg-amber-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600'}`}
+                  >
+                    الخزنة الرئيسية
+                  </button>
+                </div>
+                {financeTreasury === 'main' && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold mt-2">
+                    {financeType === 'expense'
+                      ? 'سيتم طلب رمز تأكيد من المدير، ولن يُخصم من خزنة المحل.'
+                      : financeType === 'income'
+                      ? 'سيُضاف المبلغ للخزنة الرئيسية مباشرة، ولن يدخل خزنة المحل.'
+                      : 'تحويل بين طرق الدفع داخل الخزنة الرئيسية — لا يمسّ خزنة المحل.'}
+                  </p>
+                )}
+              </div>
+
+              {/* تاريخ المعاملة */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">تاريخ المعاملة</label>
+                <input
+                  type="date"
+                  value={financeDate}
+                  max={businessDateStr(storeSettings)}
+                  onChange={e => setFinanceDate(e.target.value)}
+                  className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
+                />
+              </div>
+
               {financeType === 'transfer' ? (
                 <>
                   <div>
@@ -2416,7 +2513,7 @@ export default function POS() {
                 <MessageSquare size={20} />
               </button>
               <button
-                onClick={() => setShowFinanceModal(true)}
+                onClick={() => { setFinanceTreasury('shop'); setFinanceDate(businessDateStr(storeSettings)); setShowFinanceModal(true); }}
                 className="w-12 h-12 flex items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition-colors shadow-sm border border-emerald-100 dark:border-emerald-800/50"
                 title="معاملة مالية"
               >
