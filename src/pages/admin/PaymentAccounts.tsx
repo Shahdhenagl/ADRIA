@@ -1,38 +1,81 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
-import { activePaymentKeys, payLabelOf, openingBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
-import { buildPaymentLedger } from '../../utils/paymentLedger';
+import { activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
+import { buildPaymentLedger, type LedgerEntry } from '../../utils/paymentLedger';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 
 const METHOD_ICON: Record<string, any> = { cash: Banknote, visa: CreditCard, wallet: WalletIcon, instapay: Smartphone, method5: Zap, method6: Landmark };
 const KIND_LABEL: Record<string, string> = { sale: 'بيع', payment: 'سداد آجل', return: 'مرتجع', expense: 'مصروف', purchase: 'شراء', transfer: 'تحويل' };
+// وصف حركة الخزنة الرئيسية حسب مصدرها في جدول savings_transactions.
+const SAV_SOURCE_LABEL: Record<string, string> = { day_closing: 'تقفيل اليوم', shop_transfer: 'تحويل من المحل', to_shop: 'تحويل للمحل', convert: 'تحويل بين الطرق', main_expense: 'صرف من الخزنة الرئيسية', manual: 'حركة يدوية' };
+
+// نطاق الكشف: خزنة المحل، الخزنة الرئيسية، أو الاتنين مع بعض. كل واحدة حساب مستقل
+// برصيد افتتاحي خاص بها؛ في «الكل» التحويلات بينهم بتتقابل (خروج+دخول) فمفيش ازدواج.
+type Scope = 'shop' | 'main' | 'all';
+const SCOPE_LABEL: Record<Scope, string> = { shop: 'خزنة المحل', main: 'الخزنة الرئيسية', all: 'الكل' };
 
 export default function PaymentAccounts() {
   const { orders, expenses, purchaseInvoices, storeSettings, updateSettings } = useStore();
   const cur = storeSettings.currency;
   const methods = activePaymentKeys(storeSettings as any);
 
-  const openingOf = (k: string): number => openingBalanceOf(storeSettings as any, k);
+  const [scope, setScope] = useState<Scope>('shop');
+  // الرصيد الافتتاحي للوسيلة حسب النطاق: المحل (paymentOpeningBalances)،
+  // الرئيسية (savingsOpeningBalances)، أو مجموعهما في «الكل».
+  const openingOf = (k: string): number => {
+    if (scope === 'main') return savingsOpeningBalanceOf(storeSettings as any, k);
+    if (scope === 'all') return openingBalanceOf(storeSettings as any, k) + savingsOpeningBalanceOf(storeSettings as any, k);
+    return openingBalanceOf(storeSettings as any, k);
+  };
 
   const [selected, setSelected] = useState<PaymentKey>(methods[0] || 'cash');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [search, setSearch] = useState('');
 
-  // محرّر الأرصدة الافتتاحية
+  // حركات الخزنة الرئيسية (جدول مستقل) — تُحمّل مرة عند فتح الصفحة.
+  const [savRows, setSavRows] = useState<any[]>([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { fetchAllRows } = await import('../../lib/supabase');
+        setSavRows((await fetchAllRows('savings_transactions')) as any[]);
+      } catch (e) { console.error('load savings_transactions:', e); }
+    })();
+  }, []);
+
+  // محرّر الأرصدة الافتتاحية (لخزنة المحل فقط — الرئيسية بتتعدّل من صفحة الخزنة الرئيسية)
   const [openingDraft, setOpeningDraft] = useState<Record<string, string>>({});
   const [savingOpen, setSavingOpen] = useState(false);
   useEffect(() => {
     const d: Record<string, string> = {};
-    methods.forEach((k) => { d[k] = String(openingOf(k)); });
+    methods.forEach((k) => { d[k] = String(openingBalanceOf(storeSettings as any, k)); });
     setOpeningDraft(d);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeSettings.paymentOpeningBalances, storeSettings.initial_balance, methods.join(',')]);
 
-  const ledger = useMemo(() => buildPaymentLedger(orders, expenses, purchaseInvoices), [orders, expenses, purchaseInvoices]);
+  // كشف خزنة المحل (فواتير/مصاريف/مشتريات) — يستبعد المعلّم بـ [MAIN_TREASURY].
+  const shopLedger = useMemo(() => buildPaymentLedger(orders, expenses, purchaseInvoices), [orders, expenses, purchaseInvoices]);
+  // كشف الخزنة الرئيسية (حساب مستقل) من جدول savings_transactions.
+  const mainLedger = useMemo<LedgerEntry[]>(() => (savRows || []).map((t) => {
+    const amt = Number(t.amount) || 0;
+    return {
+      id: `sav:${t.id}`,
+      date: t.created_at,
+      method: t.method as PaymentKey,
+      desc: t.note || SAV_SOURCE_LABEL[t.source] || 'حركة خزنة رئيسية',
+      inAmount: t.direction === 'in' ? amt : 0,
+      outAmount: t.direction === 'out' ? amt : 0,
+      kind: t.source === 'main_expense' ? 'expense' : 'transfer',
+    };
+  }), [savRows]);
+  // الكشف الفعّال حسب النطاق المختار.
+  const ledger = useMemo<LedgerEntry[]>(() => (
+    scope === 'main' ? mainLedger : scope === 'all' ? [...shopLedger, ...mainLedger] : shopLedger
+  ), [scope, shopLedger, mainLedger]);
 
   // ملخص كل الوسائل (كل الفترات)
   const summary = useMemo(() => {
@@ -46,7 +89,7 @@ export default function PaymentAccounts() {
     }
     return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ledger, methods.join(','), storeSettings.paymentOpeningBalances, storeSettings.initial_balance]);
+  }, [ledger, scope, methods.join(','), storeSettings.paymentOpeningBalances, storeSettings.initial_balance, storeSettings.savingsOpeningBalances]);
 
   // كشف الوسيلة المختارة
   const statement = useMemo(() => {
@@ -71,7 +114,7 @@ export default function PaymentAccounts() {
     const closing = running;
     return { rows, periodOpening, totalIn, totalOut, closing };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ledger, selected, from, to, search, storeSettings.paymentOpeningBalances, storeSettings.initial_balance]);
+  }, [ledger, scope, selected, from, to, search, storeSettings.paymentOpeningBalances, storeSettings.initial_balance, storeSettings.savingsOpeningBalances]);
 
   const saveOpening = async () => {
     setSavingOpen(true);
@@ -98,8 +141,8 @@ export default function PaymentAccounts() {
     }));
     const ws = XLSX.utils.json_to_sheet([{ 'البيان': 'رصيد افتتاحي', 'الرصيد': statement.periodOpening.toFixed(2) }, ...rows]);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, payLabelOf(storeSettings as any, selected).slice(0, 28));
-    XLSX.writeFile(wb, `كشف_${payLabelOf(storeSettings as any, selected)}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, `${payLabelOf(storeSettings as any, selected)} ${SCOPE_LABEL[scope]}`.slice(0, 28));
+    XLSX.writeFile(wb, `كشف_${payLabelOf(storeSettings as any, selected)}_${SCOPE_LABEL[scope]}.xlsx`);
   };
 
   const [exporting, setExporting] = useState(false);
@@ -135,7 +178,7 @@ export default function PaymentAccounts() {
         pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, imgHeight);
         heightLeft -= pdfHeight;
       }
-      pdf.save(`كشف_${payLabelOf(storeSettings as any, selected)}.pdf`);
+      pdf.save(`كشف_${payLabelOf(storeSettings as any, selected)}_${SCOPE_LABEL[scope]}.pdf`);
     } catch (e) {
       console.error(e);
       alert('تعذّر تصدير PDF');
@@ -151,6 +194,13 @@ export default function PaymentAccounts() {
       <div>
         <h1 className="text-2xl md:text-3xl font-black text-slate-800 dark:text-white flex items-center gap-3"><Landmark className="text-indigo-600" size={28} /> كشوف حسابات وسائل الدفع</h1>
         <p className="text-slate-500 mt-1 text-sm font-medium">كشف حساب بالمعاملات لكل وسيلة (وارد/صادر ورصيد جارٍ)، مع رصيد افتتاحي مستقل لكل وسيلة. الفواتير المقسّمة بتظهر نصيب كل وسيلة على حدة.</p>
+      </div>
+
+      {/* فلتر النطاق: خزنة المحل / الخزنة الرئيسية / الكل — كل خزنة حساب مستقل */}
+      <div className="inline-flex bg-slate-100 dark:bg-slate-800 rounded-2xl p-1 gap-1">
+        {(['all', 'shop', 'main'] as Scope[]).map((s) => (
+          <button key={s} onClick={() => setScope(s)} className={`px-4 py-2 rounded-xl text-sm font-black transition ${scope === s ? 'bg-indigo-600 text-white shadow' : 'text-slate-600 dark:text-slate-300 hover:bg-white/60 dark:hover:bg-slate-700/60'}`}>{SCOPE_LABEL[s]}</button>
+        ))}
       </div>
 
       {/* ملخص أرصدة كل الوسائل */}
@@ -169,10 +219,11 @@ export default function PaymentAccounts() {
         })}
       </div>
 
-      {/* الأرصدة الافتتاحية */}
+      {/* الأرصدة الافتتاحية (لخزنة المحل فقط) */}
+      {scope === 'shop' && (
       <details className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 p-5">
-        <summary className="cursor-pointer font-black text-slate-800 dark:text-white flex items-center gap-2"><Banknote size={18} className="text-emerald-600" /> الأرصدة الافتتاحية لكل وسيلة</summary>
-        <p className="text-[11px] text-slate-400 mt-2 mb-3">الرصيد اللي كان موجود في كل وسيلة قبل ما تبدأ تسجّل على النظام. بيظهر كأول سطر في الكشف ويُضاف للرصيد.</p>
+        <summary className="cursor-pointer font-black text-slate-800 dark:text-white flex items-center gap-2"><Banknote size={18} className="text-emerald-600" /> الأرصدة الافتتاحية لكل وسيلة (خزنة المحل)</summary>
+        <p className="text-[11px] text-slate-400 mt-2 mb-3">الرصيد اللي كان موجود في كل وسيلة بخزنة المحل قبل ما تبدأ تسجّل على النظام. بيظهر كأول سطر في الكشف ويُضاف للرصيد. (الرصيد الافتتاحي للخزنة الرئيسية بيتعدّل من صفحة الخزنة الرئيسية.)</p>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {methods.map((k) => (
             <div key={k}>
@@ -183,6 +234,7 @@ export default function PaymentAccounts() {
         </div>
         <button onClick={saveOpening} disabled={savingOpen} className="mt-3 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black px-5 py-2.5 rounded-xl flex items-center gap-2"><Save size={18} /> {savingOpen ? 'جاري الحفظ...' : 'حفظ الأرصدة الافتتاحية'}</button>
       </details>
+      )}
 
       {/* أدوات الكشف */}
       <div className="flex flex-wrap items-end gap-3">
@@ -209,7 +261,7 @@ export default function PaymentAccounts() {
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">
         <div>
           <div className="text-lg font-black text-slate-800 dark:text-white">{storeSettings.name}</div>
-          <div className="text-sm font-bold text-indigo-600">كشف حساب: {payLabelOf(storeSettings as any, selected)}</div>
+          <div className="text-sm font-bold text-indigo-600">كشف حساب: {payLabelOf(storeSettings as any, selected)} · {SCOPE_LABEL[scope]}</div>
         </div>
         <div className="text-left text-[11px] text-slate-500 font-semibold">
           <div>الفترة: {periodLabel}</div>
