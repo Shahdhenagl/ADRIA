@@ -43,6 +43,9 @@ export default function Finance() {
     return (o.paid_amount || 0) - (debtPaymentsByInvoice.get(o.id) || 0) + totalRefunded;
   };
 
+  // المرتجع يُحسب على يوم الاسترجاع (refunded_at) لا يوم البيع؛ fallback للبيانات القديمة.
+  const refundDateOf = (o: any) => (o as any).refunded_at || o.date;
+
 
   
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
@@ -101,9 +104,9 @@ export default function Finance() {
       .reduce((sum, o) => sum + getInitialPaidAmount(o), 0);
     
     const returnsOut = activeOrders
-      .filter(o => new Date(o.date) < startOfPeriod)
+      .filter(o => new Date(refundDateOf(o)) < startOfPeriod)
       .reduce((sum, o) => sum + calculateCashRefunded(o), 0);
-    
+
     const expensesOut = expenses
       .filter(e => new Date(e.date) < startOfPeriod)
       .filter(e => !isMainTreasuryExpense(e))
@@ -178,7 +181,7 @@ export default function Finance() {
       .reduce((sum, o) => sum + getSafeMethodAmount(o, method, 'paid_amount'), 0);
     
     const returnsOut = activeOrders
-      .filter(o => new Date(o.date) < startOfPeriod && (o.refund_method || getPrimaryMethod(o)) === method)
+      .filter(o => new Date(refundDateOf(o)) < startOfPeriod && (o.refund_method || getPrimaryMethod(o)) === method)
       .reduce((sum, o) => sum + calculateCashRefunded(o), 0);
 
     const expensesOut = expenses
@@ -199,25 +202,18 @@ export default function Finance() {
   // 2. Period Transactions
   const periodTransactions = useMemo(() => {
     const selDate = new Date(selectedDate);
+    const matchDate = (dateVal: any) => {
+      const d = new Date(dateVal);
+      if (filterType === 'monthly') return d.getFullYear() === selDate.getFullYear() && d.getMonth() === selDate.getMonth();
+      if (filterType === 'yearly') return d.getFullYear() === selDate.getFullYear();
+      return getDateStr(dateVal) === selectedDate;
+    };
     return {
-      orders: activeOrders.filter(o => {
-        const d = new Date(o.date);
-        if (filterType === 'monthly') return d.getFullYear() === selDate.getFullYear() && d.getMonth() === selDate.getMonth();
-        if (filterType === 'yearly') return d.getFullYear() === selDate.getFullYear();
-        return getDateStr(o.date) === selectedDate;
-      }),
-      expenses: expenses.filter(e => {
-        const d = new Date(e.date);
-        if (filterType === 'monthly') return d.getFullYear() === selDate.getFullYear() && d.getMonth() === selDate.getMonth();
-        if (filterType === 'yearly') return d.getFullYear() === selDate.getFullYear();
-        return getDateStr(e.date) === selectedDate;
-      }),
-      purchases: purchaseInvoices.filter(inv => {
-        const d = new Date(inv.created_at);
-        if (filterType === 'monthly') return d.getFullYear() === selDate.getFullYear() && d.getMonth() === selDate.getMonth();
-        if (filterType === 'yearly') return d.getFullYear() === selDate.getFullYear();
-        return getDateStr(inv.created_at) === selectedDate;
-      })
+      orders: activeOrders.filter(o => matchDate(o.date)),
+      expenses: expenses.filter(e => matchDate(e.date)),
+      purchases: purchaseInvoices.filter(inv => matchDate(inv.created_at)),
+      // المرتجعات تُجمَّع على يوم الاسترجاع (refunded_at) مستقلّةً عن يوم البيع.
+      refundOrders: activeOrders.filter(o => calculateCashRefunded(o) > 0 && matchDate(refundDateOf(o))),
     };
   }, [activeOrders, expenses, purchaseInvoices, selectedDate, filterType]);
 
@@ -263,7 +259,7 @@ export default function Finance() {
   }, [purchaseInvoices]);
   const dailyExpensesTotal = periodTransactions.expenses.filter(e => e.amount > 0 && !isMainTreasuryExpense(e)).reduce((sum, e) => sum + e.amount, 0);
   const dailyPurchasesTotal = periodTransactions.purchases.filter(inv => !isMainTreasuryPurchase(inv)).reduce((sum, inv) => sum + inv.paid_amount, 0);
-  const dailyReturnsValue = periodTransactions.orders.reduce((sum, o) => {
+  const dailyReturnsValue = periodTransactions.refundOrders.reduce((sum, o) => {
     return sum + calculateCashRefunded(o);
   }, 0);
   const invoiceProfitTotal = periodTransactions.orders.reduce((sum, order) => sum + calculateInvoiceProfit(order), 0);
@@ -274,7 +270,7 @@ export default function Finance() {
   // 3. Payment Method Breakdown (Daily)
   const getDailyByMethod = (method: string) => {
     const inc = periodTransactions.orders.reduce((sum, o) => sum + getSafeMethodAmount(o, method, 'paid_amount'), 0);
-    const returnsOut = periodTransactions.orders
+    const returnsOut = periodTransactions.refundOrders
       .filter(o => (o.refund_method || getPrimaryMethod(o)) === method)
       .reduce((sum, o) => sum + calculateCashRefunded(o), 0);
     const outExp = periodTransactions.expenses.filter(e => !isMainTreasuryExpense(e)).reduce((sum, e) => sum + getSafeMethodAmount(e, method, 'amount'), 0);
@@ -318,28 +314,30 @@ export default function Finance() {
         original: o,
         originType: 'order'
       });
+    });
 
+    // صفوف المرتجعات تُدرَج على يوم الاسترجاع (refunded_at) لا يوم البيع.
+    periodTransactions.refundOrders.forEach(o => {
       const returnedVal = calculateCashRefunded(o);
-
-      if (returnedVal > 0) {
-        const primaryMethod = o.refund_method || getPrimaryMethod(o);
-        list.push({
-          id: `${o.id}-return`,
-          type: 'مرتجع مبيعات',
-          amount: returnedVal,
-          method: primaryMethod,
-          split: {
-            cash: primaryMethod === 'cash' ? returnedVal : 0,
-            visa: primaryMethod === 'visa' ? returnedVal : 0,
-            wallet: primaryMethod === 'wallet' ? returnedVal : 0,
-            instapay: primaryMethod === 'instapay' ? returnedVal : 0
-          },
-          note: `مرتجع من فاتورة #${o.id}`,
-          isOut: true,
-          time: new Date(o.date).toLocaleString('ar-SA'),
-          rawDate: o.date
-        });
-      }
+      if (returnedVal <= 0) return;
+      const primaryMethod = o.refund_method || getPrimaryMethod(o);
+      const rDate = refundDateOf(o);
+      list.push({
+        id: `${o.id}-return`,
+        type: 'مرتجع مبيعات',
+        amount: returnedVal,
+        method: primaryMethod,
+        split: {
+          cash: primaryMethod === 'cash' ? returnedVal : 0,
+          visa: primaryMethod === 'visa' ? returnedVal : 0,
+          wallet: primaryMethod === 'wallet' ? returnedVal : 0,
+          instapay: primaryMethod === 'instapay' ? returnedVal : 0
+        },
+        note: `مرتجع من فاتورة #${o.id}`,
+        isOut: true,
+        time: new Date(rDate).toLocaleString('ar-SA'),
+        rawDate: rDate
+      });
     });
 
     periodTransactions.expenses.forEach(e => {
