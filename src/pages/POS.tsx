@@ -13,6 +13,9 @@ import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../utils/treasury';
 
+// فئة قيد تسوية الجرد: يضبط رصيد خزنة المحل ليطابق الكاش الفعلي المعدود.
+// يُحسب ضمن الداخل/الخارج (عشان الرصيد يتصحّح) لكن له خانته المستقلة في التفصيل.
+const RECONCILE_CAT = 'تسوية جرد الخزنة';
 
 export default function POS() {
   const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, recordHeldDepositConversion } = useStore();
@@ -22,6 +25,10 @@ export default function POS() {
   const [saveXferOtp, setSaveXferOtp] = useState('');
   const [saveXferSent, setSaveXferSent] = useState(false);
   const [saveXferBusy, setSaveXferBusy] = useState(false);
+  // جرد/ضبط رصيد الخزنة: إدخال الكاش الفعلي المعدود → قيد تسوية يطابق الرصيد للحقيقة.
+  const [showReconcile, setShowReconcile] = useState(false);
+  const [reconcileCounts, setReconcileCounts] = useState<Record<string, string>>({});
+  const [reconcileBusy, setReconcileBusy] = useState(false);
   const PAY_KEYS = activePaymentKeys(storeSettings as any).map((k) => [k, payLabelOf(storeSettings as any, k)] as const);
   const saveXferToken = async () => { const { supabase } = await import('../lib/supabase'); const { data } = await supabase.auth.getSession(); return data.session?.access_token; };
   const saveXferTotal = PAY_KEYS.reduce((s, [k]) => s + (Number(saveXfer[k]) || 0), 0);
@@ -65,6 +72,63 @@ export default function POS() {
       if (ok) { alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);
+  };
+  // فتح لوحة الجرد: تعبئة الحقول بالرصيد المحسوب الحالي لكل طريقة.
+  const openReconcile = () => {
+    const a = dayBudget?.shopAvail || {};
+    const next: Record<string, string> = {};
+    activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = (Number(a[k]) || 0).toFixed(2); });
+    setReconcileCounts(next);
+    setShowReconcile(true);
+  };
+  // تنفيذ التسوية: يقارن المعدود بالمحسوب ويسجّل قيد إيراد/مصروف تسوية لكل فرق.
+  const handleReconcile = async () => {
+    const a = dayBudget?.shopAvail || {};
+    const keys = activePaymentKeys(storeSettings as any);
+    const incSplit: Record<string, number> = {};
+    const expSplit: Record<string, number> = {};
+    let incTotal = 0, expTotal = 0;
+    keys.forEach((k) => {
+      const counted = parseFloat(reconcileCounts[k] || '') || 0;
+      const current = Number(a[k]) || 0;
+      const diff = Math.round((counted - current) * 100) / 100;
+      if (diff > 0.009) { incSplit[k] = diff; incTotal += diff; }
+      else if (diff < -0.009) { expSplit[k] = -diff; expTotal += -diff; }
+    });
+    if (incTotal < 0.01 && expTotal < 0.01) { alert('لا يوجد فرق — الرصيد مطابق للمعدود ✅'); return; }
+    if (!window.confirm(`سيتم تسجيل قيد تسوية جرد لضبط رصيد الخزنة على الكاش الفعلي:\n${incTotal > 0.009 ? `زيادة: +${incTotal.toFixed(2)} ${storeSettings.currency}\n` : ''}${expTotal > 0.009 ? `عجز: -${expTotal.toFixed(2)} ${storeSettings.currency}\n` : ''}متأكد؟`)) return;
+    setReconcileBusy(true);
+    try {
+      const actorName = activeCashier?.name || 'كاشير';
+      const createdAt = timestampForBusinessDate(dayBudgetDate, storeSettings);
+      // زيادة (المعدود أكبر من المحسوب) → قيد إيراد تسوية (اصطلاح الإيراد: القيم بالسالب).
+      if (incTotal > 0.009) {
+        await addExpense({
+          category: RECONCILE_CAT, amount: -incTotal,
+          paid_cash: -(incSplit.cash || 0), paid_visa: -(incSplit.visa || 0), paid_wallet: -(incSplit.wallet || 0),
+          paid_instapay: -(incSplit.instapay || 0), paid_method5: -(incSplit.method5 || 0), paid_method6: -(incSplit.method6 || 0),
+          note: `تسوية جرد (زيادة) - بواسطة ${actorName}`, payment_method: 'cash', created_at: createdAt,
+        } as any);
+      }
+      // عجز (المعدود أقل من المحسوب) → قيد مصروف تسوية.
+      if (expTotal > 0.009) {
+        await addExpense({
+          category: RECONCILE_CAT, amount: expTotal,
+          paid_cash: expSplit.cash || 0, paid_visa: expSplit.visa || 0, paid_wallet: expSplit.wallet || 0,
+          paid_instapay: expSplit.instapay || 0, paid_method5: expSplit.method5 || 0, paid_method6: expSplit.method6 || 0,
+          note: `تسوية جرد (عجز) - بواسطة ${actorName}`, payment_method: 'cash', created_at: createdAt,
+        } as any);
+      }
+      // تنبيه تليجرام للشفافية (التسوية حركة حسّاسة).
+      fetch('/api/telegram-alert', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'reconcile', actor: actorName, date: new Date().toISOString(), amount: incTotal - expTotal, description: `تسوية جرد الخزنة: ${incTotal > 0.009 ? `+${incTotal.toFixed(2)} ` : ''}${expTotal > 0.009 ? `-${expTotal.toFixed(2)}` : ''}`, noteText: '' }),
+      }).catch(() => {});
+      alert('تم ضبط رصيد الخزنة على الكاش الفعلي ✅');
+      setShowReconcile(false);
+      computeDayBudget(dayBudgetDate);
+    } catch (e) { console.error(e); alert('تعذّر تنفيذ التسوية'); }
+    setReconcileBusy(false);
   };
   const [posSeason, setPosSeason] = useState<'all' | 'summer' | 'winter' | 'annual'>('all');
   const [historyToday, setHistoryToday] = useState(true);
@@ -420,7 +484,7 @@ export default function POS() {
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
       // تفصيل حركة اليوم (للتقفيل): مبيعات/تحصيل/مرتجعات/استبدال/مصروفات/مشتريات/رواتب.
-      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0, savingsOut: 0, savingsIn: 0 };
+      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0, savingsOut: 0, savingsIn: 0, reconcileIn: 0, reconcileOut: 0 };
       // توزيع مبلغ على وسائل الدفع (منطق مشترك في src/utils/treasury.ts).
       const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) =>
         applySplit(t, rec, field, { methodOverride: mOverride });
@@ -479,10 +543,12 @@ export default function POS() {
       // تحويلات الخزنة الرئيسية: نقل فلوس بين خزنة المحل والخزنة الرئيسية — مش مصروف/إيراد،
       // بيفضل ضمن الداخل/الخارج (لأن الفلوس فعلاً بتتحرّك من الدرج) لكن ليه خانته المستقلة.
       const isSavingsXfer = (c: any) => c === 'تحويل للخزنة الرئيسية' || c === 'تحويل من الخزنة الرئيسية';
+      const isReconcile = (c: any) => c === RECONCILE_CAT;
       manualIncomes.forEach((r: any) => {
         const d = new Date(r.created_at);
         // العربون داخل ضمن totalIn لكنه يُعرض في خانة الحجوزات مش «إيرادات أخرى».
-        if (d >= start && d < end) { addM(dayIn, r, 'amount'); if (isSavingsXfer(r.category)) bd.savingsIn += Math.abs(+r.amount || 0); else if (!isResv(r.category)) bd.otherIncome += Math.abs(+r.amount || 0); }
+        // تسوية الجرد (زيادة) داخلة ضمن totalIn لكن لها خانتها المستقلة.
+        if (d >= start && d < end) { addM(dayIn, r, 'amount'); if (isSavingsXfer(r.category)) bd.savingsIn += Math.abs(+r.amount || 0); else if (isReconcile(r.category)) bd.reconcileIn += Math.abs(+r.amount || 0); else if (!isResv(r.category)) bd.otherIncome += Math.abs(+r.amount || 0); }
         else if (d < start) addM(befIn, r, 'amount');
       });
       addOut(shopExpenses, 'amount');
@@ -491,9 +557,11 @@ export default function POS() {
       // تفصيل الخارج لليوم حسب النوع (باستثناء حركات الحجز — لها خانتها).
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
       // المصروفات الحقيقية = بدون الحجز وبدون تحويلات الخزنة الرئيسية (كلٌّ في خانته).
-      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // محوّل للخزنة الرئيسية اليوم (فلوس طالعة من درج المحل للخزنة — مش مصروف).
       bd.savingsOut = shopExpenses.filter(inDayRec).filter((e) => isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      // تسوية جرد (نقص): فرق سالب بين المعدود والمحسوب — له خانته المستقلة.
+      bd.reconcileOut = shopExpenses.filter(inDayRec).filter((e) => isReconcile(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // صافي المحصّل من الحجوزات اليوم = عرابين محصّلة − عرابين مرتجعة (category='حجز').
       bd.reservationsNet = expensesArr.filter(inDayRec).filter((e) => e.category === 'حجز').reduce((s, e) => s - (Number(e.amount) || 0), 0);
       bd.purchasesTotal = ((purRes.data as any[]) || []).filter((p) => !isMainTreasuryPurchase(p)).filter(inDayRec).reduce((s, p) => s + Math.abs(+p.paid_amount || 0), 0);
@@ -2062,6 +2130,8 @@ export default function POS() {
                         <Row label="الرواتب والسلف" value={b.salariesTotal} tone="out" />
                         {b.savingsOut > 0 && <Row label="محوّل للخزنة الرئيسية" value={b.savingsOut} tone="out" />}
                         {b.savingsIn > 0 && <Row label="محوّل من الخزنة الرئيسية" value={b.savingsIn} tone="in" />}
+                        {b.reconcileIn > 0 && <Row label="تسوية جرد (زيادة)" value={b.reconcileIn} tone="in" />}
+                        {b.reconcileOut > 0 && <Row label="تسوية جرد (عجز)" value={b.reconcileOut} tone="out" />}
                       </div>
                     );
                   })()}
@@ -2082,6 +2152,38 @@ export default function POS() {
                     </div>
                   </div>
                   <p className="text-[11px] text-slate-400 text-center">{(() => { const h = storeSettings.dayStartHour ?? 3; const lbl = h === 0 ? '12 منتصف الليل' : h < 12 ? `${h} صباحاً` : h === 12 ? '12 ظهراً' : `${h - 12} مساءً`; return `اليوم يبدأ الساعة ${lbl} وينتهي في نفس الساعة من اليوم التالي.`; })()}</p>
+
+                  {/* Reconcile drawer (cash count) */}
+                  {perm('savings') && (
+                  <div className="border-t border-slate-100 dark:border-slate-700 pt-3">
+                    {!showReconcile ? (
+                      <button onClick={openReconcile} className="w-full bg-slate-700 hover:bg-slate-800 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2">📋 ضبط رصيد الخزنة (جرد)</button>
+                    ) : (
+                      <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-700 rounded-2xl p-3 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-black text-slate-800 dark:text-slate-200">ضبط رصيد الخزنة (جرد)</span>
+                          <button onClick={() => setShowReconcile(false)} className="text-xs font-bold text-slate-500">إغلاق</button>
+                        </div>
+                        <p className="text-[11px] text-slate-500">اكتب الكاش الفعلي الموجود دلوقتي لكل طريقة. النظام هيسجّل قيد تسوية يخلّي الرصيد مطابق للحقيقة (الفرق يظهر كزيادة/عجز).</p>
+                        <div className="grid grid-cols-2 gap-2">
+                          {PAY_KEYS.map(([k]) => {
+                            const cur = Number(dayBudget.shopAvail?.[k]) || 0;
+                            const counted = parseFloat(reconcileCounts[k] || '') || 0;
+                            const diff = Math.round((counted - cur) * 100) / 100;
+                            return (
+                              <div key={k}>
+                                <label className="text-[11px] font-bold text-slate-500">{payLabel(k)} <span className="text-slate-400">(محسوب {cur.toFixed(2)})</span></label>
+                                <input className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-bold" type="number" dir="ltr" value={reconcileCounts[k] ?? ''} onChange={(e) => setReconcileCounts((s) => ({ ...s, [k]: e.target.value }))} />
+                                {Math.abs(diff) > 0.009 && <div className={`text-[10px] font-bold ${diff > 0 ? 'text-green-600' : 'text-red-600'}`}>{diff > 0 ? 'زيادة' : 'عجز'}: {Math.abs(diff).toFixed(2)}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <button onClick={handleReconcile} disabled={reconcileBusy} className="w-full bg-slate-700 hover:bg-slate-800 disabled:opacity-50 text-white font-black py-2.5 rounded-xl">{reconcileBusy ? 'جاري...' : 'تأكيد الجرد وضبط الرصيد'}</button>
+                      </div>
+                    )}
+                  </div>
+                  )}
 
                   {/* Transfer to savings */}
                   {perm('savings') && (
