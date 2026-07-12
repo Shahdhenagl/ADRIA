@@ -10,7 +10,8 @@ export default function Cashiers() {
     name: '',
     password: '',
     phone: '',
-    photo_url: ''
+    photo_url: '',
+    full_access: false
   });
   
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -21,7 +22,7 @@ export default function Cashiers() {
   }, []);
 
   const resetForm = () => {
-    setFormData({ name: '', password: '', phone: '', photo_url: '' });
+    setFormData({ name: '', password: '', phone: '', photo_url: '', full_access: false });
     setEditingCashier(null);
   };
 
@@ -32,7 +33,8 @@ export default function Cashiers() {
         name: cashier.name,
         password: cashier.password || '',
         phone: cashier.phone,
-        photo_url: cashier.photo_url || ''
+        photo_url: cashier.photo_url || '',
+        full_access: !!cashier.full_access
       });
     } else {
       resetForm();
@@ -145,7 +147,12 @@ export default function Cashiers() {
             </div>
             
             <div className="pt-14 p-8">
-              <h3 className="text-xl font-black text-slate-800 dark:text-white mb-4">{cashier.name}</h3>
+              <div className="flex items-center gap-2 flex-wrap mb-4">
+                <h3 className="text-xl font-black text-slate-800 dark:text-white">{cashier.name}</h3>
+                {cashier.full_access && (
+                  <span className="text-[10px] font-black bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 px-2 py-0.5 rounded-full">✓ صلاحية كاملة</span>
+                )}
+              </div>
               
               <div className="space-y-3 mb-8">
                 <div className="flex items-center gap-3 text-slate-500 dark:text-slate-400">
@@ -267,6 +274,19 @@ export default function Cashiers() {
                       />
                     </div>
                   </div>
+
+                  <label className={`flex items-center gap-3 p-4 rounded-2xl border-2 cursor-pointer transition-all ${formData.full_access ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/20' : 'border-transparent bg-slate-50 dark:bg-slate-900'}`}>
+                    <input
+                      type="checkbox"
+                      checked={formData.full_access}
+                      onChange={(e) => setFormData({ ...formData, full_access: e.target.checked })}
+                      className="w-5 h-5 accent-emerald-600"
+                    />
+                    <div>
+                      <div className="font-black text-slate-800 dark:text-white">صلاحية كاملة (تجاوز OTP)</div>
+                      <div className="text-xs font-bold text-slate-400">ينفّذ العمليات الحسّاسة (صرف/تحويل الخزنة الرئيسية، حذف فاتورة، أسعار الجملة) مباشرة بدون رمز تأكيد من المدير.</div>
+                    </div>
+                  </label>
                </div>
 
                <div className="flex gap-4 pt-6">

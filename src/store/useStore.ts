@@ -152,6 +152,8 @@ export interface Cashier {
   created_at: string;
   /** Supabase Auth email used to sign this cashier in (set by the provisioning script). */
   email?: string;
+  /** صلاحية كاملة: تجاوز الـ OTP في العمليات الحسّاسة (صرف/تحويل الخزنة الرئيسية، حذف فاتورة، أسعار الجملة). */
+  full_access?: boolean;
 }
 
 export interface PurchaseItem {

@@ -73,6 +73,18 @@ export default function POS() {
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);
   };
+  // كاشير بصلاحية كاملة: تحويل مباشر للخزنة الرئيسية بدون OTP.
+  const saveXferDirect = async () => {
+    if (!saveXferValidate()) return;
+    setSaveXferBusy(true);
+    try {
+      const split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number } = { cash: 0, visa: 0, wallet: 0, instapay: 0 };
+      activePaymentKeys(storeSettings as any).forEach((k) => { split[k] = Number(saveXfer[k]) || 0; });
+      const ok = await savingsTransfer(split, 'in', 'day_closing');
+      if (ok) { alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
+    } catch { alert('تعذّر تنفيذ التحويل'); }
+    setSaveXferBusy(false);
+  };
   // فتح لوحة الجرد: تعبئة الحقول بالرصيد المحسوب الحالي لكل طريقة.
   const openReconcile = () => {
     const a = dayBudget?.shopAvail || {};
@@ -216,6 +228,12 @@ export default function POS() {
   const deleteOrderWithOtp = async (o: any) => {
     const reason = prompt('سبب حذف الفاتورة؟', 'حذف من الكاشير');
     if (reason === null) return;
+    // كاشير بصلاحية كاملة: حذف مباشر بدون OTP.
+    if (cashierFullAccess) {
+      const ok = await deleteOrder(o.id, reason || 'حذف من الكاشير');
+      if (ok) alert('تم حذف الفاتورة وإرجاع الكمية للمخزون ✅');
+      return;
+    }
     try {
       const { supabase } = await import('../lib/supabase');
       const { data } = await supabase.auth.getSession();
@@ -239,9 +257,11 @@ export default function POS() {
   const [otpInput, setOtpInput] = useState('');
   const [otpBusy, setOtpBusy] = useState(false);
   const [otpSent, setOtpSent] = useState(false);
-  const pricesHidden = invoiceType !== 'retail' && !wholesaleUnlocked;
   // صلاحيات الكاشير (المدير يرى الكل؛ غيره حسب الإعدادات)
   const isMaster = activeCashier?.id === 'master';
+  // صلاحية كاملة: كاشير يتجاوز الـ OTP في العمليات الحسّاسة (صرف/تحويل الخزنة الرئيسية، حذف فاتورة، أسعار الجملة).
+  const cashierFullAccess = isMaster || !!(activeCashier as any)?.full_access;
+  const pricesHidden = invoiceType !== 'retail' && !wholesaleUnlocked && !cashierFullAccess;
   const perm = (k: string) => isMaster || ((storeSettings as any).cashierPermissions?.[k] !== false);
   // تسميات وسائل الدفع
   const payLabel = (m: string) => payLabelOf(storeSettings as any, m);
@@ -783,6 +803,10 @@ export default function POS() {
 
   // تأكيد الصرف من الخزنة الرئيسية بـ OTP للمدير (نفس مسار تحويل الخزنة).
   const confirmMainSpendOtp = async (amount: number, details: string): Promise<boolean> => {
+    // كاشير بصلاحية كاملة: تأكيد بسيط بدون OTP.
+    if (cashierFullAccess) {
+      return window.confirm(`سيتم الصرف من الخزنة الرئيسية بمبلغ ${amount.toFixed(2)} ${storeSettings.currency}. متأكد؟`);
+    }
     const confirmed = window.confirm(`سيتم الصرف من الخزنة الرئيسية بمبلغ ${amount.toFixed(2)} ${storeSettings.currency}.\nسيتم إرسال رمز تأكيد للمدير.`);
     if (!confirmed) return false;
     try {
@@ -2258,7 +2282,9 @@ export default function POS() {
                           ))}
                         </div>
                         <div className="text-center font-black text-slate-700 dark:text-slate-200">الإجمالي: {saveXferTotal.toFixed(2)} {storeSettings.currency}</div>
-                        {!saveXferSent ? (
+                        {cashierFullAccess ? (
+                          <button onClick={saveXferDirect} disabled={saveXferBusy} className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-black py-2.5 rounded-xl">{saveXferBusy ? 'جاري...' : '🏦 تنفيذ التحويل مباشرة'}</button>
+                        ) : !saveXferSent ? (
                           <button onClick={saveXferRequest} disabled={saveXferBusy} className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black py-2.5 rounded-xl">{saveXferBusy ? 'جاري...' : '📲 إرسال للمدير وطلب رمز التأكيد'}</button>
                         ) : (
                           <div className="space-y-2">
