@@ -10,7 +10,7 @@ import html2canvas from 'html2canvas-pro';
 const METHOD_ICON: Record<string, any> = { cash: Banknote, visa: CreditCard, wallet: WalletIcon, instapay: Smartphone, method5: Zap, method6: Landmark };
 const KIND_LABEL: Record<string, string> = { sale: 'بيع', payment: 'سداد آجل', return: 'مرتجع', expense: 'مصروف', purchase: 'شراء', transfer: 'تحويل' };
 // وصف حركة الخزنة الرئيسية حسب مصدرها في جدول savings_transactions.
-const SAV_SOURCE_LABEL: Record<string, string> = { day_closing: 'تقفيل اليوم', shop_transfer: 'تحويل من المحل', to_shop: 'تحويل للمحل', convert: 'تحويل بين الطرق', main_expense: 'صرف من الخزنة الرئيسية', manual: 'حركة يدوية' };
+const SAV_SOURCE_LABEL: Record<string, string> = { day_closing: 'تقفيل اليوم', shop_transfer: 'تحويل من المحل', to_shop: 'تحويل للمحل', convert: 'تحويل بين الطرق', main_expense: 'صرف من الخزنة الرئيسية', main_income: 'إيداع بالخزنة الرئيسية', manual: 'حركة يدوية' };
 
 // نطاق الكشف: خزنة المحل، الخزنة الرئيسية، أو الاتنين مع بعض. كل واحدة حساب مستقل
 // برصيد افتتاحي خاص بها؛ في «الكل» التحويلات بينهم بتتقابل (خروج+دخول) فمفيش ازدواج.

@@ -567,8 +567,9 @@ interface CashierStore {
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<boolean>;
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
   savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, direction: 'in' | 'out', source: string, note?: string) => Promise<boolean>;
-  savingsConvert: (from: string, to: string, amount: number, note?: string) => Promise<boolean>;
-  recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string) => Promise<boolean>;
+  savingsConvert: (from: string, to: string, amount: number, note?: string, createdAt?: string) => Promise<boolean>;
+  recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string) => Promise<boolean>;
+  recordMainTreasuryIn: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string) => Promise<boolean>;
   updateExpense: (id: string, expense: Partial<Expense>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
 
@@ -3920,9 +3921,10 @@ setupRealtime: () => {
       paid_method6: (expense as any).paid_method6 || 0,
       note: expense.note,
       payment_method: expense.payment_method,
-      car_id: expense.car_id || null
+      car_id: expense.car_id || null,
+      ...((expense as any).created_at ? { created_at: (expense as any).created_at } : {})
     }).select().single();
-    
+
     if (error) {
       console.error("Add Expense Error:", error);
       return;
@@ -4065,7 +4067,7 @@ setupRealtime: () => {
     return true;
   },
 
-  savingsConvert: async (from, to, amount, note) => {
+  savingsConvert: async (from, to, amount, note, createdAt) => {
     const amt = Number(amount) || 0;
     if (amt <= 0 || !from || !to || from === to) return false;
 
@@ -4075,8 +4077,8 @@ setupRealtime: () => {
     const toLabel = payLabelOf(get().storeSettings as any, to);
     const convNote = `تحويل ${fromLabel} ➜ ${toLabel}${note ? ` — ${note}` : ''}`;
     const rows = [
-      { direction: 'out', amount: amt, method: from, source: 'convert', note: convNote },
-      { direction: 'in', amount: amt, method: to, source: 'convert', note: convNote },
+      { direction: 'out', amount: amt, method: from, source: 'convert', note: convNote, ...(createdAt ? { created_at: createdAt } : {}) },
+      { direction: 'in', amount: amt, method: to, source: 'convert', note: convNote, ...(createdAt ? { created_at: createdAt } : {}) },
     ];
     const { error } = await supabase.from('savings_transactions').insert(rows);
     if (error) {
@@ -4096,14 +4098,14 @@ setupRealtime: () => {
     return true;
   },
 
-  recordMainTreasuryOut: async (split, source, note) => {
+  recordMainTreasuryOut: async (split, source, note, createdAt) => {
     const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
     if (total <= 0) return false;
 
     const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
       .filter((m) => s[m] > 0)
-      .map((m) => ({ direction: 'out', amount: s[m], method: m, source: source || 'main_expense', note: note || null }));
+      .map((m) => ({ direction: 'out', amount: s[m], method: m, source: source || 'main_expense', note: note || null, ...(createdAt ? { created_at: createdAt } : {}) }));
     if (rows.length) {
       const { error } = await supabase.from('savings_transactions').insert(rows);
       if (error) {
@@ -4117,6 +4119,35 @@ setupRealtime: () => {
       actor: getActorName(get()),
       currency: get().storeSettings.currency,
       description: `صرف من الخزنة الرئيسية: ${total.toFixed(2)}${note ? ` — ${note}` : ''}`,
+      amount: total,
+      paymentMethod: primaryOfSplit(s),
+      date: new Date().toISOString(),
+    });
+    return true;
+  },
+
+  // إيداع مباشر في الخزنة الرئيسية (إيراد) — مرآة لـ recordMainTreasuryOut بدون OTP.
+  recordMainTreasuryIn: async (split, source, note, createdAt) => {
+    const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
+    const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
+    if (total <= 0) return false;
+
+    const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
+      .filter((m) => s[m] > 0)
+      .map((m) => ({ direction: 'in', amount: s[m], method: m, source: source || 'main_income', note: note || null, ...(createdAt ? { created_at: createdAt } : {}) }));
+    if (rows.length) {
+      const { error } = await supabase.from('savings_transactions').insert(rows);
+      if (error) {
+        console.error('recordMainTreasuryIn error:', error);
+        return false;
+      }
+    }
+
+    sendTelegramAlert({
+      type: 'savings_in',
+      actor: getActorName(get()),
+      currency: get().storeSettings.currency,
+      description: `إيداع بالخزنة الرئيسية: ${total.toFixed(2)}${note ? ` — ${note}` : ''}`,
       amount: total,
       paymentMethod: primaryOfSplit(s),
       date: new Date().toISOString(),

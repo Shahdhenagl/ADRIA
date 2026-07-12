@@ -24,7 +24,7 @@ export default function Overview() {
     }
   });
 
-  const extraIncomes = expenses.filter(e => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
+  const extraIncomes = expenses.filter(e => e.amount < 0 && !isMainTreasuryExpense(e)).reduce((sum, e) => sum + Math.abs(e.amount), 0);
   totalNetRevenue += extraIncomes;
 
   // Calculate Net Safe Balance

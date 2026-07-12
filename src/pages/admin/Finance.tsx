@@ -18,7 +18,7 @@ export default function Finance() {
   const { 
     expenses, orders, storeSettings, addExpense, updateExpense, 
     deleteExpense, deletePurchaseInvoice, purchaseInvoices,
-    deleteOrder, editOrder, updatePurchaseInvoice, recordMainTreasuryOut
+    deleteOrder, editOrder, updatePurchaseInvoice, recordMainTreasuryOut, recordMainTreasuryIn, savingsConvert
   } = useStore();
   const activeOrders = useMemo(() => orders.filter((order) => !order.is_deleted), [orders]);
 
@@ -72,7 +72,8 @@ export default function Finance() {
     transfer_from: 'instapay',
     transfer_to: 'cash',
     transfer_amount: '',
-    treasury_source: 'shop'
+    treasury_source: 'shop',
+    date: new Date().toISOString().split('T')[0]
   });
 
   // --- Calculations ---
@@ -226,7 +227,7 @@ export default function Finance() {
                                   return sum + alloc.toSales + (alloc.toServices || 0);
                                 }, 0);
   const collectedFromOther = periodTransactions.orders.filter(o => o.type === 'payment').reduce((sum, o) => sum + allocatePayment(o, activeOrders).toOldDebt, 0) + 
-                             periodTransactions.expenses.filter(e => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
+                             periodTransactions.expenses.filter(e => e.amount < 0 && !isMainTreasuryExpense(e)).reduce((sum, e) => sum + Math.abs(e.amount), 0);
   const dailyIncome = collectedFromInvoices + collectedFromOther;
 
   const totalCustomerDebt = useMemo(() => {
@@ -447,14 +448,15 @@ export default function Finance() {
         transfer_from: 'instapay',
         transfer_to: 'cash',
         transfer_amount: '',
-        treasury_source: isMainTreasuryExpense(expense) ? 'main' : 'shop'
+        treasury_source: isMainTreasuryExpense(expense) ? 'main' : 'shop',
+        date: getDateStr(expense.date)
       });
     } else {
       setEditingExpense(null);
-      setFormData({ 
+      setFormData({
         transaction_type: 'expense',
-        category: 'عام', 
-        amount: '', 
+        category: 'عام',
+        amount: '',
         paid_cash: '',
         paid_visa: '',
         paid_wallet: '',
@@ -465,7 +467,8 @@ export default function Finance() {
         transfer_from: 'instapay',
         transfer_to: 'cash',
         transfer_amount: '',
-        treasury_source: 'shop'
+        treasury_source: 'shop',
+        date: getDateStr(new Date())
       });
     }
     setShowModal(true);
@@ -489,7 +492,8 @@ export default function Finance() {
       transfer_from: 'instapay',
       transfer_to: 'cash',
       transfer_amount: '',
-      treasury_source: 'shop'
+      treasury_source: 'shop',
+      date: getDateStr(order.date)
     });
     setShowModal(true);
   };
@@ -513,7 +517,8 @@ export default function Finance() {
       transfer_from: 'instapay',
       transfer_to: 'cash',
       transfer_amount: '',
-      treasury_source: isMainTreasuryPurchase(purchase) ? 'main' : 'shop'
+      treasury_source: isMainTreasuryPurchase(purchase) ? 'main' : 'shop',
+      date: getDateStr(purchase.created_at)
     });
     setShowModal(true);
   };
@@ -558,12 +563,34 @@ export default function Finance() {
   };
 
   const handleSubmit = async () => {
+    // التاريخ المختار → طابع زمني: لو اليوم نستخدم الوقت الحالي (ترتيب طبيعي)،
+    // ولو يوم تاني نثبّت الساعة 12 ظهراً بتوقيت المتصفح.
+    const pickedCreatedAt = formData.date === getDateStr(new Date())
+      ? new Date().toISOString()
+      : new Date(`${formData.date}T12:00:00`).toISOString();
+
     // Handle transfer type separately
     if (formData.transaction_type === 'transfer' && !editingExpense && !editingOrder && !editingPurchase) {
       const transferAmt = parseFloat(formData.transfer_amount) || 0;
       if (transferAmt <= 0) return alert('يرجى إدخال مبلغ التحويل');
       if (formData.transfer_from === formData.transfer_to) return alert('لا يمكن التحويل لنفس وسيلة الدفع');
-      
+
+      // تحويل بين طرق الدفع داخل الخزنة الرئيسية (لا يمسّ خزنة المحل)
+      if (formData.treasury_source === 'main') {
+        setLoading(true);
+        try {
+          const ok = await savingsConvert(formData.transfer_from, formData.transfer_to, transferAmt, formData.note || undefined, pickedCreatedAt);
+          if (!ok) { alert('تعذّر تنفيذ التحويل داخل الخزنة الرئيسية'); return; }
+          setShowModal(false);
+        } catch (e: any) {
+          console.error(e);
+          alert('حدث خطأ أثناء حفظ التحويل');
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
       // Validate balance
       const sourceBalance = methodsBreakdown[formData.transfer_from as keyof typeof methodsBreakdown] || 0;
       if (transferAmt > sourceBalance) {
@@ -587,7 +614,8 @@ export default function Finance() {
           paid_method5: splits.method5 || 0,
           paid_method6: splits.method6 || 0,
           note: formData.note || `تحويل ${transferAmt} من ${getMethodLabel(formData.transfer_from)} إلى ${getMethodLabel(formData.transfer_to)}`,
-          payment_method: 'cash'
+          payment_method: 'cash',
+          created_at: pickedCreatedAt
         } as any);
 
         // Send telegram notification
@@ -628,6 +656,7 @@ export default function Finance() {
 
     const isAddingNew = !editingExpense && !editingOrder && !editingPurchase;
     const spendFromMainTreasury = isAddingNew && formData.transaction_type === 'expense' && formData.treasury_source === 'main';
+    const incomeToMainTreasury = isAddingNew && formData.transaction_type === 'income' && formData.treasury_source === 'main';
 
     if (isAddingNew) {
       setLoading(true);
@@ -692,12 +721,15 @@ export default function Finance() {
           paid_instapay: insta * multiplier,
           paid_method5: m5 * multiplier,
           paid_method6: m6 * multiplier,
-          note: spendFromMainTreasury ? markMainTreasuryNote(formData.note) : formData.note,
-          payment_method: primaryM
+          note: (spendFromMainTreasury || incomeToMainTreasury) ? markMainTreasuryNote(formData.note) : formData.note,
+          payment_method: primaryM,
+          created_at: pickedCreatedAt
         };
         await addExpense(expenseData as any);
         if (spendFromMainTreasury) {
-          await recordMainTreasuryOut(split as any, 'main_expense', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`);
+          await recordMainTreasuryOut(split as any, 'main_expense', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`, pickedCreatedAt);
+        } else if (incomeToMainTreasury) {
+          await recordMainTreasuryIn(split as any, 'main_income', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`, pickedCreatedAt);
         }
       }
       setShowModal(false);
@@ -1369,9 +1401,11 @@ export default function Finance() {
                     </button>
                   </div>
 
-                  {formData.transaction_type === 'expense' && !editingExpense && (
+                  {!editingExpense && (
                     <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
-                      <label className="block text-sm font-bold text-slate-700 mb-2">مصدر الصرف</label>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">
+                        {formData.transaction_type === 'expense' ? 'مصدر الصرف' : formData.transaction_type === 'income' ? 'وجهة الإيراد' : 'خزنة التحويل'}
+                      </label>
                       <div className="grid grid-cols-2 gap-2">
                         <button
                           type="button"
@@ -1389,8 +1423,27 @@ export default function Finance() {
                         </button>
                       </div>
                       {formData.treasury_source === 'main' && (
-                        <p className="text-[11px] text-amber-700 font-bold mt-2">سيتم طلب OTP من المدير، ولن يتم خصم المبلغ من خزنة المحل.</p>
+                        <p className="text-[11px] text-amber-700 font-bold mt-2">
+                          {formData.transaction_type === 'expense'
+                            ? 'سيتم طلب OTP من المدير، ولن يتم خصم المبلغ من خزنة المحل.'
+                            : formData.transaction_type === 'income'
+                            ? 'سيتم إضافة المبلغ للخزنة الرئيسية مباشرة، ولن يدخل خزنة المحل.'
+                            : 'تحويل بين طرق الدفع داخل الخزنة الرئيسية — لا يمسّ خزنة المحل.'}
+                        </p>
                       )}
+                    </div>
+                  )}
+
+                  {!editingExpense && (
+                    <div className="mb-4">
+                      <label className="block text-sm font-bold text-slate-700 mb-2">تاريخ المعاملة</label>
+                      <input
+                        type="date"
+                        value={formData.date}
+                        max={getDateStr(new Date())}
+                        onChange={e => setFormData({ ...formData, date: e.target.value })}
+                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-2 focus:ring-indigo-500/20 outline-none font-bold"
+                      />
                     </div>
                   )}
 
