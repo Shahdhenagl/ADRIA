@@ -766,6 +766,57 @@ function primaryOfSplit(split?: Record<string, number>): string {
   return best;
 }
 
+function isExchangeAdjustmentForOrder(expense: any, orderId: string, diff?: number): boolean {
+  const note = String(expense?.note || '');
+  const category = String(expense?.category || '');
+  const hasInvoiceRef = note.includes(`#${orderId}`) || note.includes(`فاتورة #${orderId}`);
+  const mentionsExchange = note.includes('استبدال') || category.includes('استبدال');
+  if (!hasInvoiceRef || !mentionsExchange) return false;
+
+  const exchangeDiff = Number(diff);
+  if (Number.isFinite(exchangeDiff) && Math.abs(exchangeDiff) >= 0.01) {
+    const expectedAmount = exchangeDiff > 0 ? -Math.abs(exchangeDiff) : Math.abs(exchangeDiff);
+    return Math.abs((Number(expense?.amount) || 0) - expectedAmount) < 0.01;
+  }
+
+  return true;
+}
+
+async function deleteExchangeAdjustmentsForOrder(
+  orderId: string,
+  diff?: number,
+  knownExpenses?: any[]
+): Promise<string[]> {
+  let candidates = (knownExpenses || []).filter((expense) => isExchangeAdjustmentForOrder(expense, orderId, diff));
+
+  try {
+    const { data, error } = await supabase
+      .from('expenses')
+      .select('*')
+      .ilike('note', `%#${orderId}%`);
+
+    if (!error && data) {
+      candidates = (data as any[]).filter((expense) => isExchangeAdjustmentForOrder(expense, orderId, diff));
+    } else if (error) {
+      console.warn('Could not fetch exchange adjustment expenses:', error.message);
+    }
+
+    const ids = Array.from(new Set(candidates.map((expense) => expense.id).filter(Boolean)));
+    if (ids.length === 0) return [];
+
+    const { error: deleteError } = await supabase.from('expenses').delete().in('id', ids);
+    if (deleteError) {
+      console.warn('Could not delete exchange adjustment expenses:', deleteError.message);
+      return [];
+    }
+
+    return ids;
+  } catch (error) {
+    console.warn('Failed to clean exchange adjustment expenses:', error);
+    return [];
+  }
+}
+
 function getPublicInvoiceUrl(invoiceId: string): string {
   if (typeof window === 'undefined') return `https://cashier-branch3.vercel.app/view-invoice/${invoiceId}`;
   const baseUrl = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
@@ -1151,20 +1202,37 @@ export const useStore = create<CashierStore>((set, get) => ({
       try {
         const { data: expData } = await supabase.from('expenses').select('*').order('created_at', { ascending: false });
         if (expData) {
+          const deletedExchangeOrders = orders.filter((order) => order.is_deleted && order.exchange_data);
+          const expenses = (expData as any[]).map(e => ({
+            id: e.id,
+            category: e.category,
+            amount: e.amount,
+            paid_cash: e.paid_cash || 0,
+            paid_visa: e.paid_visa || 0,
+            paid_wallet: e.paid_wallet || 0,
+            paid_instapay: e.paid_instapay || 0,
+            paid_method5: e.paid_method5 || 0,
+            paid_method6: e.paid_method6 || 0,
+            note: e.note,
+            payment_method: e.payment_method ?? 'cash',
+            date: e.created_at,
+            car_id: e.car_id
+          }));
+          const orphanExchangeAdjustments = expenses.filter((expense) =>
+            deletedExchangeOrders.some((order) =>
+              isExchangeAdjustmentForOrder(expense, order.id, order.exchange_data?.diff)
+            )
+          );
+          if (orphanExchangeAdjustments.length > 0) {
+            const ids = orphanExchangeAdjustments.map((expense) => expense.id);
+            const { error: cleanupError } = await supabase.from('expenses').delete().in('id', ids);
+            if (cleanupError) {
+              console.warn('Could not delete orphan exchange adjustment expenses:', cleanupError.message);
+            }
+          }
+          const hiddenAdjustmentIds = new Set(orphanExchangeAdjustments.map((expense) => expense.id));
           set({
-            expenses: (expData as any[]).map(e => ({
-              id: e.id,
-              category: e.category,
-              amount: e.amount,
-              paid_cash: e.paid_cash || 0,
-              paid_visa: e.paid_visa || 0,
-              paid_wallet: e.paid_wallet || 0,
-              paid_instapay: e.paid_instapay || 0,
-              note: e.note,
-              payment_method: e.payment_method ?? 'cash',
-              date: e.created_at,
-              car_id: e.car_id
-            }))
+            expenses: expenses.filter((expense) => !hiddenAdjustmentIds.has(expense.id))
           });
         }
       } catch (e) {
@@ -2380,12 +2448,23 @@ export const useStore = create<CashierStore>((set, get) => ({
         }
       }
 
+      const removedExchangeAdjustmentIds = order.exchange_data
+        ? await deleteExchangeAdjustmentsForOrder(orderId, order.exchange_data?.diff, state.expenses)
+        : [];
+      const removedExchangeAdjustmentSet = new Set(removedExchangeAdjustmentIds);
+
       set({
         orders: updatedOrders,
         products: updatedProducts,
+        expenses: removedExchangeAdjustmentIds.length > 0
+          ? state.expenses.filter((expense) => !removedExchangeAdjustmentSet.has(expense.id))
+          : state.expenses,
       });
 
       new BroadcastChannel('cashier-sync').postMessage('sync_products');
+      if (removedExchangeAdjustmentIds.length > 0) {
+        new BroadcastChannel('cashier-sync').postMessage('sync_finance');
+      }
       sendTelegramAlert({
         type: 'delete_invoice',
         actor: getActorName(state),
