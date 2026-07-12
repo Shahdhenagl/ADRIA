@@ -631,7 +631,7 @@ interface CashierStore {
   addEmployee: (employee: Omit<Employee, 'id' | 'created_at'>) => Promise<void>;
   updateEmployee: (id: string, employee: Partial<Employee>) => Promise<void>;
   deleteEmployee: (id: string) => Promise<void>;
-  addEmployeeTransaction: (transaction: Omit<EmployeeTransaction, 'id' | 'created_at'>) => Promise<void>;
+  addEmployeeTransaction: (transaction: Omit<EmployeeTransaction, 'id' | 'created_at'> & { created_at?: string }) => Promise<void>;
   updateEmployeeTransaction: (id: string, transaction: Partial<Omit<EmployeeTransaction, 'id' | 'created_at'>>) => Promise<void>;
   deleteEmployeeTransaction: (id: string) => Promise<void>;
   addEmployeeLeave: (leave: Omit<EmployeeLeave, 'id' | 'created_at'>) => Promise<void>;
@@ -5016,7 +5016,8 @@ setupRealtime: () => {
         paid_method5: (transaction as any).paid_method5 || 0,
         paid_method6: (transaction as any).paid_method6 || 0,
         note: note,
-        payment_method: transaction.payment_method
+        payment_method: transaction.payment_method,
+        ...((transaction as any).created_at ? { created_at: (transaction as any).created_at } : {})
       } as any);
 
       set((state) => ({ employeeTransactions: [data as EmployeeTransaction, ...state.employeeTransactions] }));

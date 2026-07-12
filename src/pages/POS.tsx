@@ -553,7 +553,8 @@ export default function POS() {
       });
       addOut(shopExpenses, 'amount');
       addOut(((purRes.data as any[]) || []).filter((p) => !isMainTreasuryPurchase(p)), 'paid_amount');
-      addOut(salRes.data as any[], 'amount');
+      // سلف/رواتب الخزنة الرئيسية (المعلّمة) تُستبعد من خصم درج المحل — لها مسارها في savings.
+      addOut(((salRes.data as any[]) || []).filter((t) => !isMainTreasuryExpense(t)), 'amount');
       // تفصيل الخارج لليوم حسب النوع (باستثناء حركات الحجز — لها خانتها).
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
       // المصروفات الحقيقية = بدون الحجز وبدون تحويلات الخزنة الرئيسية (كلٌّ في خانته).
@@ -565,7 +566,7 @@ export default function POS() {
       // صافي المحصّل من الحجوزات اليوم = عرابين محصّلة − عرابين مرتجعة (category='حجز').
       bd.reservationsNet = expensesArr.filter(inDayRec).filter((e) => e.category === 'حجز').reduce((s, e) => s - (Number(e.amount) || 0), 0);
       bd.purchasesTotal = ((purRes.data as any[]) || []).filter((p) => !isMainTreasuryPurchase(p)).filter(inDayRec).reduce((s, p) => s + Math.abs(+p.paid_amount || 0), 0);
-      bd.salariesTotal = ((salRes.data as any[]) || []).filter(inDayRec).reduce((s, t) => s + Math.abs(+t.amount || 0), 0);
+      bd.salariesTotal = ((salRes.data as any[]) || []).filter((t) => !isMainTreasuryExpense(t)).filter(inDayRec).reduce((s, t) => s + Math.abs(+t.amount || 0), 0);
       const sum = (o: Record<string, number>) => methods.reduce((s, m) => s + (o[m] || 0), 0);
       // الرصيد الافتتاحي = مجموع الأرصدة الافتتاحية لكل وسائل الدفع (كاش + فيزا + محافظ...) وليس الكاش فقط.
       const opening = totalOpeningBalance(storeSettings as any) + sum(befIn) - sum(befOut);
@@ -632,12 +633,14 @@ export default function POS() {
   const setAdvance = (k: string, v: string) => setAdvancePay((s) => ({ ...s, [k]: v }));
   const advanceVal = (k: string) => parseFloat(advancePay[k] || '') || 0;
   const [advanceNote, setAdvanceNote] = useState('');
+  const [advanceTreasury, setAdvanceTreasury] = useState<'shop' | 'main'>('shop');
+  const [advanceDate, setAdvanceDate] = useState(() => businessDateStr(storeSettings));
   const [isSubmittingAdvance, setIsSubmittingAdvance] = useState(false);
   const canEmployeeAdvance = isMaster || !!(storeSettings as any).allowCashierEmployeeAdvance;
   const advanceTotal = activePayKeys.reduce((s, k) => s + advanceVal(k), 0);
 
   const resetAdvanceForm = () => {
-    setAdvanceEmpId(''); setAdvancePay({}); setAdvanceNote('');
+    setAdvanceEmpId(''); setAdvancePay({}); setAdvanceNote(''); setAdvanceTreasury('shop'); setAdvanceDate(businessDateStr(storeSettings));
   };
 
   // ── طباعة باركود منتج من الكاشير ──
@@ -684,10 +687,22 @@ export default function POS() {
       .map((k) => ({ name: k, amount: advanceVal(k) }))
       .sort((a, b) => b.amount - a.amount)[0].name as any;
     const actorName = activeCashier?.name || 'كاشير';
+    const createdAt = timestampForBusinessDate(advanceDate, storeSettings);
+    const toMain = advanceTreasury === 'main';
+    const split = { cash: advanceVal('cash'), visa: advanceVal('visa'), wallet: advanceVal('wallet'), instapay: advanceVal('instapay'), method5: advanceVal('method5'), method6: advanceVal('method6') };
 
     setIsSubmittingAdvance(true);
     try {
-      // يسجّل السلفة (تُخصم تلقائياً من راتب الشهر) + يخصم المبلغ من الخزنة كمصروف رواتب
+      // صرف من الخزنة الرئيسية يتطلب OTP للمدير
+      if (toMain) {
+        const details = `صرف سلفة موظف من الخزنة الرئيسية (كاشير: ${actorName})\nالموظف: ${emp?.name || ''}\nالمبلغ: ${total.toFixed(2)} ${storeSettings.currency}\nملاحظة: ${advanceNote || '-'}`;
+        const ok = await confirmMainSpendOtp(total, details);
+        if (!ok) { setIsSubmittingAdvance(false); return; }
+      }
+
+      const baseNote = (advanceNote ? `${advanceNote} - ` : '') + `سلفة بواسطة ${actorName}`;
+      // يسجّل السلفة (تُخصم تلقائياً من راتب الشهر) + يخصم المبلغ من الخزنة كمصروف رواتب.
+      // لو الخزنة الرئيسية: نعلّم الملاحظة بـ [MAIN_TREASURY] فتُستبعد من درج المحل، وتُسجّل في savings.
       await addEmployeeTransaction({
         employee_id: advanceEmpId,
         amount: total,
@@ -699,10 +714,15 @@ export default function POS() {
         paid_instapay: advanceVal('instapay'),
         paid_method5: advanceVal('method5'),
         paid_method6: advanceVal('method6'),
-        month: new Date().toISOString().slice(0, 7),
+        month: advanceDate.slice(0, 7),
         deductions: 0,
-        note: (advanceNote ? `${advanceNote} - ` : '') + `سلفة بواسطة ${actorName}`,
+        note: toMain ? markMainTreasuryNote(baseNote) : baseNote,
+        created_at: createdAt,
       } as any);
+
+      if (toMain) {
+        await recordMainTreasuryOut(split as any, 'main_expense', `سلفة موظف: ${emp?.name || ''}${advanceNote ? ` - ${advanceNote}` : ''}`, createdAt);
+      }
 
       // تنبيه المدير على تليجرام
       fetch('/api/telegram-alert', {
@@ -722,6 +742,7 @@ export default function POS() {
       alert('تم صرف السلفة بنجاح ✅ (سيتم خصمها من راتب الشهر)');
       setShowAdvanceModal(false);
       resetAdvanceForm();
+      if (showDayBudget) computeDayBudget(dayBudgetDate);
     } catch (e) {
       console.error(e);
       alert('حدث خطأ أثناء صرف السلفة');
@@ -1972,6 +1993,31 @@ export default function POS() {
                 <span className="text-xl font-black text-amber-600">{advanceTotal.toLocaleString()} {storeSettings.currency}</span>
               </div>
 
+              {/* مصدر صرف السلفة: خزنة المحل أو الرئيسية */}
+              <div className="bg-gray-50 dark:bg-slate-700/40 border border-gray-200 dark:border-slate-600 rounded-2xl p-3">
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">مصدر صرف السلفة</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setAdvanceTreasury('shop')} className={`py-2.5 rounded-xl font-black text-sm transition ${advanceTreasury === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600'}`}>خزنة المحل</button>
+                  <button type="button" onClick={() => setAdvanceTreasury('main')} className={`py-2.5 rounded-xl font-black text-sm transition ${advanceTreasury === 'main' ? 'bg-amber-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-gray-200 dark:border-slate-600'}`}>الخزنة الرئيسية</button>
+                </div>
+                {advanceTreasury === 'main' && (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold mt-2">سيتم طلب رمز تأكيد من المدير، ولن تُخصم السلفة من خزنة المحل.</p>
+                )}
+              </div>
+
+              {/* تاريخ صرف السلفة */}
+              <div>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">تاريخ صرف السلفة</label>
+                <input
+                  type="date"
+                  value={advanceDate}
+                  max={businessDateStr(storeSettings)}
+                  onChange={(e) => setAdvanceDate(e.target.value)}
+                  className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 font-bold"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">تُخصم من راتب شهر {advanceDate.slice(0, 7)}.</p>
+              </div>
+
               <div>
                 <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">سبب / ملاحظة السلفة</label>
                 <textarea
@@ -2623,7 +2669,7 @@ export default function POS() {
               </button>
               {canEmployeeAdvance && (
                 <button
-                  onClick={() => setShowAdvanceModal(true)}
+                  onClick={() => { resetAdvanceForm(); setShowAdvanceModal(true); }}
                   className="w-12 h-12 flex items-center justify-center rounded-xl bg-amber-50 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400 hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors shadow-sm border border-amber-100 dark:border-amber-800/50"
                   title="صرف سلفة لموظف"
                 >
