@@ -7,6 +7,7 @@
  */
 import { ALL_PAYMENT_KEYS, splitFromRow, primaryMethod, type PaymentKey } from './paymentMethods';
 import { calculateCashRefunded } from './returns';
+import { isMainTreasuryExpense, isMainTreasuryPurchase } from './treasury';
 
 export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'purchase' | 'transfer';
 
@@ -107,6 +108,7 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
   }
 
   for (const e of expenses || []) {
+    if (isMainTreasuryExpense(e)) continue;
     const sum = splitsSumAbs(e);
     const isTransfer = Math.abs(e.amount || 0) < 0.001 && sum > 0;
     if (isTransfer) {
@@ -146,6 +148,7 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
   }
 
   for (const inv of purchases || []) {
+    if (isMainTreasuryPurchase(inv)) continue;
     const total = inv.paid_amount || 0;
     if (total <= 0.001) continue;
     for (const k of ALL_PAYMENT_KEYS) {

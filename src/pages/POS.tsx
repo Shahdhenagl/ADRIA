@@ -11,7 +11,7 @@ import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
-import { applySplit, isInternalTransfer, routeInternalTransfer } from '../utils/treasury';
+import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase } from '../utils/treasury';
 
 
 export default function POS() {
@@ -22,7 +22,7 @@ export default function POS() {
   const [saveXferOtp, setSaveXferOtp] = useState('');
   const [saveXferSent, setSaveXferSent] = useState(false);
   const [saveXferBusy, setSaveXferBusy] = useState(false);
-  const PAY_KEYS = [['cash', 'كاش'], ['visa', 'فيزا'], ['wallet', 'محفظة'], ['instapay', 'انستا باي']] as const;
+  const PAY_KEYS = activePaymentKeys(storeSettings as any).map((k) => [k, payLabelOf(storeSettings as any, k)] as const);
   const saveXferToken = async () => { const { supabase } = await import('../lib/supabase'); const { data } = await supabase.auth.getSession(); return data.session?.access_token; };
   const saveXferTotal = PAY_KEYS.reduce((s, [k]) => s + (Number(saveXfer[k]) || 0), 0);
   const saveXferValidate = () => {
@@ -54,7 +54,13 @@ export default function POS() {
       const r = await fetch('/api/wholesale-otp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }, body: JSON.stringify({ action: 'verify', purpose: 'savings', code: saveXferOtp.trim() }) });
       const j = await r.json();
       if (!j.ok) { alert(j.error || 'رمز غير صحيح'); setSaveXferBusy(false); return; }
-      const split = { cash: Number(saveXfer.cash) || 0, visa: Number(saveXfer.visa) || 0, wallet: Number(saveXfer.wallet) || 0, instapay: Number(saveXfer.instapay) || 0 };
+      const split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number } = {
+        cash: 0,
+        visa: 0,
+        wallet: 0,
+        instapay: 0,
+      };
+      activePaymentKeys(storeSettings as any).forEach((k) => { split[k] = Number(saveXfer[k]) || 0; });
       const ok = await savingsTransfer(split, 'in', 'day_closing');
       if (ok) { alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
@@ -427,7 +433,12 @@ export default function POS() {
         if (inDay) {
           if (o.type === 'sale') { bd.salesCount += 1; bd.salesTotal += Number(o.total) || 0; bd.collected += Number(o.paid_amount) || 0; }
           if (o.type === 'payment') { bd.collected += Number(o.paid_amount) || 0; }
-          if (o.exchange_data) bd.exchangeCount += 1;
+        }
+        // الاستبدال يُحسب على يوم الاستبدال (exchange_data.date) لا يوم البيع، عشان
+        // استبدال فاتورة قديمة يظهر في تقفيل اليوم اللي اتعمل فيه فعلاً.
+        if (o.exchange_data) {
+          const xd = new Date(o.exchange_data.date || o.date);
+          if (xd >= start && xd < end) bd.exchangeCount += 1;
         }
         const refunded = (o.items || []).reduce((s: number, it: any) => s + (+it.refunded_amount || 0), 0);
         if (refunded > 0) {
@@ -452,6 +463,7 @@ export default function POS() {
       const expensesArr = (expRes.data as any[]) || [];
       // التحويل الداخلي بين وسائل الدفع (كاش↔فيزا…): معالجة اتجاهية مشتركة.
       const realExpenses = expensesArr.filter((e) => (Number(e.amount) || 0) >= 0 && e.category !== 'رواتب' && !isInternalTransfer(e.category));
+      const shopExpenses = realExpenses.filter((e) => !isMainTreasuryExpense(e));
       expensesArr.filter((e) => isInternalTransfer(e.category)).forEach((r) => {
         const d = new Date(r.created_at);
         if (d >= start && d < end) routeInternalTransfer(dayIn, dayOut, r);
@@ -473,18 +485,18 @@ export default function POS() {
         if (d >= start && d < end) { addM(dayIn, r, 'amount'); if (isSavingsXfer(r.category)) bd.savingsIn += Math.abs(+r.amount || 0); else if (!isResv(r.category)) bd.otherIncome += Math.abs(+r.amount || 0); }
         else if (d < start) addM(befIn, r, 'amount');
       });
-      addOut(realExpenses, 'amount');
-      addOut(purRes.data as any[], 'paid_amount');
+      addOut(shopExpenses, 'amount');
+      addOut(((purRes.data as any[]) || []).filter((p) => !isMainTreasuryPurchase(p)), 'paid_amount');
       addOut(salRes.data as any[], 'amount');
       // تفصيل الخارج لليوم حسب النوع (باستثناء حركات الحجز — لها خانتها).
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
       // المصروفات الحقيقية = بدون الحجز وبدون تحويلات الخزنة الرئيسية (كلٌّ في خانته).
-      bd.expensesTotal = realExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // محوّل للخزنة الرئيسية اليوم (فلوس طالعة من درج المحل للخزنة — مش مصروف).
-      bd.savingsOut = realExpenses.filter(inDayRec).filter((e) => isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.savingsOut = shopExpenses.filter(inDayRec).filter((e) => isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // صافي المحصّل من الحجوزات اليوم = عرابين محصّلة − عرابين مرتجعة (category='حجز').
       bd.reservationsNet = expensesArr.filter(inDayRec).filter((e) => e.category === 'حجز').reduce((s, e) => s - (Number(e.amount) || 0), 0);
-      bd.purchasesTotal = ((purRes.data as any[]) || []).filter(inDayRec).reduce((s, p) => s + Math.abs(+p.paid_amount || 0), 0);
+      bd.purchasesTotal = ((purRes.data as any[]) || []).filter((p) => !isMainTreasuryPurchase(p)).filter(inDayRec).reduce((s, p) => s + Math.abs(+p.paid_amount || 0), 0);
       bd.salariesTotal = ((salRes.data as any[]) || []).filter(inDayRec).reduce((s, t) => s + Math.abs(+t.amount || 0), 0);
       const sum = (o: Record<string, number>) => methods.reduce((s, m) => s + (o[m] || 0), 0);
       // الرصيد الافتتاحي = مجموع الأرصدة الافتتاحية لكل وسائل الدفع (كاش + فيزا + محافظ...) وليس الكاش فقط.
@@ -1978,7 +1990,13 @@ export default function POS() {
                   {perm('savings') && (
                   <div className="border-t border-slate-100 dark:border-slate-700 pt-3">
                     {!showSaveXfer ? (
-                      <button onClick={() => { setShowSaveXfer(true); const a = dayBudget.shopAvail || {}; setSaveXfer({ cash: String(Math.max(0, a.cash || 0) || ''), visa: String(Math.max(0, a.visa || 0) || ''), wallet: String(Math.max(0, a.wallet || 0) || ''), instapay: String(Math.max(0, a.instapay || 0) || '') }); }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2">🏦 تحويل للخزنة الرئيسية</button>
+                      <button onClick={() => {
+                        setShowSaveXfer(true);
+                        const a = dayBudget.shopAvail || {};
+                        const next: Record<string, string> = {};
+                        activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = String(Math.max(0, a[k] || 0) || ''); });
+                        setSaveXfer(next);
+                      }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2">🏦 تحويل للخزنة الرئيسية</button>
                     ) : (
                       <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-3 space-y-2">
                         <div className="flex items-center justify-between">

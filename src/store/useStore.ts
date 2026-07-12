@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
+import { payLabelOf } from '../utils/paymentMethods';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -566,6 +567,8 @@ interface CashierStore {
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<boolean>;
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
   savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, direction: 'in' | 'out', source: string, note?: string) => Promise<boolean>;
+  savingsConvert: (from: string, to: string, amount: number, note?: string) => Promise<boolean>;
+  recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string) => Promise<boolean>;
   updateExpense: (id: string, expense: Partial<Expense>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
 
@@ -4033,9 +4036,7 @@ setupRealtime: () => {
     const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
     if (total <= 0) return false;
-    const primary = s.cash >= s.visa && s.cash >= s.wallet && s.cash >= s.instapay ? 'cash'
-      : s.visa >= s.wallet && s.visa >= s.instapay ? 'visa'
-      : s.wallet >= s.instapay ? 'wallet' : 'instapay';
+    const primary = primaryOfSplit(s);
 
     // انعكاس على خزنة المحل
     await get().addExpense({
@@ -4059,6 +4060,65 @@ setupRealtime: () => {
       description: `${direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية'}: ${total.toFixed(2)}`,
       amount: total,
       paymentMethod: primary,
+      date: new Date().toISOString(),
+    });
+    return true;
+  },
+
+  savingsConvert: async (from, to, amount, note) => {
+    const amt = Number(amount) || 0;
+    if (amt <= 0 || !from || !to || from === to) return false;
+
+    // تحويل بين طرق الخزنة الرئيسية فقط — لا يمسّ خزنة المحل (الإجمالي ثابت،
+    // بس شكل الفلوس بيتغيّر: تطلع من طريقة وتدخل طريقة تانية).
+    const fromLabel = payLabelOf(get().storeSettings as any, from);
+    const toLabel = payLabelOf(get().storeSettings as any, to);
+    const convNote = `تحويل ${fromLabel} ➜ ${toLabel}${note ? ` — ${note}` : ''}`;
+    const rows = [
+      { direction: 'out', amount: amt, method: from, source: 'convert', note: convNote },
+      { direction: 'in', amount: amt, method: to, source: 'convert', note: convNote },
+    ];
+    const { error } = await supabase.from('savings_transactions').insert(rows);
+    if (error) {
+      console.error('savingsConvert error:', error);
+      return false;
+    }
+
+    sendTelegramAlert({
+      type: 'savings_convert',
+      actor: getActorName(get()),
+      currency: get().storeSettings.currency,
+      description: `تحويل بين طرق الخزنة الرئيسية: ${fromLabel} ➜ ${toLabel}${note ? ` — ${note}` : ''}`,
+      amount: amt,
+      paymentMethod: to,
+      date: new Date().toISOString(),
+    });
+    return true;
+  },
+
+  recordMainTreasuryOut: async (split, source, note) => {
+    const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
+    const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
+    if (total <= 0) return false;
+
+    const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
+      .filter((m) => s[m] > 0)
+      .map((m) => ({ direction: 'out', amount: s[m], method: m, source: source || 'main_expense', note: note || null }));
+    if (rows.length) {
+      const { error } = await supabase.from('savings_transactions').insert(rows);
+      if (error) {
+        console.error('recordMainTreasuryOut error:', error);
+        return false;
+      }
+    }
+
+    sendTelegramAlert({
+      type: 'savings_out',
+      actor: getActorName(get()),
+      currency: get().storeSettings.currency,
+      description: `صرف من الخزنة الرئيسية: ${total.toFixed(2)}${note ? ` — ${note}` : ''}`,
+      amount: total,
+      paymentMethod: primaryOfSplit(s),
       date: new Date().toISOString(),
     });
     return true;
@@ -4399,6 +4459,9 @@ setupRealtime: () => {
           paid_visa: inv.paid_visa || 0,
           paid_wallet: inv.paid_wallet || 0,
           paid_instapay: inv.paid_instapay || 0,
+          paid_method5: inv.paid_method5 || 0,
+          paid_method6: inv.paid_method6 || 0,
+          notes: inv.notes || '',
           items: inv.purchase_items || []
         }));
         set({ purchaseInvoices: mapped as PurchaseInvoice[] });
@@ -4425,7 +4488,8 @@ setupRealtime: () => {
         paid_instapay: splits.instapay,
         paid_method5: splits.method5 || 0,
         paid_method6: splits.method6 || 0,
-        payment_method: invoice.payment_method
+        payment_method: invoice.payment_method,
+        notes: (invoice as any).notes || null
       })
       .select()
       .single();
@@ -4592,7 +4656,8 @@ setupRealtime: () => {
         paid_instapay: splits.instapay,
         paid_method5: splits.method5 || 0,
         paid_method6: splits.method6 || 0,
-        payment_method: invoice.payment_method
+        payment_method: invoice.payment_method,
+        notes: (invoice as any).notes || null
       })
       .eq('id', invoiceId)
       .select()

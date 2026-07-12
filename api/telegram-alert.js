@@ -43,6 +43,7 @@ const TYPE_LABELS = {
   partner_deposit: 'إيداع شريك',
   savings_in: 'تحويل لخزنة الادخار',
   savings_out: 'تحويل من خزنة الادخار',
+  savings_convert: 'تحويل بين طرق الخزنة الرئيسية',
 };
 
 function line(label, value) {

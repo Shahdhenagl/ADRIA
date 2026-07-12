@@ -51,3 +51,20 @@ export function applyInternalTransferNet(net: Bucket, rec: any): void {
 export const isInternalTransfer = (category: any): boolean => category === 'تحويل داخلي';
 export const isSavingsTransfer = (category: any): boolean =>
   category === 'تحويل للخزنة الرئيسية' || category === 'تحويل من الخزنة الرئيسية';
+
+export const MAIN_TREASURY_MARKER = '[MAIN_TREASURY]';
+
+export function markMainTreasuryNote(note?: string): string {
+  const clean = String(note || '').trim();
+  return clean.includes(MAIN_TREASURY_MARKER)
+    ? clean
+    : `${MAIN_TREASURY_MARKER}${clean ? ` ${clean}` : ''}`;
+}
+
+export function isMainTreasuryExpense(row: any): boolean {
+  return String(row?.note || '').includes(MAIN_TREASURY_MARKER);
+}
+
+export function isMainTreasuryPurchase(row: any): boolean {
+  return String(row?.notes || '').includes(MAIN_TREASURY_MARKER);
+}

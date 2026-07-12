@@ -12,12 +12,13 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
+import { isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../../utils/treasury';
 
 export default function Finance() {
   const { 
     expenses, orders, storeSettings, addExpense, updateExpense, 
     deleteExpense, deletePurchaseInvoice, purchaseInvoices,
-    deleteOrder, editOrder, updatePurchaseInvoice
+    deleteOrder, editOrder, updatePurchaseInvoice, recordMainTreasuryOut
   } = useStore();
   const activeOrders = useMemo(() => orders.filter((order) => !order.is_deleted), [orders]);
 
@@ -70,7 +71,8 @@ export default function Finance() {
     note: '',
     transfer_from: 'instapay',
     transfer_to: 'cash',
-    transfer_amount: ''
+    transfer_amount: '',
+    treasury_source: 'shop'
   });
 
   // --- Calculations ---
@@ -103,10 +105,12 @@ export default function Finance() {
     
     const expensesOut = expenses
       .filter(e => new Date(e.date) < startOfPeriod)
+      .filter(e => !isMainTreasuryExpense(e))
       .reduce((sum, e) => sum + e.amount, 0);
 
     const purchasesOut = purchaseInvoices
       .filter(inv => new Date(inv.created_at) < startOfPeriod)
+      .filter(inv => !isMainTreasuryPurchase(inv))
       .reduce((sum, inv) => sum + inv.paid_amount, 0);
 
     return (ordersIn - returnsOut - expensesOut - purchasesOut);
@@ -178,10 +182,12 @@ export default function Finance() {
 
     const expensesOut = expenses
       .filter(e => new Date(e.date) < startOfPeriod)
+      .filter(e => !isMainTreasuryExpense(e))
       .reduce((sum, e) => sum + getSafeMethodAmount(e, method, 'amount'), 0);
 
     const purchasesOut = purchaseInvoices
       .filter(inv => new Date(inv.created_at) < startOfPeriod)
+      .filter(inv => !isMainTreasuryPurchase(inv))
       .reduce((sum, inv) => sum + getSafeMethodAmount(inv, method, 'paid_amount'), 0);
 
     const initial = openingBalanceOf(storeSettings as any, method);
@@ -254,8 +260,8 @@ export default function Finance() {
       .map(d => Math.max(0, d))
       .reduce((sum, d) => sum + d, 0);
   }, [purchaseInvoices]);
-  const dailyExpensesTotal = periodTransactions.expenses.filter(e => e.amount > 0).reduce((sum, e) => sum + e.amount, 0);
-  const dailyPurchasesTotal = periodTransactions.purchases.reduce((sum, inv) => sum + inv.paid_amount, 0);
+  const dailyExpensesTotal = periodTransactions.expenses.filter(e => e.amount > 0 && !isMainTreasuryExpense(e)).reduce((sum, e) => sum + e.amount, 0);
+  const dailyPurchasesTotal = periodTransactions.purchases.filter(inv => !isMainTreasuryPurchase(inv)).reduce((sum, inv) => sum + inv.paid_amount, 0);
   const dailyReturnsValue = periodTransactions.orders.reduce((sum, o) => {
     return sum + calculateCashRefunded(o);
   }, 0);
@@ -270,8 +276,8 @@ export default function Finance() {
     const returnsOut = periodTransactions.orders
       .filter(o => (o.refund_method || getPrimaryMethod(o)) === method)
       .reduce((sum, o) => sum + calculateCashRefunded(o), 0);
-    const outExp = periodTransactions.expenses.reduce((sum, e) => sum + getSafeMethodAmount(e, method, 'amount'), 0);
-    const outPur = periodTransactions.purchases.reduce((sum, inv) => sum + getSafeMethodAmount(inv, method, 'paid_amount'), 0);
+    const outExp = periodTransactions.expenses.filter(e => !isMainTreasuryExpense(e)).reduce((sum, e) => sum + getSafeMethodAmount(e, method, 'amount'), 0);
+    const outPur = periodTransactions.purchases.filter(inv => !isMainTreasuryPurchase(inv)).reduce((sum, inv) => sum + getSafeMethodAmount(inv, method, 'paid_amount'), 0);
     
     return inc - returnsOut - outExp - outPur;
   };
@@ -440,7 +446,8 @@ export default function Finance() {
         note: expense.note,
         transfer_from: 'instapay',
         transfer_to: 'cash',
-        transfer_amount: ''
+        transfer_amount: '',
+        treasury_source: isMainTreasuryExpense(expense) ? 'main' : 'shop'
       });
     } else {
       setEditingExpense(null);
@@ -457,7 +464,8 @@ export default function Finance() {
         note: '',
         transfer_from: 'instapay',
         transfer_to: 'cash',
-        transfer_amount: ''
+        transfer_amount: '',
+        treasury_source: 'shop'
       });
     }
     setShowModal(true);
@@ -480,7 +488,8 @@ export default function Finance() {
       note: order.notes || '',
       transfer_from: 'instapay',
       transfer_to: 'cash',
-      transfer_amount: ''
+      transfer_amount: '',
+      treasury_source: 'shop'
     });
     setShowModal(true);
   };
@@ -503,12 +512,50 @@ export default function Finance() {
       note: '',
       transfer_from: 'instapay',
       transfer_to: 'cash',
-      transfer_amount: ''
+      transfer_amount: '',
+      treasury_source: isMainTreasuryPurchase(purchase) ? 'main' : 'shop'
     });
     setShowModal(true);
   };
 
   const getMethodLabel = (method: string) => payLabelOf(storeSettings as any, method);
+
+  const confirmMainTreasurySpend = async (amount: number, details: string) => {
+    const confirmed = window.confirm(`سيتم الصرف من الخزنة الرئيسية بمبلغ ${amount.toFixed(2)} ${storeSettings.currency}.\nسيتم إرسال OTP للمدير للتأكيد.`);
+    if (!confirmed) return false;
+    try {
+      const { supabase } = await import('../../lib/supabase');
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+      const r1 = await fetch('/api/wholesale-otp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'request', purpose: 'savings', details }),
+      });
+      const j1 = await r1.json();
+      if (!j1.ok) {
+        alert('تعذّر إرسال رمز التأكيد: ' + (j1.error || ''));
+        return false;
+      }
+      const code = window.prompt('تم إرسال رمز التأكيد للمدير على تيليجرام.\nأدخل الرمز لتأكيد الصرف من الخزنة الرئيسية:');
+      if (!code) return false;
+      const r2 = await fetch('/api/wholesale-otp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'verify', purpose: 'savings', code: code.trim() }),
+      });
+      const j2 = await r2.json();
+      if (!j2.ok) {
+        alert(j2.error || 'رمز غير صحيح');
+        return false;
+      }
+      return true;
+    } catch {
+      alert('تعذّر التحقق من رمز الخزنة الرئيسية');
+      return false;
+    }
+  };
 
   const handleSubmit = async () => {
     // Handle transfer type separately
@@ -580,12 +627,19 @@ export default function Finance() {
     if (amountNum <= 0) return alert('يرجى إدخال مبالغ الدفع أولاً');
 
     const isAddingNew = !editingExpense && !editingOrder && !editingPurchase;
+    const spendFromMainTreasury = isAddingNew && formData.transaction_type === 'expense' && formData.treasury_source === 'main';
 
     if (isAddingNew) {
       setLoading(true);
     }
 
     try {
+      if (spendFromMainTreasury) {
+        const details = `صرف من الخزنة الرئيسية\nالنوع: مصروف\nالفئة: ${formData.category}\nالمبلغ: ${amountNum.toFixed(2)} ${storeSettings.currency}\nملاحظة: ${formData.note || '-'}`;
+        const ok = await confirmMainTreasurySpend(amountNum, details);
+        if (!ok) return;
+      }
+
       if (editingExpense) {
         const multiplier = formData.transaction_type === 'income' ? -1 : 1;
         const expenseData = {
@@ -638,10 +692,13 @@ export default function Finance() {
           paid_instapay: insta * multiplier,
           paid_method5: m5 * multiplier,
           paid_method6: m6 * multiplier,
-          note: formData.note,
+          note: spendFromMainTreasury ? markMainTreasuryNote(formData.note) : formData.note,
           payment_method: primaryM
         };
         await addExpense(expenseData as any);
+        if (spendFromMainTreasury) {
+          await recordMainTreasuryOut(split as any, 'main_expense', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`);
+        }
       }
       setShowModal(false);
     } catch (e: any) {
@@ -1311,6 +1368,31 @@ export default function Finance() {
                       تحويل
                     </button>
                   </div>
+
+                  {formData.transaction_type === 'expense' && !editingExpense && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
+                      <label className="block text-sm font-bold text-slate-700 mb-2">مصدر الصرف</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, treasury_source: 'shop' })}
+                          className={`py-2.5 rounded-xl font-black text-sm ${formData.treasury_source === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
+                        >
+                          خزنة المحل
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, treasury_source: 'main' })}
+                          className={`py-2.5 rounded-xl font-black text-sm ${formData.treasury_source === 'main' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
+                        >
+                          الخزنة الرئيسية
+                        </button>
+                      </div>
+                      {formData.treasury_source === 'main' && (
+                        <p className="text-[11px] text-amber-700 font-bold mt-2">سيتم طلب OTP من المدير، ولن يتم خصم المبلغ من خزنة المحل.</p>
+                      )}
+                    </div>
+                  )}
 
                   {formData.transaction_type === 'transfer' ? (
                     <>

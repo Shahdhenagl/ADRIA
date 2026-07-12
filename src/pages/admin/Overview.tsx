@@ -2,6 +2,7 @@ import { useStore } from '../../store/useStore';
 import { Banknote, ShoppingBag, ReceiptText, DollarSign } from 'lucide-react';
 import { calculateCashRefunded } from '../../utils/returns';
 import { totalOpeningBalance } from '../../utils/paymentMethods';
+import { isMainTreasuryExpense, isMainTreasuryPurchase } from '../../utils/treasury';
 
 export default function Overview() {
   const { orders, products, expenses, storeSettings, purchaseInvoices } = useStore();
@@ -53,8 +54,8 @@ export default function Overview() {
   }, 0);
 
   const returnsOut = activeOrders.reduce((sum, o) => sum + calculateCashRefunded(o), 0);
-  const expensesOut = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
-  const purchasesOut = purchaseInvoices.reduce((sum, inv) => sum + inv.paid_amount, 0);
+  const expensesOut = expenses.filter(e => !isMainTreasuryExpense(e)).reduce((sum, e) => sum + (e.amount || 0), 0);
+  const purchasesOut = purchaseInvoices.filter(inv => !isMainTreasuryPurchase(inv)).reduce((sum, inv) => sum + inv.paid_amount, 0);
   
   const totalSafeBalance = initialBalance + ordersIn - returnsOut - expensesOut - purchasesOut;
 

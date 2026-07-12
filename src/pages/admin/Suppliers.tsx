@@ -10,6 +10,7 @@ import { generateBarcode } from '../../utils/printBarcodeLabels';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import PaymentSplitInputs from '../../components/PaymentSplitInputs';
 import { activePaymentKeys, formToSplit, sumSplit, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
+import { isMainTreasuryPurchase, markMainTreasuryNote } from '../../utils/treasury';
 import * as XLSX from 'xlsx';
 
 function ProductSearchSelect({
@@ -148,7 +149,7 @@ function ProductSearchSelect({
 }
 
 export default function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders } = useStore();
+  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut } = useStore();
   const OPENING_MARK = 'رصيد افتتاحي';
   // الرصيد الافتتاحي كصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد.
   const openingBalanceOf = (supplierId: string) => {
@@ -179,6 +180,7 @@ export default function Suppliers() {
   // Invoice form state
   const [invSupplierId, setInvSupplierId] = useState('');
   const [invPay, setInvPay] = useState<Record<string, string>>({});
+  const [invTreasurySource, setInvTreasurySource] = useState<'shop' | 'main'>('shop');
   const invPayKeys = activePaymentKeys(storeSettings as any);
   const invPaidTotal = invPayKeys.reduce((s, k) => s + (parseFloat(invPay[k] || '') || 0), 0);
   const [invItems, setInvItems] = useState<{ product_id: string; quantity: string; purchase_price: string; to_display: string }[]>([
@@ -232,6 +234,43 @@ export default function Suppliers() {
     return sum + (parseFloat(item.quantity || '0') * parseFloat(item.purchase_price || '0'));
   }, 0);
 
+  const confirmMainTreasurySpend = async (amount: number, details: string) => {
+    const confirmed = window.confirm(`سيتم الصرف من الخزنة الرئيسية بمبلغ ${amount.toFixed(2)} ${storeSettings.currency}.\nسيتم إرسال OTP للمدير للتأكيد.`);
+    if (!confirmed) return false;
+    try {
+      const { supabase } = await import('../../lib/supabase');
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+      const r1 = await fetch('/api/wholesale-otp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'request', purpose: 'savings', details }),
+      });
+      const j1 = await r1.json();
+      if (!j1.ok) {
+        alert('تعذّر إرسال رمز التأكيد: ' + (j1.error || ''));
+        return false;
+      }
+      const code = window.prompt('تم إرسال رمز التأكيد للمدير على تيليجرام.\nأدخل الرمز لتأكيد الصرف من الخزنة الرئيسية:');
+      if (!code) return false;
+      const r2 = await fetch('/api/wholesale-otp', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ action: 'verify', purpose: 'savings', code: code.trim() }),
+      });
+      const j2 = await r2.json();
+      if (!j2.ok) {
+        alert(j2.error || 'رمز غير صحيح');
+        return false;
+      }
+      return true;
+    } catch {
+      alert('تعذّر التحقق من رمز الخزنة الرئيسية');
+      return false;
+    }
+  };
+
   const handleAddInvoice = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!invSupplierId) return alert('اختر المورد أولاً');
@@ -255,6 +294,14 @@ export default function Suppliers() {
       const adjustedSplit: Record<string, number> = { ...splitPayments, cash: Math.max(0, (splitPayments.cash || 0) - change) };
       const primaryMethod = primaryMethod_(adjustedSplit);
       const effectivePaidAmount = finalPaidAmount - change;
+      const payFromMainTreasury = !editingPurchaseInvoice && invTreasurySource === 'main' && effectivePaidAmount > 0;
+
+      if (payFromMainTreasury) {
+        const supplier = suppliers.find((s) => s.id === invSupplierId);
+        const details = `صرف من الخزنة الرئيسية\nالنوع: فاتورة مشتريات\nالمورد: ${supplier?.name || 'مورد'}\nالمبلغ المدفوع: ${effectivePaidAmount.toFixed(2)} ${storeSettings.currency}\nإجمالي الفاتورة: ${invTotal.toFixed(2)} ${storeSettings.currency}`;
+        const ok = await confirmMainTreasurySpend(effectivePaidAmount, details);
+        if (!ok) return;
+      }
 
       if (editingPurchaseInvoice) {
         await updatePurchaseInvoice(
@@ -276,7 +323,11 @@ export default function Suppliers() {
           total: invTotal,
           paid_amount: effectivePaidAmount,
           payment_method: primaryMethod as any,
+          notes: payFromMainTreasury ? markMainTreasuryNote('فاتورة مشتريات مدفوعة من الخزنة الرئيسية') : undefined,
         }, items, adjustedSplit as any);
+        if (payFromMainTreasury) {
+          await recordMainTreasuryOut(adjustedSplit as any, 'main_purchase', `فاتورة مشتريات #${invoiceNumber}`);
+        }
         alert('تم حفظ الفاتورة بنجاح وتحديث المخزن');
       }
 
@@ -284,6 +335,7 @@ export default function Suppliers() {
       setEditingPurchaseInvoice(null);
       setInvSupplierId('');
       setInvPay({});
+      setInvTreasurySource('shop');
       setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
       setActiveTab('invoices');
     } catch (error: any) {
@@ -663,6 +715,7 @@ export default function Suppliers() {
               setEditingPurchaseInvoice(null);
               setInvSupplierId('');
               setInvPay({});
+              setInvTreasurySource('shop');
               setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
               setAutoOpenRow(null);
               setShowInvoiceModal(true);
@@ -821,6 +874,7 @@ export default function Suppliers() {
                         onClick={() => {
                           setEditingPurchaseInvoice(inv);
                           setInvSupplierId(inv.supplier_id);
+                          setInvTreasurySource(isMainTreasuryPurchase(inv) ? 'main' : 'shop');
                           {
                             const pop: Record<string, string> = {};
                             invPayKeys.forEach((k) => {
@@ -1005,6 +1059,31 @@ export default function Suppliers() {
                     })}
                   </div>
                 </div>
+
+                {!editingPurchaseInvoice && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                    <label className="block text-sm font-bold text-slate-700 mb-2">مصدر دفع المشتريات</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setInvTreasurySource('shop')}
+                        className={`py-2.5 rounded-xl font-black text-sm ${invTreasurySource === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
+                      >
+                        خزنة المحل
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setInvTreasurySource('main')}
+                        className={`py-2.5 rounded-xl font-black text-sm ${invTreasurySource === 'main' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
+                      >
+                        الخزنة الرئيسية
+                      </button>
+                    </div>
+                    {invTreasurySource === 'main' && (
+                      <p className="text-[11px] text-amber-700 font-bold mt-2">سيتم طلب OTP من المدير، ولن يتم خصم المدفوع من خزنة المحل.</p>
+                    )}
+                  </div>
+                )}
 
                 {/* Paid Amount */}
                 <PaymentSplitInputs

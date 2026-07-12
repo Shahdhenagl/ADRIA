@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { PiggyBank, ArrowLeftRight, Banknote, Save } from 'lucide-react';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf } from '../../utils/paymentMethods';
-import { applySplit, applyInternalTransferNet, isInternalTransfer } from '../../utils/treasury';
+import { applySplit, applyInternalTransferNet, isInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase } from '../../utils/treasury';
 
 type Split = Record<string, number>;
 const zero = (): Split => { const z: Split = {}; ALL_PAYMENT_KEYS.forEach((k) => { z[k] = 0; }); return z; };
 
 export default function Savings() {
-  const { storeSettings, savingsTransfer, updateSettings } = useStore();
+  const { storeSettings, savingsTransfer, savingsConvert, updateSettings } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
@@ -18,8 +18,13 @@ export default function Savings() {
   const [txs, setTxs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const [direction, setDirection] = useState<'in' | 'out'>('in');
+  const [mode, setMode] = useState<'in' | 'out' | 'convert'>('in');
+  const direction: 'in' | 'out' = mode === 'out' ? 'out' : 'in';
   const [amt, setAmt] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
+  // تحويل بين طرق الخزنة الرئيسية (نقدي ➜ بنك مثلاً)
+  const [convFrom, setConvFrom] = useState('cash');
+  const [convTo, setConvTo] = useState('visa');
+  const [convAmt, setConvAmt] = useState('');
   const [note, setNote] = useState('');
   const [otpInput, setOtpInput] = useState('');
   const [otpSent, setOtpSent] = useState(false);
@@ -73,11 +78,12 @@ export default function Savings() {
       });
       (expData || []).forEach((e: any) => {
         const amount = Number(e.amount) || 0;
+        if (isMainTreasuryExpense(e)) return;
         if (isInternalTransfer(e.category)) { applyInternalTransferNet(net, e); return; }
         if (amount < 0) { const absRec: any = { ...e, amount: Math.abs(amount) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(1, absRec, 'amount'); }
         else add(-1, e, 'amount');
       });
-      (purData || []).forEach((p: any) => add(-1, p, 'paid_amount'));
+      (purData || []).filter((p: any) => !isMainTreasuryPurchase(p)).forEach((p: any) => add(-1, p, 'paid_amount'));
       (salData || []).forEach((s: any) => add(-1, s, 'amount'));
       ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(storeSettings as any, k); });
       setShopAvail(net);
@@ -98,14 +104,28 @@ export default function Savings() {
   const total = METHODS.reduce((s, m) => s + (Number(amt[m.key]) || 0), 0);
   const savingsTotal = METHODS.reduce((s, m) => s + (savingsBal[m.key] || 0), 0);
 
+  // تحويل بين الطرق: الحد الأقصى = رصيد الطريقة المصدر في الخزنة الرئيسية
+  const convCap = savingsBal[convFrom] || 0;
+  const convValue = Number(convAmt) || 0;
+  const labelOfKey = (k: string) => METHODS.find((m) => m.key === k)?.label || k;
+
   const fillAll = () => { const next: Record<string, string> = {}; METHODS.forEach((m) => { next[m.key] = String(Math.max(0, cap[m.key] || 0) || ''); }); setAmt(next); };
 
   const detailsText = () => {
+    if (mode === 'convert') {
+      return `تحويل بين طرق الخزنة الرئيسية\n${labelOfKey(convFrom)} ➜ ${labelOfKey(convTo)}\nالمبلغ: ${convValue.toFixed(2)} ${cur}${note ? `\nملاحظة: ${note}` : ''}`;
+    }
     const lines = METHODS.filter((m) => (Number(amt[m.key]) || 0) > 0).map((m) => `${m.label}: ${Number(amt[m.key]).toFixed(2)}`);
     return `${direction === 'in' ? 'تحويل من المحل ➜ الخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية ➜ المحل'}\n${lines.join(' | ')}\nالإجمالي: ${total.toFixed(2)} ${cur}${note ? `\nملاحظة: ${note}` : ''}`;
   };
 
   const validate = () => {
+    if (mode === 'convert') {
+      if (convFrom === convTo) { alert('اختاري طريقتين مختلفتين'); return false; }
+      if (convValue <= 0) { alert('أدخل مبلغاً للتحويل'); return false; }
+      if (convValue > convCap + 0.001) { alert(`المبلغ أكبر من المتاح في ${labelOfKey(convFrom)} (${convCap.toFixed(2)})`); return false; }
+      return true;
+    }
     if (total <= 0) { alert('أدخل مبلغاً للتحويل'); return false; }
     for (const m of METHODS) {
       if ((Number(amt[m.key]) || 0) > (cap[m.key] || 0) + 0.001) {
@@ -140,10 +160,15 @@ export default function Savings() {
       const r = await fetch('/api/wholesale-otp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }, body: JSON.stringify({ action: 'verify', purpose: 'savings', code: otpInput.trim() }) });
       const j = await r.json();
       if (!j.ok) { alert(j.error || 'رمز غير صحيح'); setBusy(false); return; }
-      const split: Record<string, number> = {};
-      ALL_PAYMENT_KEYS.forEach((k) => { split[k] = Number(amt[k]) || 0; });
-      const ok = await savingsTransfer(split as any, direction, direction === 'in' ? 'shop_transfer' : 'to_shop', note.trim());
-      if (ok) { alert('تم التحويل ✅'); setAmt({}); setNote(''); setOtpInput(''); setOtpSent(false); load(); }
+      let ok = false;
+      if (mode === 'convert') {
+        ok = await savingsConvert(convFrom, convTo, convValue, note.trim());
+      } else {
+        const split: Record<string, number> = {};
+        ALL_PAYMENT_KEYS.forEach((k) => { split[k] = Number(amt[k]) || 0; });
+        ok = await savingsTransfer(split as any, direction, direction === 'in' ? 'shop_transfer' : 'to_shop', note.trim());
+      }
+      if (ok) { alert('تم التحويل ✅'); setAmt({}); setConvAmt(''); setNote(''); setOtpInput(''); setOtpSent(false); load(); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setBusy(false);
   };
@@ -190,10 +215,41 @@ export default function Savings() {
       {/* Transfer */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5 space-y-3 max-w-2xl">
         <h2 className="text-base font-black text-slate-800 dark:text-white flex items-center gap-2"><ArrowLeftRight size={18} className="text-indigo-600" /> تحويل</h2>
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => { setDirection('in'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-sm ${direction === 'in' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>من المحل ➜ الخزنة الرئيسية</button>
-          <button onClick={() => { setDirection('out'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-sm ${direction === 'out' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>من الخزنة الرئيسية ➜ المحل</button>
+        <div className="grid grid-cols-3 gap-2">
+          <button onClick={() => { setMode('in'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-xs ${mode === 'in' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>المحل ➜ الرئيسية</button>
+          <button onClick={() => { setMode('out'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-xs ${mode === 'out' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>الرئيسية ➜ المحل</button>
+          <button onClick={() => { setMode('convert'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-xs ${mode === 'convert' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>تحويل بين الطرق</button>
         </div>
+
+        {mode === 'convert' ? (
+          <div className="space-y-3">
+            <p className="text-[11px] text-slate-400">تحويل رصيد داخل الخزنة الرئيسية من طريقة لطريقة تانية (مثلاً: نقدي ➜ بنك بعد ما تودّعي الكاش في البنك). الإجمالي ما بيتغيّرش — بس شكل الفلوس بيتحوّل.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[11px] font-bold text-slate-500">من <span className="text-slate-400">(متاح {convCap.toFixed(2)})</span></label>
+                <select className={input} value={convFrom} onChange={(e) => { setConvFrom(e.target.value); setOtpSent(false); }}>
+                  {METHODS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[11px] font-bold text-slate-500">إلى</label>
+                <select className={input} value={convTo} onChange={(e) => { setConvTo(e.target.value); setOtpSent(false); }}>
+                  {METHODS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-[11px] font-bold text-slate-500">المبلغ</label>
+              <div className="flex gap-2">
+                <input className={input} type="number" min="0" placeholder="0" value={convAmt} onChange={(e) => { setConvAmt(e.target.value); setOtpSent(false); }} />
+                <button onClick={() => { setConvAmt(String(Math.max(0, convCap) || '')); setOtpSent(false); }} className="shrink-0 text-[11px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 px-3 rounded-lg">كل المتاح</button>
+              </div>
+            </div>
+            <input className={input} placeholder="ملاحظة (اختياري)" value={note} onChange={(e) => setNote(e.target.value)} />
+            <div className="text-center font-black text-slate-700 dark:text-slate-200">{labelOfKey(convFrom)} ➜ {labelOfKey(convTo)}: {convValue.toFixed(2)} {cur}</div>
+          </div>
+        ) : (
+        <>
         <div className="flex justify-end"><button onClick={fillAll} className="text-[11px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">تحويل كل المتاح</button></div>
         <div className="grid grid-cols-2 gap-2">
           {METHODS.map((m) => (
@@ -205,6 +261,8 @@ export default function Savings() {
         </div>
         <input className={input} placeholder="ملاحظة (اختياري)" value={note} onChange={(e) => setNote(e.target.value)} />
         <div className="text-center font-black text-slate-700 dark:text-slate-200">الإجمالي: {total.toFixed(2)} {cur}</div>
+        </>
+        )}
 
         {!otpSent ? (
           <button onClick={requestOtp} disabled={busy} className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black py-3 rounded-xl">{busy ? 'جاري...' : '📲 إرسال للمدير وطلب رمز التأكيد'}</button>
@@ -232,10 +290,10 @@ export default function Savings() {
                 : txs.map((t) => (
                   <tr key={t.id} className="border-b border-slate-100 dark:border-slate-700/50">
                     <td className="p-2">{new Date(t.created_at).toLocaleString('ar-EG')}</td>
-                    <td className="p-2 font-bold"><span className={t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}>{t.direction === 'in' ? 'إيداع للرئيسية' : 'سحب للمحل'}</span></td>
-                    <td className={`p-2 font-black ${t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>{Number(t.amount).toFixed(2)} {cur}</td>
+                    <td className="p-2 font-bold"><span className={t.source === 'convert' ? 'text-indigo-600' : t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}>{t.source === 'convert' ? (t.direction === 'in' ? 'دخول (تحويل بين الطرق)' : 'خروج (تحويل بين الطرق)') : t.direction === 'in' ? 'إيداع للرئيسية' : 'سحب للمحل'}</span></td>
+                    <td className={`p-2 font-black ${t.source === 'convert' ? 'text-indigo-600' : t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>{t.direction === 'in' ? '+' : '−'}{Number(t.amount).toFixed(2)} {cur}</td>
                     <td className="p-2">{METHODS.find((m) => m.key === t.method)?.label || t.method}</td>
-                    <td className="p-2 text-xs text-slate-500">{t.source === 'day_closing' ? 'تقفيل اليوم' : t.source === 'shop_transfer' ? 'تحويل من المحل' : t.source === 'to_shop' ? 'تحويل للمحل' : 'يدوي'}</td>
+                    <td className="p-2 text-xs text-slate-500">{t.source === 'day_closing' ? 'تقفيل اليوم' : t.source === 'shop_transfer' ? 'تحويل من المحل' : t.source === 'to_shop' ? 'تحويل للمحل' : t.source === 'convert' ? 'تحويل بين الطرق' : 'يدوي'}</td>
                     <td className="p-2 text-slate-600 dark:text-slate-300">{t.note || '-'}</td>
                   </tr>
                 ))}
