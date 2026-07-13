@@ -80,6 +80,7 @@ export default function Employees() {
     paid_method5: '',
     paid_method6: '',
     month: new Date().toISOString().slice(0, 7),
+    date: new Date().toISOString().slice(0, 10),
     dedDays: '',
     dedAmount: '',
     commissionRate: '',
@@ -447,6 +448,7 @@ export default function Employees() {
         paid_method5: ((transaction as any).paid_method5 || 0).toString(),
         paid_method6: ((transaction as any).paid_method6 || 0).toString(),
         month: transaction.month,
+        date: transaction.created_at ? new Date(transaction.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
         dedDays: '',
         dedAmount: (transaction.deductions || 0).toString(),
         commissionRate: '',
@@ -467,6 +469,7 @@ export default function Employees() {
       paid_wallet: '',
       paid_instapay: '',
       month: currentMonth,
+      date: new Date().toISOString().slice(0, 10),
       dedDays: '',
       dedAmount: '',
       commissionRate: (type === 'salary' && emp.commission_rate) ? String(emp.commission_rate) : '',
@@ -496,6 +499,11 @@ export default function Employees() {
 
     const paymentMethod = primaryMethod_(split);
 
+    // نُثبّت التاريخ المُختار كـ created_at (منتصف اليوم لتفادي إزاحة المنطقة الزمنية)
+    const chosenDate = transFormData.date
+      ? new Date(`${transFormData.date}T12:00:00`).toISOString()
+      : undefined;
+
     const transactionData = {
       employee_id: selectedEmployee!.id,
       amount: total,
@@ -509,11 +517,12 @@ export default function Employees() {
       paid_method6: split.method6 || 0,
       month: transFormData.month,
       deductions: (parseFloat(transFormData.dedAmount) || 0) + ((parseFloat(transFormData.dedDays) || 0) * (selectedEmployee!.monthly_salary / 30)),
-      note: transFormData.note
+      note: transFormData.note,
+      ...(chosenDate ? { created_at: chosenDate } : {})
     };
 
     if (editingTransaction) {
-      await updateEmployeeTransaction(editingTransaction.id, transactionData);
+      await updateEmployeeTransaction(editingTransaction.id, transactionData as any);
     } else {
       await addEmployeeTransaction(transactionData);
     }
@@ -1431,6 +1440,18 @@ export default function Employees() {
                       />
                     </div>
                   </div>
+                </div>
+              )}
+
+              {transType !== 'salary' && (
+                <div>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-1">تاريخ {transType === 'incentive' ? 'الحافز' : 'السلفة'}</label>
+                  <input
+                    type="date"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 outline-none font-bold"
+                    value={transFormData.date}
+                    onChange={e => setTransFormData({ ...transFormData, date: e.target.value })}
+                  />
                 </div>
               )}
 
