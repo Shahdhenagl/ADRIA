@@ -1011,9 +1011,9 @@ export default function Finance() {
             <div className="p-2 bg-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-200">
               <Wallet size={28} />
             </div>
-            الميزانية اليومية
+            خزينة الكاشير
           </h1>
-          <p className="text-slate-500 mt-2 font-medium">مراقبة حركة الخزينة وتدفق الأموال</p>
+          <p className="text-slate-500 mt-2 font-medium">معاملات الكاشير فقط — مستقلة عن الخزنة الرئيسية</p>
         </div>
 
         <div className="flex flex-wrap items-center gap-4 export-hide">
@@ -1399,38 +1399,8 @@ export default function Finance() {
                     </button>
                   </div>
 
-                  {!editingExpense && (
-                    <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3 mb-4">
-                      <label className="block text-sm font-bold text-slate-700 mb-2">
-                        {formData.transaction_type === 'expense' ? 'مصدر الصرف' : formData.transaction_type === 'income' ? 'وجهة الإيراد' : 'خزنة التحويل'}
-                      </label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setFormData({ ...formData, treasury_source: 'shop' })}
-                          className={`py-2.5 rounded-xl font-black text-sm ${formData.treasury_source === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
-                        >
-                          خزنة المحل
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setFormData({ ...formData, treasury_source: 'main' })}
-                          className={`py-2.5 rounded-xl font-black text-sm ${formData.treasury_source === 'main' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
-                        >
-                          الخزنة الرئيسية
-                        </button>
-                      </div>
-                      {formData.treasury_source === 'main' && (
-                        <p className="text-[11px] text-amber-700 font-bold mt-2">
-                          {formData.transaction_type === 'expense'
-                            ? 'سيتم طلب OTP من المدير، ولن يتم خصم المبلغ من خزنة المحل.'
-                            : formData.transaction_type === 'income'
-                            ? 'سيتم إضافة المبلغ للخزنة الرئيسية مباشرة، ولن يدخل خزنة المحل.'
-                            : 'تحويل بين طرق الدفع داخل الخزنة الرئيسية — لا يمسّ خزنة المحل.'}
-                        </p>
-                      )}
-                    </div>
-                  )}
+                  {/* معاملات هذه الشاشة كلها تخصّ خزينة الكاشير فقط. معاملات الخزنة
+                      الرئيسية (إيراد/مصروف/تحويل) بقت من صفحة «الخزنة الرئيسية» المستقلة. */}
 
                   {!editingExpense && (
                     <div className="mb-4">
