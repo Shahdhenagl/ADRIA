@@ -580,7 +580,10 @@ export default function POS() {
       // المصروفات الحقيقية = بدون الحجز وبدون تحويلات الخزنة الرئيسية (كلٌّ في خانته).
       bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // محوّل للخزنة الرئيسية اليوم (فلوس طالعة من درج المحل للخزنة — مش مصروف).
-      bd.savingsOut = shopExpenses.filter(inDayRec).filter((e) => isSavingsXfer(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.savingsOut = shopExpenses.filter(inDayRec).filter((e) => e.category === 'تحويل للخزنة الرئيسية').reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      // تفصيل المحوّل للخزنة الرئيسية اليوم لكل وسيلة (لملخّص التقفيل: «سحبت كام لكل طريقة»).
+      const savingsOutBy = zero();
+      shopExpenses.filter(inDayRec).filter((e) => e.category === 'تحويل للخزنة الرئيسية').forEach((e) => addM(savingsOutBy, e, 'amount'));
       // تسوية جرد (نقص): فرق سالب بين المعدود والمحسوب — له خانته المستقلة.
       bd.reconcileOut = shopExpenses.filter(inDayRec).filter((e) => isReconcile(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // صافي المحصّل من الحجوزات اليوم = عرابين محصّلة − عرابين مرتجعة (category='حجز').
@@ -594,7 +597,8 @@ export default function POS() {
       // الرصيد الحالي في خزنة المحل لكل وسيلة (كل الفترات) = الرصيد الافتتاحي للوسيلة + صافي حركتها — للتحويل للخزنة الرئيسية.
       const shopAvail: Record<string, number> = zero();
       methods.forEach((m) => { shopAvail[m] = openingBalanceOf(storeSettings as any, m) + (befIn[m] + dayIn[m]) - (befOut[m] + dayOut[m]); });
-      setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut, shopAvail, breakdown: bd });
+      // «اليوم مقفول» = اتحوّل منه مبلغ للخزنة الرئيسية فعلاً؛ عندها نعرض ملخّص بدل إعادة التقفيل.
+      setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut, shopAvail, savingsOutBy, isClosed: bd.savingsOut > 0.009, breakdown: bd });
     } catch (e) { console.error(e); alert('تعذّر تحميل ميزانية اليوم'); }
     setDayBudgetLoading(false);
   };
@@ -2221,6 +2225,37 @@ export default function POS() {
                       })}
                     </div>
                   </div>
+                  {/* ملخّص التقفيل: المحوّل للخزنة الرئيسية والمتبقي في المحل لكل وسيلة */}
+                  <div className={`rounded-xl border overflow-hidden ${dayBudget.isClosed ? 'border-indigo-200 dark:border-indigo-800' : 'border-slate-100 dark:border-slate-700'}`}>
+                    <div className={`px-3 py-2 text-[12px] font-black flex items-center justify-between ${dayBudget.isClosed ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900/60 text-slate-600 dark:text-slate-300'}`}>
+                      <span>ملخّص التقفيل</span>
+                      {dayBudget.isClosed && <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full">✅ اليوم مقفول</span>}
+                    </div>
+                    <div className="grid grid-cols-[1fr_auto_auto] text-[11px] font-black text-slate-400 dark:text-slate-500 px-3 pt-2">
+                      <span>الوسيلة</span>
+                      <span className="text-left w-28">محوّل للرئيسية</span>
+                      <span className="text-left w-28">متبقي في المحل</span>
+                    </div>
+                    {activePayKeys.map((k) => {
+                      const out = (dayBudget.savingsOutBy?.[k]) || 0;
+                      const left = (dayBudget.shopAvail?.[k]) || 0;
+                      if (out < 0.009 && Math.abs(left) < 0.009) return null;
+                      return (
+                        <div key={k} className="grid grid-cols-[1fr_auto_auto] items-center px-3 py-1.5 border-t border-slate-100 dark:border-slate-700/50 text-[13px]">
+                          <span className="font-bold text-slate-600 dark:text-slate-300">{payLabel(k)}</span>
+                          <span className="text-left w-28 font-black text-indigo-600">{out.toFixed(2)}</span>
+                          <span className={`text-left w-28 font-black ${left < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{left.toFixed(2)}</span>
+                        </div>
+                      );
+                    })}
+                    <div className="grid grid-cols-[1fr_auto_auto] items-center px-3 py-2 border-t-2 border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/40 text-[13px]">
+                      <span className="font-black text-slate-700 dark:text-slate-200">الإجمالي</span>
+                      <span className="text-left w-28 font-black text-indigo-700">{(dayBudget.breakdown?.savingsOut || 0).toFixed(2)}</span>
+                      <span className="text-left w-28 font-black text-emerald-700">{activePayKeys.reduce((s, k) => s + ((dayBudget.shopAvail?.[k]) || 0), 0).toFixed(2)}</span>
+                    </div>
+                    <p className="px-3 py-2 text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/40 border-t border-slate-100 dark:border-slate-700/50">🔁 المتبقي في خزنة المحل يترحّل تلقائياً كرصيد بداية اليوم التالي.</p>
+                  </div>
+
                   <p className="text-[11px] text-slate-400 text-center">{(() => { const h = storeSettings.dayStartHour ?? 3; const lbl = h === 0 ? '12 منتصف الليل' : h < 12 ? `${h} صباحاً` : h === 12 ? '12 ظهراً' : `${h - 12} مساءً`; return `اليوم يبدأ الساعة ${lbl} وينتهي في نفس الساعة من اليوم التالي.`; })()}</p>
 
                   {/* Reconcile drawer (cash count) */}
@@ -2263,9 +2298,11 @@ export default function POS() {
                         setShowSaveXfer(true);
                         const a = dayBudget.shopAvail || {};
                         const next: Record<string, string> = {};
-                        activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = String(Math.max(0, a[k] || 0) || ''); });
+                        // اليوم مقفول: تحويل إضافي اختياري — نسيب الحقول فاضية عشان تحدّدي مبلغ بعينه
+                        // (الباقي بيترحّل تلقائياً). أول تقفيل: نملأها بكامل المتاح.
+                        activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = dayBudget.isClosed ? '' : String(Math.max(0, a[k] || 0) || ''); });
                         setSaveXfer(next);
-                      }} className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2">🏦 تحويل للخزنة الرئيسية</button>
+                      }} className={`w-full font-black py-3 rounded-xl flex items-center justify-center gap-2 text-white ${dayBudget.isClosed ? 'bg-slate-500 hover:bg-slate-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}>🏦 {dayBudget.isClosed ? 'تحويل مبلغ إضافي للخزنة الرئيسية' : 'تحويل للخزنة الرئيسية'}</button>
                     ) : (
                       <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-3 space-y-2">
                         <div className="flex items-center justify-between">
