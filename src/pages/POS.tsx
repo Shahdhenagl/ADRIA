@@ -506,6 +506,14 @@ export default function POS() {
       ]);
       const expRes = { data: expData }, purRes = { data: purData }, salRes = { data: salData };
       const allOrders = (ordData as any[]).map((o) => ({ ...o, date: o.created_at, items: o.order_items || [] }));
+      // الفواتير اللي ليها «مصروف مرتجعات» (النظام الجديد) — عشان نتفادى العدّ المزدوج:
+      // المرتجع الجديد بيتحسب من المصروف، والقديم (من غير مصروف) بيتحسب من refunded_amount.
+      const refundExpenseOrderIds = new Set(
+        ((expData as any[]) || [])
+          .filter((e) => e.category === 'مرتجعات')
+          .map((e) => { const m = String(e.note || '').match(/#(.+)$/); return m ? m[1].trim() : null; })
+          .filter(Boolean) as string[]
+      );
       const methods = [...ALL_PAYMENT_KEYS] as string[];
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
@@ -534,8 +542,16 @@ export default function POS() {
           const xd = new Date(o.exchange_data.date || o.date);
           if (xd >= start && xd < end) bd.exchangeCount += 1;
         }
-        // ملاحظة: المرتجع بقى يُسجَّل كمصروف حقيقي فئة «مرتجعات» (خرج فعلي من الخزنة)،
-        // فبيتحسب مع المصروفات تحت — مش من refunded_amount هنا (تفادياً للعدّ المزدوج).
+        // المرتجع الجديد له «مصروف مرتجعات» (يتحسب تحت). المرتجع القديم (من غير مصروف)
+        // نحسبه من refunded_amount على يوم الاسترجاع (refunded_at) أو يوم الفاتورة للبيانات القديمة.
+        if (refunded > 0 && !refundExpenseOrderIds.has(o.id)) {
+          const rd = new Date(o.refunded_at || o.date);
+          const rInDay = rd >= start && rd < end;
+          if (rInDay || rd < start) {
+            addM(rInDay ? dayOut : befOut, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+            if (rInDay) { bd.refundsTotal += refunded; bd.refundsCount += 1; }
+          }
+        }
       });
       const addOut = (arr: any[], field: string) => (arr || []).forEach((r: any) => {
         const d = new Date(r.created_at);
@@ -582,10 +598,11 @@ export default function POS() {
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
       // المصروفات الحقيقية = بدون الحجز/تحويلات الرئيسية/الجرد/المرتجعات (كلٌّ في خانته).
       bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category) && !isRefundExpense(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
-      // المرتجعات = مجموع مصروفات فئة «مرتجعات» اليوم (خرج فعلي من الخزنة).
+      // المرتجعات = مصروفات فئة «مرتجعات» اليوم (الجديد) + المرتجعات القديمة المحسوبة
+      // من refunded_amount في اللوب فوق (بدون مصروف). نجمعهم بـ += عشان ما نمسحش القديم.
       const refundExpenses = shopExpenses.filter(inDayRec).filter((e) => isRefundExpense(e.category));
-      bd.refundsTotal = refundExpenses.reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
-      bd.refundsCount = refundExpenses.length;
+      bd.refundsTotal += refundExpenses.reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.refundsCount += refundExpenses.length;
       // محوّل للخزنة الرئيسية اليوم (فلوس طالعة من درج المحل للخزنة — مش مصروف).
       bd.savingsOut = shopExpenses.filter(inDayRec).filter((e) => e.category === 'تحويل للخزنة الرئيسية').reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // تفصيل المحوّل للخزنة الرئيسية اليوم لكل وسيلة (لملخّص التقفيل: «سحبت كام لكل طريقة»).

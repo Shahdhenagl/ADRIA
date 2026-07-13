@@ -74,13 +74,22 @@ export default function Savings() {
       ]);
       const savRes = { data: savRows };
       const allOrders = (ordData as any[]).map((o) => ({ ...o, items: o.order_items || [] }));
+      // الفواتير اللي ليها «مصروف مرتجعات» (النظام الجديد) — لتفادي العدّ المزدوج.
+      const refundExpenseOrderIds = new Set(
+        ((expData as any[]) || [])
+          .filter((e) => e.category === 'مرتجعات')
+          .map((e) => { const m = String(e.note || '').match(/#(.+)$/); return m ? m[1].trim() : null; })
+          .filter(Boolean) as string[]
+      );
       // خزنة المحل المتاح لكل وسيلة (كل الفترات) — منطق التوزيع مشترك في utils/treasury.
       const net = zero();
       const add = (sign: number, rec: any, field: string) => applySplit(net, rec, field, { sign });
       allOrders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
         if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
-        // المرتجع بقى مصروف حقيقي فئة «مرتجعات» (بيتطرح تحت مع المصروفات) — مش من
-        // refunded_amount هنا، تفادياً للعدّ المزدوج.
+        // المرتجع الجديد بيتطرح من «مصروف مرتجعات» تحت. القديم (من غير مصروف) نطرحه من
+        // refunded_amount هنا، عشان المرتجعات القديمة ما تختفيش.
+        const ref = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
+        if (ref > 0 && !refundExpenseOrderIds.has(o.id)) add(-1, { paid_amount: ref, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
       });
       (expData || []).forEach((e: any) => {
         const amount = Number(e.amount) || 0;
