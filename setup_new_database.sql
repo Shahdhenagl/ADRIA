@@ -105,6 +105,7 @@ create table if not exists purchase_invoices (
   paid_wallet numeric default 0,
   paid_instapay numeric default 0,
   payment_method text default 'cash',
+  notes text,
   created_at timestamptz default now()
 );
 
