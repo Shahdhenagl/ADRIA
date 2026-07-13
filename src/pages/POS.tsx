@@ -528,9 +528,20 @@ export default function POS() {
         // «التحصيل» يعرض المحصّل الإجمالي يوم البيع، والمرتجع يبان في بنده لوحده
         // (التحصيل − المرتجعات = الصافي) بدل ما يتخصم مرتين في العرض.
         const refunded = (o.items || []).reduce((s: number, it: any) => s + (+it.refunded_amount || 0), 0);
+        // «المحصّل» لازم يطابق حركة الخزنة (dayIn) اللي بتقرا تقسيمة الدفع paid_* (عبر addM):
+        // في الاستبدال، paid_amount بيتظبط على الإجمالي الجديد بينما التقسيمة تفضل على المدفوع
+        // الأصلي (المسجّل في يومه)، وفرق الاستبدال بيتسجّل كإيراد/مصروف مستقل بيوم الاستبدال.
+        // فلو اعتمدنا paid_amount هنا كان «المحصّل» يتضخّم بفرق الاستبدال ويختلف عن الدرج (عدّ مزدوج).
+        // splitSum = إجمالي التقسيمة (قيمة قبل المرتجع)؛ في البيانات القديمة بدون تقسيمة
+        // نرجع لـ paid_amount + المرتجع (نفس منطق الـ gross-up السابق).
+        const splitSum = methods.reduce((s, m) => s + (Number((o as any)['paid_' + m]) || 0), 0);
+        const collectedRow = splitSum !== 0 ? splitSum : (Number(o.paid_amount) || 0) + refunded;
         if (inDay) {
-          if (o.type === 'sale') { bd.salesCount += 1; bd.salesTotal += Number(o.total) || 0; bd.collected += (Number(o.paid_amount) || 0) + refunded; }
-          if (o.type === 'payment') { bd.collected += (Number(o.paid_amount) || 0) + refunded; }
+          // في الاستبدال نعرض إجمالي البيع الأصلي (oldTotal) على يوم البيع، والفرق يبان بيومه —
+          // عشان يوم مقفول ما تتغيّرش «مبيعاته» بأثر رجعي عند استبدال فاتورة قديمة.
+          const saleTotal = o.exchange_data ? (Number(o.exchange_data.oldTotal) || Number(o.total) || 0) : (Number(o.total) || 0);
+          if (o.type === 'sale') { bd.salesCount += 1; bd.salesTotal += saleTotal; bd.collected += collectedRow; }
+          if (o.type === 'payment') { bd.collected += collectedRow; }
         }
         // الاستبدال يُحسب على يوم الاستبدال (exchange_data.date) لا يوم البيع، عشان
         // استبدال فاتورة قديمة يظهر في تقفيل اليوم اللي اتعمل فيه فعلاً.

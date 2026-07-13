@@ -2589,6 +2589,9 @@ export const useStore = create<CashierStore>((set, get) => ({
         barcode: item.barcode,
         quantity: item.quantity,
         returned_quantity: item.returned_quantity || 0,
+        // نحافظ على مبلغ المرتجع المسجّل مسبقاً؛ من غيره التعديل/الاستبدال بيمسحه من
+        // order_items فيختفي المرتجع من كشف الوسائل والتقفيل (فقدان بيانات صامت).
+        refunded_amount: (item as any).refunded_amount || 0,
         sale_price: item.sale_price,
         purchase_price: item.average_purchase_price || item.purchase_price,
       }));
