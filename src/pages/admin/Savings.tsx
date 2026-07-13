@@ -29,6 +29,12 @@ export default function Savings() {
   const [otpInput, setOtpInput] = useState('');
   const [otpSent, setOtpSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  // تاريخ العملية — تُسجَّل في حسابات هذا اليوم (افتراضي النهاردة)
+  const [txDate, setTxDate] = useState(() => new Date().toISOString().slice(0, 10));
+  // فلتر سجل معاملات الخزنة الرئيسية: الكل / شهر / يوم
+  const [fMode, setFMode] = useState<'all' | 'month' | 'day'>('all');
+  const [fMonth, setFMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [fDay, setFDay] = useState(() => new Date().toISOString().slice(0, 10));
 
   // محرّر الرصيد الافتتاحي للخزنة الرئيسية
   const [openDraft, setOpenDraft] = useState<Record<string, string>>({});
@@ -160,18 +166,30 @@ export default function Savings() {
       const r = await fetch('/api/wholesale-otp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) }, body: JSON.stringify({ action: 'verify', purpose: 'savings', code: otpInput.trim() }) });
       const j = await r.json();
       if (!j.ok) { alert(j.error || 'رمز غير صحيح'); setBusy(false); return; }
+      // نثبّت التاريخ المُختار (12 ظهراً لتفادي إزاحة المنطقة الزمنية) كـ created_at للحركة.
+      const dateISO = txDate ? new Date(`${txDate}T12:00:00`).toISOString() : undefined;
       let ok = false;
       if (mode === 'convert') {
-        ok = await savingsConvert(convFrom, convTo, convValue, note.trim());
+        ok = await savingsConvert(convFrom, convTo, convValue, note.trim(), dateISO);
       } else {
         const split: Record<string, number> = {};
         ALL_PAYMENT_KEYS.forEach((k) => { split[k] = Number(amt[k]) || 0; });
-        ok = await savingsTransfer(split as any, direction, direction === 'in' ? 'shop_transfer' : 'to_shop', note.trim());
+        ok = await savingsTransfer(split as any, direction, direction === 'in' ? 'shop_transfer' : 'to_shop', note.trim(), dateISO);
       }
-      if (ok) { alert('تم التحويل ✅'); setAmt({}); setConvAmt(''); setNote(''); setOtpInput(''); setOtpSent(false); load(); }
+      if (ok) { alert('تم التحويل ✅'); setAmt({}); setConvAmt(''); setNote(''); setOtpInput(''); setOtpSent(false); setTxDate(new Date().toISOString().slice(0, 10)); load(); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setBusy(false);
   };
+
+  // فلترة سجل المعاملات بالتاريخ المحلي (مطابق للعرض) — بالشهر أو باليوم.
+  const localYMD = (iso: string) => { const d = new Date(iso); const p = (n: number) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+  const filteredTxs = txs.filter((t) => {
+    if (fMode === 'all') return true;
+    const ymd = localYMD(t.created_at);
+    return fMode === 'month' ? ymd.slice(0, 7) === fMonth : ymd === fDay;
+  });
+  const fIn = filteredTxs.filter((t) => t.direction === 'in').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const fOut = filteredTxs.filter((t) => t.direction === 'out').reduce((s, t) => s + (Number(t.amount) || 0), 0);
 
   return (
     <div className="p-6 md:p-8 space-y-6 animate-fade-in">
@@ -219,6 +237,11 @@ export default function Savings() {
           <button onClick={() => { setMode('in'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-xs ${mode === 'in' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>المحل ➜ الرئيسية</button>
           <button onClick={() => { setMode('out'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-xs ${mode === 'out' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>الرئيسية ➜ المحل</button>
           <button onClick={() => { setMode('convert'); setOtpSent(false); }} className={`py-2.5 rounded-xl font-black text-xs ${mode === 'convert' ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}>تحويل بين الطرق</button>
+        </div>
+
+        <div>
+          <label className="text-[11px] font-bold text-slate-500 block mb-1">تاريخ العملية <span className="text-slate-400">(تُسجَّل في حسابات هذا اليوم)</span></label>
+          <input className={input} type="date" value={txDate} onChange={(e) => { setTxDate(e.target.value); setOtpSent(false); }} />
         </div>
 
         {mode === 'convert' ? (
@@ -280,14 +303,38 @@ export default function Savings() {
 
       {/* Ledger */}
       <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5">
-        <h2 className="text-base font-black text-slate-800 dark:text-white mb-4">سجل معاملات الخزنة الرئيسية</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <h2 className="text-base font-black text-slate-800 dark:text-white">سجل معاملات الخزنة الرئيسية</h2>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex gap-1 bg-slate-100 dark:bg-slate-900 rounded-xl p-1">
+              {([['all', 'الكل'], ['month', 'شهر'], ['day', 'يوم']] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => setFMode(k)} className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${fMode === k ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-300'}`}>{lbl}</button>
+              ))}
+            </div>
+            {fMode === 'month' && (
+              <input type="month" value={fMonth} onChange={(e) => setFMonth(e.target.value)} className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-xs font-bold" />
+            )}
+            {fMode === 'day' && (
+              <input type="date" value={fDay} onChange={(e) => setFDay(e.target.value)} className="bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-xs font-bold" />
+            )}
+          </div>
+        </div>
+
+        {fMode !== 'all' && (
+          <div className="grid grid-cols-3 gap-2 mb-4">
+            <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-2.5 text-center"><div className="text-[10px] font-bold text-emerald-600">داخل</div><div className="text-sm font-black text-emerald-700 dark:text-emerald-400">{fIn.toFixed(2)}</div></div>
+            <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-2.5 text-center"><div className="text-[10px] font-bold text-red-600">خارج</div><div className="text-sm font-black text-red-700 dark:text-red-400">{fOut.toFixed(2)}</div></div>
+            <div className="bg-slate-100 dark:bg-slate-900/40 rounded-xl p-2.5 text-center"><div className="text-[10px] font-bold text-slate-500">الصافي</div><div className="text-sm font-black text-slate-800 dark:text-slate-100">{(fIn - fOut).toFixed(2)}</div></div>
+          </div>
+        )}
+
         <div className="overflow-x-auto">
           <table className="w-full text-right text-sm">
             <thead><tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">المبلغ</th><th className="p-2">الطريقة</th><th className="p-2">المصدر</th><th className="p-2">ملاحظة</th></tr></thead>
             <tbody>
               {loading ? <tr><td colSpan={6} className="text-center text-slate-400 py-6">جاري التحميل...</td></tr>
-                : txs.length === 0 ? <tr><td colSpan={6} className="text-center text-slate-400 py-6">لا توجد معاملات</td></tr>
-                : txs.map((t) => (
+                : filteredTxs.length === 0 ? <tr><td colSpan={6} className="text-center text-slate-400 py-6">{txs.length === 0 ? 'لا توجد معاملات' : 'لا توجد معاملات في هذه الفترة'}</td></tr>
+                : filteredTxs.map((t) => (
                   <tr key={t.id} className="border-b border-slate-100 dark:border-slate-700/50">
                     <td className="p-2">{new Date(t.created_at).toLocaleString('ar-EG')}</td>
                     <td className="p-2 font-bold"><span className={t.source === 'convert' ? 'text-indigo-600' : t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}>{t.source === 'convert' ? (t.direction === 'in' ? 'دخول (تحويل بين الطرق)' : 'خروج (تحويل بين الطرق)') : t.direction === 'in' ? 'إيداع للرئيسية' : 'سحب للمحل'}</span></td>
