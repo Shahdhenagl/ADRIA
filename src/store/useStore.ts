@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf } from '../utils/paymentMethods';
+import { markMainTreasuryNote } from '../utils/treasury';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -665,7 +666,7 @@ interface CashierStore {
     splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }
   ) => Promise<void>;
   deletePurchaseInvoice: (id: string) => Promise<void>;
-  paySupplierDebt: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string) => Promise<void>;
+  paySupplierDebt: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string, fromMainTreasury?: boolean) => Promise<void>;
   collectSupplierCredit: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string) => Promise<void>;
 
   // Car Maintenance
@@ -4760,7 +4761,7 @@ setupRealtime: () => {
     }
   },
 
-  paySupplierDebt: async (supplierId, amount, splitPayments, dateISO) => {
+  paySupplierDebt: async (supplierId, amount, splitPayments, dateISO, fromMainTreasury) => {
     const state = get();
     const invoiceNumber = `PAY-${Date.now()}`;
 
@@ -4799,6 +4800,9 @@ setupRealtime: () => {
         paid_method5: splits.method5 || 0,
         paid_method6: splits.method6 || 0,
           payment_method: primaryMethod,
+          // السداد من الخزنة الرئيسية بيتعلّم في notes عشان يتستبعد من تقفيل الكاشير
+          // (خزنة المحل) ويتخصم من الخزنة الرئيسية بدلها.
+          ...(fromMainTreasury ? { notes: markMainTreasuryNote('سداد مورد من الخزنة الرئيسية') } : {}),
           ...(dateISO ? { created_at: dateISO } : {})
         })
         .select()

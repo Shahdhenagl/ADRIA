@@ -181,6 +181,9 @@ export default function Suppliers() {
   const [invSupplierId, setInvSupplierId] = useState('');
   const [invPay, setInvPay] = useState<Record<string, string>>({});
   const [invTreasurySource, setInvTreasurySource] = useState<'shop' | 'main'>('shop');
+  // مصدر دفع سداد المورد: خزنة المحل (يظهر في تقفيل الكاشير) أو الخزنة الرئيسية (يُستبعد منه).
+  const [debtPaySource, setDebtPaySource] = useState<'shop' | 'main'>('shop');
+  const [financialSource, setFinancialSource] = useState<'shop' | 'main'>('shop');
   const invPayKeys = activePaymentKeys(storeSettings as any);
   const invPaidTotal = invPayKeys.reduce((s, k) => s + (parseFloat(invPay[k] || '') || 0), 0);
   const [invItems, setInvItems] = useState<{ product_id: string; quantity: string; purchase_price: string; to_display: string }[]>([
@@ -1217,11 +1220,20 @@ export default function Suppliers() {
           if (totalPaid <= 0) return alert('أدخل مبلغاً صحيحاً للسداد');
           if (totalPaid > totalDebt + 0.01) return alert('المبلغ المدخل أكبر من المديونية الحالية');
 
+          const fromMain = debtPaySource === 'main';
+          if (fromMain) {
+            const details = `صرف من الخزنة الرئيسية\nالنوع: سداد مورد\nالمورد: ${selectedSupplierProfile.name}\nالمبلغ: ${totalPaid.toFixed(2)} ${storeSettings.currency}`;
+            const ok = await confirmMainTreasurySpend(totalPaid, details);
+            if (!ok) return;
+          }
+
           try {
             setIsPayingDebt(true);
-            await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any);
+            await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, undefined, fromMain);
+            if (fromMain) await recordMainTreasuryOut(splitPayments as any, 'main_supplier_payment', `سداد مورد ${selectedSupplierProfile.name}`);
             alert('تم تسجيل عملية السداد بنجاح');
             setDebtPay({});
+            setDebtPaySource('shop');
           } catch (e) {
             alert('حدث خطأ أثناء تسجيل السداد');
           } finally {
@@ -1243,16 +1255,26 @@ export default function Suppliers() {
             if (totalPaid > availableBalance + 0.01) return alert('المبلغ أكبر من الرصيد لنا عند المورد');
           }
 
+          // مصدر السداد (خزنة المحل/الرئيسية) بينطبق على السداد فقط، مش التحصيل.
+          const fromMain = !isCollection && financialSource === 'main';
+          if (fromMain) {
+            const details = `صرف من الخزنة الرئيسية\nالنوع: سداد مورد\nالمورد: ${selectedSupplierProfile.name}\nالمبلغ: ${totalPaid.toFixed(2)} ${storeSettings.currency}`;
+            const ok = await confirmMainTreasurySpend(totalPaid, details);
+            if (!ok) return;
+          }
+
           try {
             setIsPayingDebt(true);
             const dateISO = timestampForBusinessDate(supplierFinancialDate, storeSettings);
             if (isCollection) {
               await useStore.getState().collectSupplierCredit(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO);
             } else {
-              await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO);
+              await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO, fromMain);
+              if (fromMain) await recordMainTreasuryOut(splitPayments as any, 'main_supplier_payment', `سداد مورد ${selectedSupplierProfile.name}`, dateISO);
             }
             alert(isCollection ? 'تم تسجيل تحصيل من المورد بنجاح' : 'تم تسجيل سداد للمورد بنجاح');
             setSupplierFinancialPay({});
+            setFinancialSource('shop');
             setShowSupplierFinancialModal(false);
           } catch (e) {
             alert('حدث خطأ أثناء تسجيل المعاملة المالية');
@@ -1407,7 +1429,24 @@ export default function Suppliers() {
                       />
                     </div>
 
-                    <button 
+                    <div className="relative z-10 bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                      <label className="block text-sm font-bold text-slate-700 mb-2">مصدر السداد</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => setDebtPaySource('shop')}
+                          className={`py-2.5 rounded-xl font-black text-sm ${debtPaySource === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                          خزنة المحل
+                        </button>
+                        <button type="button" onClick={() => setDebtPaySource('main')}
+                          className={`py-2.5 rounded-xl font-black text-sm ${debtPaySource === 'main' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                          الخزنة الرئيسية
+                        </button>
+                      </div>
+                      {debtPaySource === 'main' && (
+                        <p className="text-[11px] text-amber-700 font-bold mt-2">سيتم طلب OTP من المدير، ولن يظهر في تقفيل الكاشير ولا يُخصم من خزنة المحل.</p>
+                      )}
+                    </div>
+
+                    <button
                       onClick={handlePayDebt}
                       disabled={isPayingDebt}
                       className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black text-lg shadow-lg shadow-emerald-200 hover:bg-emerald-700 hover:-translate-y-0.5 active:translate-y-0 transition-all disabled:opacity-50 relative z-10"
@@ -1595,6 +1634,25 @@ export default function Suppliers() {
                         <span className="text-sm font-bold text-slate-500">إجمالي المعاملة</span>
                         <span className="text-xl font-black text-emerald-600">{sumSplit(formToSplit(supplierFinancialPay)).toLocaleString()} {storeSettings.currency}</span>
                       </div>
+
+                      {supplierFinancialType === 'pay_to_supplier' && (
+                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                          <label className="block text-sm font-bold text-slate-700 mb-2">مصدر السداد</label>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button type="button" onClick={() => setFinancialSource('shop')}
+                              className={`py-2.5 rounded-xl font-black text-sm ${financialSource === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                              خزنة المحل
+                            </button>
+                            <button type="button" onClick={() => setFinancialSource('main')}
+                              className={`py-2.5 rounded-xl font-black text-sm ${financialSource === 'main' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                              الخزنة الرئيسية
+                            </button>
+                          </div>
+                          {financialSource === 'main' && (
+                            <p className="text-[11px] text-amber-700 font-bold mt-2">سيتم طلب OTP من المدير، ولن يظهر في تقفيل الكاشير ولا يُخصم من خزنة المحل.</p>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <div className="p-6 border-t border-slate-100 flex gap-3">
