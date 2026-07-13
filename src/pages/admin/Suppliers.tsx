@@ -149,7 +149,7 @@ function ProductSearchSelect({
 }
 
 export default function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut } = useStore();
+  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, recordMainTreasuryIn } = useStore();
   const OPENING_MARK = 'رصيد افتتاحي';
   // الرصيد الافتتاحي كصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد.
   const openingBalanceOf = (supplierId: string) => {
@@ -180,10 +180,11 @@ export default function Suppliers() {
   // Invoice form state
   const [invSupplierId, setInvSupplierId] = useState('');
   const [invPay, setInvPay] = useState<Record<string, string>>({});
-  const [invTreasurySource, setInvTreasurySource] = useState<'shop' | 'main'>('shop');
-  // مصدر دفع سداد المورد: خزنة المحل (يظهر في تقفيل الكاشير) أو الخزنة الرئيسية (يُستبعد منه).
-  const [debtPaySource, setDebtPaySource] = useState<'shop' | 'main'>('shop');
-  const [financialSource, setFinancialSource] = useState<'shop' | 'main'>('shop');
+  // كل حركات الموردين (مشتريات/سداد/تحصيل) الافتراضي فيها الخزنة الرئيسية.
+  // «رئيسية» = OTP للصرف + يُستبعد من تقفيل الكاشير. «محل» = من درج المحل ويظهر في التقفيل.
+  const [invTreasurySource, setInvTreasurySource] = useState<'shop' | 'main'>('main');
+  const [debtPaySource, setDebtPaySource] = useState<'shop' | 'main'>('main');
+  const [financialSource, setFinancialSource] = useState<'shop' | 'main'>('main');
   const invPayKeys = activePaymentKeys(storeSettings as any);
   const invPaidTotal = invPayKeys.reduce((s, k) => s + (parseFloat(invPay[k] || '') || 0), 0);
   const [invItems, setInvItems] = useState<{ product_id: string; quantity: string; purchase_price: string; to_display: string }[]>([
@@ -338,7 +339,7 @@ export default function Suppliers() {
       setEditingPurchaseInvoice(null);
       setInvSupplierId('');
       setInvPay({});
-      setInvTreasurySource('shop');
+      setInvTreasurySource('main');
       setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
       setActiveTab('invoices');
     } catch (error: any) {
@@ -1233,7 +1234,7 @@ export default function Suppliers() {
             if (fromMain) await recordMainTreasuryOut(splitPayments as any, 'main_supplier_payment', `سداد مورد ${selectedSupplierProfile.name}`);
             alert('تم تسجيل عملية السداد بنجاح');
             setDebtPay({});
-            setDebtPaySource('shop');
+            setDebtPaySource('main');
           } catch (e) {
             alert('حدث خطأ أثناء تسجيل السداد');
           } finally {
@@ -1255,9 +1256,10 @@ export default function Suppliers() {
             if (totalPaid > availableBalance + 0.01) return alert('المبلغ أكبر من الرصيد لنا عند المورد');
           }
 
-          // مصدر السداد (خزنة المحل/الرئيسية) بينطبق على السداد فقط، مش التحصيل.
-          const fromMain = !isCollection && financialSource === 'main';
-          if (fromMain) {
+          // المصدر/الوجهة: للسداد = من فين تتصرف الفلوس، للتحصيل = فين تدخل الفلوس.
+          const useMain = financialSource === 'main';
+          // السداد من الخزنة الرئيسية بس هو اللي محتاج OTP (صرف). التحصيل للرئيسية إيراد بدون OTP.
+          if (!isCollection && useMain) {
             const details = `صرف من الخزنة الرئيسية\nالنوع: سداد مورد\nالمورد: ${selectedSupplierProfile.name}\nالمبلغ: ${totalPaid.toFixed(2)} ${storeSettings.currency}`;
             const ok = await confirmMainTreasurySpend(totalPaid, details);
             if (!ok) return;
@@ -1267,14 +1269,15 @@ export default function Suppliers() {
             setIsPayingDebt(true);
             const dateISO = timestampForBusinessDate(supplierFinancialDate, storeSettings);
             if (isCollection) {
-              await useStore.getState().collectSupplierCredit(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO);
+              await useStore.getState().collectSupplierCredit(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO, useMain);
+              if (useMain) await recordMainTreasuryIn(splitPayments as any, 'main_supplier_collection', `تحصيل من مورد ${selectedSupplierProfile.name}`, dateISO);
             } else {
-              await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO, fromMain);
-              if (fromMain) await recordMainTreasuryOut(splitPayments as any, 'main_supplier_payment', `سداد مورد ${selectedSupplierProfile.name}`, dateISO);
+              await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO, useMain);
+              if (useMain) await recordMainTreasuryOut(splitPayments as any, 'main_supplier_payment', `سداد مورد ${selectedSupplierProfile.name}`, dateISO);
             }
             alert(isCollection ? 'تم تسجيل تحصيل من المورد بنجاح' : 'تم تسجيل سداد للمورد بنجاح');
             setSupplierFinancialPay({});
-            setFinancialSource('shop');
+            setFinancialSource('main');
             setShowSupplierFinancialModal(false);
           } catch (e) {
             alert('حدث خطأ أثناء تسجيل المعاملة المالية');
@@ -1635,24 +1638,26 @@ export default function Suppliers() {
                         <span className="text-xl font-black text-emerald-600">{sumSplit(formToSplit(supplierFinancialPay)).toLocaleString()} {storeSettings.currency}</span>
                       </div>
 
-                      {supplierFinancialType === 'pay_to_supplier' && (
-                        <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
-                          <label className="block text-sm font-bold text-slate-700 mb-2">مصدر السداد</label>
-                          <div className="grid grid-cols-2 gap-2">
-                            <button type="button" onClick={() => setFinancialSource('shop')}
-                              className={`py-2.5 rounded-xl font-black text-sm ${financialSource === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
-                              خزنة المحل
-                            </button>
-                            <button type="button" onClick={() => setFinancialSource('main')}
-                              className={`py-2.5 rounded-xl font-black text-sm ${financialSource === 'main' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
-                              الخزنة الرئيسية
-                            </button>
-                          </div>
-                          {financialSource === 'main' && (
-                            <p className="text-[11px] text-amber-700 font-bold mt-2">سيتم طلب OTP من المدير، ولن يظهر في تقفيل الكاشير ولا يُخصم من خزنة المحل.</p>
-                          )}
+                      <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                        <label className="block text-sm font-bold text-slate-700 mb-2">{supplierFinancialType === 'collect_from_supplier' ? 'وجهة التحصيل' : 'مصدر السداد'}</label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <button type="button" onClick={() => setFinancialSource('shop')}
+                            className={`py-2.5 rounded-xl font-black text-sm ${financialSource === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                            خزنة المحل
+                          </button>
+                          <button type="button" onClick={() => setFinancialSource('main')}
+                            className={`py-2.5 rounded-xl font-black text-sm ${financialSource === 'main' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                            الخزنة الرئيسية
+                          </button>
                         </div>
-                      )}
+                        {financialSource === 'main' && (
+                          <p className="text-[11px] text-amber-700 font-bold mt-2">
+                            {supplierFinancialType === 'collect_from_supplier'
+                              ? 'المبلغ يدخل الخزنة الرئيسية ولن يظهر في تقفيل الكاشير.'
+                              : 'سيتم طلب OTP من المدير، ولن يظهر في تقفيل الكاشير ولا يُخصم من خزنة المحل.'}
+                          </p>
+                        )}
+                      </div>
                     </div>
 
                     <div className="p-6 border-t border-slate-100 flex gap-3">

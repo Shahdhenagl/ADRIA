@@ -667,7 +667,7 @@ interface CashierStore {
   ) => Promise<void>;
   deletePurchaseInvoice: (id: string) => Promise<void>;
   paySupplierDebt: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string, fromMainTreasury?: boolean) => Promise<void>;
-  collectSupplierCredit: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string) => Promise<void>;
+  collectSupplierCredit: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string, toMainTreasury?: boolean) => Promise<void>;
 
   // Car Maintenance
   loadCarSubscriptions: () => Promise<void>;
@@ -4841,7 +4841,7 @@ setupRealtime: () => {
     }
   },
 
-  collectSupplierCredit: async (supplierId, amount, splitPayments, dateISO) => {
+  collectSupplierCredit: async (supplierId, amount, splitPayments, dateISO, toMainTreasury) => {
     const state = get();
     const invoiceNumber = `SUP-COL-${Date.now()}`;
 
@@ -4879,6 +4879,9 @@ setupRealtime: () => {
           paid_method5: -Math.abs(splits.method5 || 0),
           paid_method6: -Math.abs(splits.method6 || 0),
           payment_method: primaryMethod,
+          // التحصيل للخزنة الرئيسية بيتعلّم عشان يتستبعد من تقفيل الكاشير (خزنة المحل)
+          // ويتسجّل إيراد في الخزنة الرئيسية بدلها.
+          ...(toMainTreasury ? { notes: markMainTreasuryNote('تحصيل من مورد للخزنة الرئيسية') } : {}),
           ...(dateISO ? { created_at: dateISO } : {})
         })
         .select()
