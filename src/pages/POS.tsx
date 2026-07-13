@@ -12,6 +12,7 @@ import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../utils/treasury';
+import { calculateOrderReturnValue } from '../utils/returns';
 
 // فئة قيد تسوية الجرد: يضبط رصيد خزنة المحل ليطابق الكاش الفعلي المعدود.
 // يُحسب ضمن الداخل/الخارج (عشان الرصيد يتصحّح) لكن له خانته المستقلة في التفصيل.
@@ -171,7 +172,10 @@ export default function POS() {
   const [debtPayDate, setDebtPayDate] = useState(() => businessDateStr(storeSettings));
   const customerDebtOf = (custId: string) => {
     return orders.filter(o => o.customer?.id === custId && !o.is_deleted).reduce((sum, o) => {
-      const debt = (o.type === 'payment' ? 0 : (o.total || 0)) - (o.paid_amount || 0);
+      // نطرح قيمة البضاعة المرتجعة من إجمالي الفاتورة عشان المرتجع (كاش أو خصم من الدين)
+      // ما يسيبش «دين وهمي» على العميل بعد ما رجّع البضاعة واتردّله فلوسه.
+      const grossTotal = (o.type === 'payment' ? 0 : (o.total || 0)) - (o.type === 'payment' ? 0 : calculateOrderReturnValue(o));
+      const debt = grossTotal - (o.paid_amount || 0);
       if (debt > 0.009 && o.type !== 'payment') return sum + debt;
       if (o.type === 'payment' && !(o.notes && o.notes.includes('سداد أجل للفاتورة رقم'))) return sum + debt;
       return sum;
@@ -462,7 +466,7 @@ export default function POS() {
       customId: order.customer?.custom_id || order.customer?.card_number || '',
       customerId: order.customer?.id || '',
       paymentMethod: order.payment_method,
-      totalDebt: Math.max(0, (order.total || 0) - (order.paid_amount || 0)),
+      totalDebt: Math.max(0, (order.total || 0) - calculateOrderReturnValue(order) - (order.paid_amount || 0)),
       couponCode: order.coupon_code,
       couponDiscountAmount: order.discount_amount || 0,
       salesperson: order.salesperson_name || '',
@@ -1121,7 +1125,7 @@ export default function POS() {
     // Settle the customer's outstanding debt on this invoice first, then refund
     // only the remainder as cash. The cash is distributed across items.
     const totalReturnValue = selected.reduce((sum, r) => sum + r.itemValue, 0);
-    const outstandingDebt = Math.max(0, activeReturnOrder.total - activeReturnOrder.paid_amount);
+    const outstandingDebt = Math.max(0, activeReturnOrder.total - calculateOrderReturnValue(activeReturnOrder) - activeReturnOrder.paid_amount);
     const maxDebtDeduction = Math.min(totalReturnValue, outstandingDebt);
     const debtSettled = returnDebtDeduction === null
       ? maxDebtDeduction
@@ -1611,8 +1615,10 @@ export default function POS() {
     if (existingCust) {
       const cOrders = orders.filter(o => o.customer?.id === existingCust.id && !o.is_deleted);
       const cDebt = cOrders.reduce((sum, o) => {
-        const debt = (o.type === 'payment' ? 0 : (o.total || 0)) - (o.paid_amount || 0);
-        
+        // نطرح قيمة المرتجع من الإجمالي عشان ما يظهرش «دين وهمي» بعد المرتجع.
+        const grossTotal = (o.type === 'payment' ? 0 : (o.total || 0)) - (o.type === 'payment' ? 0 : calculateOrderReturnValue(o));
+        const debt = grossTotal - (o.paid_amount || 0);
+
         if (debt > 0.009 && o.type !== 'payment') {
           return sum + debt;
         } else if (o.type === 'payment' && !(o.notes && o.notes.includes('سداد أجل للفاتورة رقم'))) {
@@ -1640,7 +1646,7 @@ export default function POS() {
 
     // For a deferred invoice, settle the outstanding debt first and only refund
     // the remainder as cash out of the drawer.
-    const outstandingDebt = Math.max(0, activeReturnOrder.total - activeReturnOrder.paid_amount);
+    const outstandingDebt = Math.max(0, activeReturnOrder.total - calculateOrderReturnValue(activeReturnOrder) - activeReturnOrder.paid_amount);
     const maxDebtDeduction = Math.min(totalReturnValue, outstandingDebt);
     const debtSettled = returnDebtDeduction === null
       ? maxDebtDeduction
@@ -2406,7 +2412,7 @@ export default function POS() {
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div>
                         <p className="font-black text-slate-800 dark:text-slate-100 text-sm">#{o.id} · {o.customer?.name || 'عميل نقدي'}</p>
-                        <p className="text-[11px] text-slate-500">{new Date(o.date).toLocaleString('ar-EG')} · الإجمالي: <b>{(o.total || 0).toFixed(2)} {storeSettings.currency}</b>{(o.total - o.paid_amount) > 0.5 ? ` · باقي: ${(o.total - o.paid_amount).toFixed(2)}` : ''}</p>
+                        <p className="text-[11px] text-slate-500">{new Date(o.date).toLocaleString('ar-EG')} · الإجمالي: <b>{(o.total || 0).toFixed(2)} {storeSettings.currency}</b>{(o.total - calculateOrderReturnValue(o) - o.paid_amount) > 0.5 ? ` · باقي: ${(o.total - calculateOrderReturnValue(o) - o.paid_amount).toFixed(2)}` : ''}</p>
                       </div>
                       <div className="flex items-center gap-1.5">
                         <button onClick={() => window.open(`/view-invoice/${o.id}`, '_blank')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300">عرض</button>
@@ -2571,7 +2577,7 @@ export default function POS() {
                   const it = activeReturnOrder.items.find((i: any) => i.id === pid);
                   return it ? s + ((pr.returnQty || 0) * it.sale_price * discountRatio) : s;
                 }, 0);
-                const outstandingDebt = Math.max(0, activeReturnOrder.total - activeReturnOrder.paid_amount);
+                const outstandingDebt = Math.max(0, activeReturnOrder.total - calculateOrderReturnValue(activeReturnOrder) - activeReturnOrder.paid_amount);
                 const maxDebtDeduction = Math.min(selectedReturnValue, outstandingDebt);
                 const debtSettled = returnDebtDeduction === null
                   ? maxDebtDeduction
