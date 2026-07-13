@@ -510,14 +510,6 @@ export default function POS() {
       ]);
       const expRes = { data: expData }, purRes = { data: purData }, salRes = { data: salData };
       const allOrders = (ordData as any[]).map((o) => ({ ...o, date: o.created_at, items: o.order_items || [] }));
-      // الفواتير اللي ليها «مصروف مرتجعات» (النظام الجديد) — عشان نتفادى العدّ المزدوج:
-      // المرتجع الجديد بيتحسب من المصروف، والقديم (من غير مصروف) بيتحسب من refunded_amount.
-      const refundExpenseOrderIds = new Set(
-        ((expData as any[]) || [])
-          .filter((e) => e.category === 'مرتجعات')
-          .map((e) => { const m = String(e.note || '').match(/#(.+)$/); return m ? m[1].trim() : null; })
-          .filter(Boolean) as string[]
-      );
       const methods = [...ALL_PAYMENT_KEYS] as string[];
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
@@ -546,9 +538,9 @@ export default function POS() {
           const xd = new Date(o.exchange_data.date || o.date);
           if (xd >= start && xd < end) bd.exchangeCount += 1;
         }
-        // المرتجع الجديد له «مصروف مرتجعات» (يتحسب تحت). المرتجع القديم (من غير مصروف)
-        // نحسبه من refunded_amount على يوم الاسترجاع (refunded_at) أو يوم الفاتورة للبيانات القديمة.
-        if (refunded > 0 && !refundExpenseOrderIds.has(o.id)) {
+        // المرتجع يُحسب خارج من الخزنة على يوم الاسترجاع (refunded_at)، ولو مفيش
+        // (بيانات قديمة قبل db/36) نرجع لتاريخ الفاتورة. شغّلي db/36 عشان يتحسب على يومه الصح.
+        if (refunded > 0) {
           const rd = new Date(o.refunded_at || o.date);
           const rInDay = rd >= start && rd < end;
           if (rInDay || rd < start) {
@@ -585,8 +577,6 @@ export default function POS() {
       // بيفضل ضمن الداخل/الخارج (لأن الفلوس فعلاً بتتحرّك من الدرج) لكن ليه خانته المستقلة.
       const isSavingsXfer = (c: any) => c === 'تحويل للخزنة الرئيسية' || c === 'تحويل من الخزنة الرئيسية';
       const isReconcile = (c: any) => c === RECONCILE_CAT;
-      // مصروف المرتجعات — بيقلّل الخزنة، بس له خانته المستقلة «المرتجعات» مش «المصروفات».
-      const isRefundExpense = (c: any) => c === 'مرتجعات';
       manualIncomes.forEach((r: any) => {
         const d = new Date(r.created_at);
         // العربون داخل ضمن totalIn لكنه يُعرض في خانة الحجوزات مش «إيرادات أخرى».
@@ -600,13 +590,8 @@ export default function POS() {
       addOut(((salRes.data as any[]) || []).filter((t) => !isMainTreasuryExpense(t)), 'amount');
       // تفصيل الخارج لليوم حسب النوع (باستثناء حركات الحجز — لها خانتها).
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
-      // المصروفات الحقيقية = بدون الحجز/تحويلات الرئيسية/الجرد/المرتجعات (كلٌّ في خانته).
-      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category) && !isRefundExpense(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
-      // المرتجعات = مصروفات فئة «مرتجعات» اليوم (الجديد) + المرتجعات القديمة المحسوبة
-      // من refunded_amount في اللوب فوق (بدون مصروف). نجمعهم بـ += عشان ما نمسحش القديم.
-      const refundExpenses = shopExpenses.filter(inDayRec).filter((e) => isRefundExpense(e.category));
-      bd.refundsTotal += refundExpenses.reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
-      bd.refundsCount += refundExpenses.length;
+      // المصروفات الحقيقية = بدون الحجز وبدون تحويلات الخزنة الرئيسية (كلٌّ في خانته).
+      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // محوّل للخزنة الرئيسية اليوم (فلوس طالعة من درج المحل للخزنة — مش مصروف).
       bd.savingsOut = shopExpenses.filter(inDayRec).filter((e) => e.category === 'تحويل للخزنة الرئيسية').reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // تفصيل المحوّل للخزنة الرئيسية اليوم لكل وسيلة (لملخّص التقفيل: «سحبت كام لكل طريقة»).
