@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import POS from './pages/POS';
+import FaviconSwitcher from './components/FaviconSwitcher';
 import Login from './pages/Login';
 import POSLogin from './pages/POSLogin';
 import AdminLayout from './pages/admin/AdminLayout';
@@ -154,6 +155,7 @@ function App() {
     <>
       <ThemeInjector />
       <Router>
+        <FaviconSwitcher />
         <Routes>
           <Route 
             path="/" 
