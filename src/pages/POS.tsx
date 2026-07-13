@@ -520,9 +520,13 @@ export default function POS() {
         const before = d < start;
         if (!inDay && !before) return;
         if ((o.type === 'sale' || o.type === 'payment')) addM(inDay ? dayIn : befIn, o, 'paid_amount');
+        // المرتجع بيقلّل paid_amount (مش تقسيمة paid_cash)، فبنرجّعه للتحصيل عشان
+        // «التحصيل» يعرض المحصّل الإجمالي يوم البيع، والمرتجع يبان في بنده لوحده
+        // (التحصيل − المرتجعات = الصافي) بدل ما يتخصم مرتين في العرض.
+        const refunded = (o.items || []).reduce((s: number, it: any) => s + (+it.refunded_amount || 0), 0);
         if (inDay) {
-          if (o.type === 'sale') { bd.salesCount += 1; bd.salesTotal += Number(o.total) || 0; bd.collected += Number(o.paid_amount) || 0; }
-          if (o.type === 'payment') { bd.collected += Number(o.paid_amount) || 0; }
+          if (o.type === 'sale') { bd.salesCount += 1; bd.salesTotal += Number(o.total) || 0; bd.collected += (Number(o.paid_amount) || 0) + refunded; }
+          if (o.type === 'payment') { bd.collected += (Number(o.paid_amount) || 0) + refunded; }
         }
         // الاستبدال يُحسب على يوم الاستبدال (exchange_data.date) لا يوم البيع، عشان
         // استبدال فاتورة قديمة يظهر في تقفيل اليوم اللي اتعمل فيه فعلاً.
@@ -530,7 +534,6 @@ export default function POS() {
           const xd = new Date(o.exchange_data.date || o.date);
           if (xd >= start && xd < end) bd.exchangeCount += 1;
         }
-        const refunded = (o.items || []).reduce((s: number, it: any) => s + (+it.refunded_amount || 0), 0);
         if (refunded > 0) {
           // المرتجع يُحسب على يوم الاسترجاع (refunded_at) لا يوم البيع؛ لو مفيش
           // (بيانات قديمة) نرجع لتاريخ الفاتورة كما كان.
