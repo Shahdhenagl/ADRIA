@@ -68,7 +68,10 @@ export default function POS() {
         instapay: 0,
       };
       activePaymentKeys(storeSettings as any).forEach((k) => { split[k] = Number(saveXfer[k]) || 0; });
-      const ok = await savingsTransfer(split, 'in', 'day_closing');
+      // لو بنقفل يوم سابق (مش اليوم المحاسبي الحالي) نثبّت تاريخ التحويل على ذلك اليوم (12 ظهراً)
+      // عشان التقفيل يتحسب على يومه الصح مش على يوم التنفيذ الفعلي.
+      const closeStamp = dayBudgetDate === todayStr() ? undefined : new Date(`${dayBudgetDate}T12:00:00`).toISOString();
+      const ok = await savingsTransfer(split, 'in', 'day_closing', undefined, closeStamp);
       if (ok) { alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);
@@ -80,7 +83,10 @@ export default function POS() {
     try {
       const split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number } = { cash: 0, visa: 0, wallet: 0, instapay: 0 };
       activePaymentKeys(storeSettings as any).forEach((k) => { split[k] = Number(saveXfer[k]) || 0; });
-      const ok = await savingsTransfer(split, 'in', 'day_closing');
+      // لو بنقفل يوم سابق (مش اليوم المحاسبي الحالي) نثبّت تاريخ التحويل على ذلك اليوم (12 ظهراً)
+      // عشان التقفيل يتحسب على يومه الصح مش على يوم التنفيذ الفعلي.
+      const closeStamp = dayBudgetDate === todayStr() ? undefined : new Date(`${dayBudgetDate}T12:00:00`).toISOString();
+      const ok = await savingsTransfer(split, 'in', 'day_closing', undefined, closeStamp);
       if (ok) { alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);

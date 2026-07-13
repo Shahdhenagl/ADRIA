@@ -568,7 +568,7 @@ interface CashierStore {
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<boolean>;
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
-  savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, direction: 'in' | 'out', source: string, note?: string) => Promise<boolean>;
+  savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, direction: 'in' | 'out', source: string, note?: string, dateISO?: string) => Promise<boolean>;
   savingsConvert: (from: string, to: string, amount: number, note?: string, createdAt?: string) => Promise<boolean>;
   recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string) => Promise<boolean>;
   recordMainTreasuryIn: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string) => Promise<boolean>;
@@ -4036,25 +4036,27 @@ setupRealtime: () => {
 
   // تحويل بين خزنة المحل والخزنة الرئيسية (كل طريقة بطريقتها). ينعكس على خزنة المحل
   // كمصروف (تحويل للرئيسية) أو إيراد (تحويل من الرئيسية)، ويُسجَّل في دفتر الخزنة الرئيسية.
-  savingsTransfer: async (split, direction, source, note) => {
+  savingsTransfer: async (split, direction, source, note, dateISO) => {
     const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
     if (total <= 0) return false;
     const primary = primaryOfSplit(s);
 
-    // انعكاس على خزنة المحل
+    // انعكاس على خزنة المحل — نثبّت التاريخ (created_at) على اليوم المحاسبي المُقفَل لو اتبعت،
+    // عشان تقفيل يوم 8 (لو اتعمل فعلياً في يوم 9) يتحسب على يوم 8 مش يوم 9.
     await get().addExpense({
       category: direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية',
       amount: direction === 'in' ? total : -total,
       note: note || (direction === 'in' ? 'تحويل من المحل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية للمحل'),
       payment_method: primary,
       paid_cash: s.cash, paid_visa: s.visa, paid_wallet: s.wallet, paid_instapay: s.instapay, paid_method5: s.method5 || 0, paid_method6: s.method6 || 0,
+      ...(dateISO ? { created_at: dateISO } : {}),
     } as Omit<Expense, 'id' | 'date'>);
 
-    // دفتر الخزنة الرئيسية: صف لكل طريقة بمبلغ
+    // دفتر الخزنة الرئيسية: صف لكل طريقة بمبلغ (بنفس تاريخ التقفيل لو اتبعت)
     const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
       .filter((m) => s[m] > 0)
-      .map((m) => ({ direction, amount: s[m], method: m, source: source || 'manual', note: note || null }));
+      .map((m) => ({ direction, amount: s[m], method: m, source: source || 'manual', note: note || null, ...(dateISO ? { created_at: dateISO } : {}) }));
     if (rows.length) await supabase.from('savings_transactions').insert(rows);
 
     sendTelegramAlert({
