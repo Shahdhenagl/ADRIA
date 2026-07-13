@@ -534,16 +534,8 @@ export default function POS() {
           const xd = new Date(o.exchange_data.date || o.date);
           if (xd >= start && xd < end) bd.exchangeCount += 1;
         }
-        if (refunded > 0) {
-          // المرتجع يُحسب على يوم الاسترجاع (refunded_at) لا يوم البيع؛ لو مفيش
-          // (بيانات قديمة) نرجع لتاريخ الفاتورة كما كان.
-          const rd = new Date(o.refunded_at || o.date);
-          const rInDay = rd >= start && rd < end;
-          if (rInDay || rd < start) {
-            addM(rInDay ? dayOut : befOut, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
-            if (rInDay) { bd.refundsTotal += refunded; bd.refundsCount += 1; }
-          }
-        }
+        // ملاحظة: المرتجع بقى يُسجَّل كمصروف حقيقي فئة «مرتجعات» (خرج فعلي من الخزنة)،
+        // فبيتحسب مع المصروفات تحت — مش من refunded_amount هنا (تفادياً للعدّ المزدوج).
       });
       const addOut = (arr: any[], field: string) => (arr || []).forEach((r: any) => {
         const d = new Date(r.created_at);
@@ -573,6 +565,8 @@ export default function POS() {
       // بيفضل ضمن الداخل/الخارج (لأن الفلوس فعلاً بتتحرّك من الدرج) لكن ليه خانته المستقلة.
       const isSavingsXfer = (c: any) => c === 'تحويل للخزنة الرئيسية' || c === 'تحويل من الخزنة الرئيسية';
       const isReconcile = (c: any) => c === RECONCILE_CAT;
+      // مصروف المرتجعات — بيقلّل الخزنة، بس له خانته المستقلة «المرتجعات» مش «المصروفات».
+      const isRefundExpense = (c: any) => c === 'مرتجعات';
       manualIncomes.forEach((r: any) => {
         const d = new Date(r.created_at);
         // العربون داخل ضمن totalIn لكنه يُعرض في خانة الحجوزات مش «إيرادات أخرى».
@@ -586,8 +580,12 @@ export default function POS() {
       addOut(((salRes.data as any[]) || []).filter((t) => !isMainTreasuryExpense(t)), 'amount');
       // تفصيل الخارج لليوم حسب النوع (باستثناء حركات الحجز — لها خانتها).
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
-      // المصروفات الحقيقية = بدون الحجز وبدون تحويلات الخزنة الرئيسية (كلٌّ في خانته).
-      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      // المصروفات الحقيقية = بدون الحجز/تحويلات الرئيسية/الجرد/المرتجعات (كلٌّ في خانته).
+      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category) && !isRefundExpense(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      // المرتجعات = مجموع مصروفات فئة «مرتجعات» اليوم (خرج فعلي من الخزنة).
+      const refundExpenses = shopExpenses.filter(inDayRec).filter((e) => isRefundExpense(e.category));
+      bd.refundsTotal = refundExpenses.reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.refundsCount = refundExpenses.length;
       // محوّل للخزنة الرئيسية اليوم (فلوس طالعة من درج المحل للخزنة — مش مصروف).
       bd.savingsOut = shopExpenses.filter(inDayRec).filter((e) => e.category === 'تحويل للخزنة الرئيسية').reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // تفصيل المحوّل للخزنة الرئيسية اليوم لكل وسيلة (لملخّص التقفيل: «سحبت كام لكل طريقة»).
@@ -2397,11 +2395,14 @@ export default function POS() {
                         <button onClick={() => window.open(`/view-invoice/${o.id}`, '_blank')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300">عرض</button>
                         <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
                         <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
-                        {o.exchange_data ? (
-                          <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تم الاستبدال</button>
-                        ) : perm('editDelete') && (
-                          <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال</button>
-                        )}
+                        {(() => {
+                          // فاتورة اترجعت بالكامل = كل أصنافها مرتجعة → مايصحّش نستبدل فيها.
+                          const items = o.items || [];
+                          const fullyReturned = items.length > 0 && items.every((it: any) => (it.returned_quantity || 0) >= (it.quantity || 0));
+                          if (o.exchange_data) return <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تم الاستبدال</button>;
+                          if (fullyReturned) return <span className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 flex items-center gap-1"><RefreshCcw size={14} /> مرتجعة بالكامل</span>;
+                          return perm('editDelete') ? <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال</button> : null;
+                        })()}
                         {perm('editDelete') && (
                           <button onClick={() => deleteOrderWithOtp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
                         )}

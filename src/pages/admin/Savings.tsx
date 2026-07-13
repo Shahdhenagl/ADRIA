@@ -79,8 +79,8 @@ export default function Savings() {
       const add = (sign: number, rec: any, field: string) => applySplit(net, rec, field, { sign });
       allOrders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
         if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
-        const ref = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
-        if (ref > 0) add(-1, { paid_amount: ref, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+        // المرتجع بقى مصروف حقيقي فئة «مرتجعات» (بيتطرح تحت مع المصروفات) — مش من
+        // refunded_amount هنا، تفادياً للعدّ المزدوج.
       });
       (expData || []).forEach((e: any) => {
         const amount = Number(e.amount) || 0;

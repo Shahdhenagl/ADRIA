@@ -2338,6 +2338,24 @@ export const useStore = create<CashierStore>((set, get) => ({
       );
 
       set({ orders: updatedOrders, products: updatedProducts });
+
+      // المرتجع الكاش يُسجَّل كمصروف حقيقي في الخزنة (خرج فعلي) بتقسيمة طريقة الرد،
+      // فيظهر كبند «مرتجعات» ويقلّل الرصيد في التقفيل والخزنة (المصدر الوحيد للخصم).
+      if (totalRefundAmount > 0) {
+        const rm = (refundMethod || 'cash') as string;
+        await get().addExpense({
+          category: 'مرتجعات',
+          amount: totalRefundAmount,
+          paid_cash: rm === 'cash' ? totalRefundAmount : 0,
+          paid_visa: rm === 'visa' ? totalRefundAmount : 0,
+          paid_wallet: rm === 'wallet' ? totalRefundAmount : 0,
+          paid_instapay: rm === 'instapay' ? totalRefundAmount : 0,
+          payment_method: rm as any,
+          note: `مرتجع فاتورة #${order.id}`,
+          created_at: refundedAt,
+        } as any);
+      }
+
       new BroadcastChannel('cashier-sync').postMessage('sync_products');
       sendTelegramAlert({
         type: 'return',
