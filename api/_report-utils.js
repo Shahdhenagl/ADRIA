@@ -46,8 +46,10 @@ export function cairoDateParts(date = new Date()) {
 
 export function cairoDayRange(date = new Date()) {
   const { year, month, day } = cairoDateParts(date);
-  const start = new Date(Date.UTC(year, month - 1, day, -3, 0, 0, 0));
-  const end = new Date(Date.UTC(year, month - 1, day + 1, -3, 0, 0, 0));
+  // Business day: 03:00 Cairo -> 03:00 Cairo next day.
+  // In Egypt summer time this is 00:00 UTC -> 00:00 UTC next day.
+  const start = new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+  const end = new Date(Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0));
   return { start, end, label: `${day}/${month}/${year}` };
 }
 
