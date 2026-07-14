@@ -29,6 +29,7 @@ declare module 'jspdf' {
 export default function Analytics() {
   const { storeSettings, loadAnalyticsData, purchaseInvoices, products, expenses, orders: globalOrders } = useStore();
   const [orders, setOrders] = useState<any[]>([]);
+  const [currentCustomerDebt, setCurrentCustomerDebt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<'today' | '7d' | '30d' | 'thisMonth' | 'thisYear' | 'all'>('30d');
   // فلتر يوم محدد: لو متعبّى، يتجاهل أزرار الفترة ويعرض هذا اليوم فقط.
@@ -37,6 +38,39 @@ export default function Analytics() {
   useEffect(() => {
     fetchData();
   }, [timeRange, customDay]);
+
+  useEffect(() => {
+    loadCurrentCustomerDebt();
+  }, []);
+
+  const loadCurrentCustomerDebt = async () => {
+    try {
+      const { supabase } = await import('../../lib/supabase');
+      const { data, error } = await supabase
+        .from('orders')
+        .select('*, order_items(*)')
+        .not('customer_id', 'is', null)
+        .eq('is_deleted', false);
+      if (error) throw error;
+
+      const debtByCustomer: Record<string, number> = {};
+      for (const row of data || []) {
+        const customerId = (row as any).customer_id;
+        if (!customerId) continue;
+        const returnedValue = calculateOrderReturnValue({ ...row, items: (row as any).order_items || [] });
+        const effectiveTotal = (row as any).type === 'payment' ? 0 : (Number((row as any).total) || 0) - returnedValue;
+        const debt = effectiveTotal - (Number((row as any).paid_amount) || 0);
+        if (debtByCustomer[customerId] === undefined) debtByCustomer[customerId] = 0;
+        debtByCustomer[customerId] += debt;
+      }
+
+      const total = Object.values(debtByCustomer).reduce((sum, value) => sum + Math.max(0, value), 0);
+      setCurrentCustomerDebt(total);
+    } catch (err) {
+      console.error('Failed to load current customer debt:', err);
+      setCurrentCustomerDebt(0);
+    }
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -148,13 +182,7 @@ export default function Analytics() {
       }
     });
 
-    const totalCustomerDebt = activeOrders.reduce((sum, o) => {
-      const customerId = o.customer_id || o.customer?.id;
-      if (!customerId || o.type === 'payment') return sum;
-      const effectiveTotal = (Number(o.total) || 0) - calculateOrderReturnValue(o);
-      const debt = effectiveTotal - (Number(o.paid_amount) || 0);
-      return debt > 0.009 ? sum + debt : sum;
-    }, 0);
+    const totalCustomerDebt = currentCustomerDebt;
     const totalSupplierDebt = Math.max(0, purchaseInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0));
 
     const profit = revenue - cost;
@@ -228,7 +256,7 @@ export default function Analytics() {
       totalCustomerDebt,
       totalSupplierDebt
     };
-  }, [orders, expenses, purchaseInvoices, products, timeRange, customDay, globalOrders]);
+  }, [orders, expenses, purchaseInvoices, products, timeRange, customDay, globalOrders, currentCustomerDebt]);
 
   // ── Export Logic ─────────────────────────────────────────────
   const exportExcel = () => {
@@ -387,7 +415,7 @@ export default function Analytics() {
           color="indigo" 
         />
         <StatCard 
-          title="إجمالي الآجل على العملاء" 
+          title="إجمالي الآجل الحالي على العملاء"
           value={stats.totalCustomerDebt} 
           unit={storeSettings.currency}
           icon={Users} 
