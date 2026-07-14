@@ -517,7 +517,7 @@ export default function POS() {
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
       const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
       // تفصيل حركة اليوم (للتقفيل): مبيعات/تحصيل/مرتجعات/استبدال/مصروفات/مشتريات/رواتب.
-      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0, savingsOut: 0, savingsIn: 0, reconcileIn: 0, reconcileOut: 0 };
+      const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, exchangeValue: 0, exchangeNet: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0, savingsOut: 0, savingsIn: 0, reconcileIn: 0, reconcileOut: 0 };
       // توزيع مبلغ على وسائل الدفع (منطق مشترك في src/utils/treasury.ts).
       const addM = (t: Record<string, number>, rec: any, field: string, mOverride?: string) =>
         applySplit(t, rec, field, { methodOverride: mOverride });
@@ -591,11 +591,18 @@ export default function POS() {
       // بيفضل ضمن الداخل/الخارج (لأن الفلوس فعلاً بتتحرّك من الدرج) لكن ليه خانته المستقلة.
       const isSavingsXfer = (c: any) => c === 'تحويل للخزنة الرئيسية' || c === 'تحويل من الخزنة الرئيسية';
       const isReconcile = (c: any) => c === RECONCILE_CAT;
+      const isExchangeAdjustment = (c: any) => c === 'فرق استبدال مبيعات';
       manualIncomes.forEach((r: any) => {
         const d = new Date(r.created_at);
         // العربون داخل ضمن totalIn لكنه يُعرض في خانة الحجوزات مش «إيرادات أخرى».
         // تسوية الجرد (زيادة) داخلة ضمن totalIn لكن لها خانتها المستقلة.
-        if (d >= start && d < end) { addM(dayIn, r, 'amount'); if (isSavingsXfer(r.category)) bd.savingsIn += Math.abs(+r.amount || 0); else if (isReconcile(r.category)) bd.reconcileIn += Math.abs(+r.amount || 0); else if (!isResv(r.category)) bd.otherIncome += Math.abs(+r.amount || 0); }
+        if (d >= start && d < end) {
+          addM(dayIn, r, 'amount');
+          if (isExchangeAdjustment(r.category)) { bd.exchangeValue += Math.abs(+r.amount || 0); bd.exchangeNet += Math.abs(+r.amount || 0); }
+          else if (isSavingsXfer(r.category)) bd.savingsIn += Math.abs(+r.amount || 0);
+          else if (isReconcile(r.category)) bd.reconcileIn += Math.abs(+r.amount || 0);
+          else if (!isResv(r.category)) bd.otherIncome += Math.abs(+r.amount || 0);
+        }
         else if (d < start) addM(befIn, r, 'amount');
       });
       addOut(shopExpenses, 'amount');
@@ -605,7 +612,8 @@ export default function POS() {
       // تفصيل الخارج لليوم حسب النوع (باستثناء حركات الحجز — لها خانتها).
       const inDayRec = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
       // المصروفات الحقيقية = بدون الحجز وبدون تحويلات الخزنة الرئيسية (كلٌّ في خانته).
-      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      bd.expensesTotal = shopExpenses.filter(inDayRec).filter((e) => !isResv(e.category) && !isSavingsXfer(e.category) && !isReconcile(e.category) && !isExchangeAdjustment(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
+      shopExpenses.filter(inDayRec).filter((e) => isExchangeAdjustment(e.category)).forEach((e) => { bd.exchangeValue += Math.abs(+e.amount || 0); bd.exchangeNet -= Math.abs(+e.amount || 0); });
       // محوّل للخزنة الرئيسية اليوم (فلوس طالعة من درج المحل للخزنة — مش مصروف).
       bd.savingsOut = shopExpenses.filter(inDayRec).filter((e) => e.category === 'تحويل للخزنة الرئيسية').reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
       // تفصيل المحوّل للخزنة الرئيسية اليوم لكل وسيلة (لملخّص التقفيل: «سحبت كام لكل طريقة»).
@@ -2224,10 +2232,7 @@ export default function POS() {
                         <Row label="المحصّل من الحجوزات (صافي)" value={b.reservationsNet || 0} tone={((b.reservationsNet || 0) < 0) ? 'out' : 'in'} />
                         {b.otherIncome > 0 && <Row label="إيرادات أخرى" value={b.otherIncome} tone="in" />}
                         <Row label="المرتجعات" value={b.refundsTotal} count={b.refundsCount} tone="out" />
-                        <div className="flex items-center justify-between py-2 px-3 border-b border-slate-100 dark:border-slate-700/50">
-                          <span className="text-[13px] font-bold text-slate-600 dark:text-slate-300">الاستبدالات</span>
-                          <span className="text-sm font-black text-slate-800 dark:text-slate-100">{b.exchangeCount} عملية</span>
-                        </div>
+                        <Row label="الاستبدالات" value={b.exchangeValue || 0} count={b.exchangeCount} tone={(b.exchangeNet || 0) < 0 ? 'out' : (b.exchangeNet || 0) > 0 ? 'in' : undefined} />
                         <Row label="المصروفات" value={b.expensesTotal} tone="out" />
                         <Row label="المشتريات" value={b.purchasesTotal} tone="out" />
                         <Row label="الرواتب والسلف" value={b.salariesTotal} tone="out" />
