@@ -1231,7 +1231,6 @@ export default function Suppliers() {
           try {
             setIsPayingDebt(true);
             await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, undefined, fromMain);
-            if (fromMain) await recordMainTreasuryOut(splitPayments as any, 'main_supplier_payment', `سداد مورد ${selectedSupplierProfile.name}`);
             alert('تم تسجيل عملية السداد بنجاح');
             setDebtPay({});
             setDebtPaySource('main');
@@ -1273,7 +1272,6 @@ export default function Suppliers() {
               if (useMain) await recordMainTreasuryIn(splitPayments as any, 'main_supplier_collection', `تحصيل من مورد ${selectedSupplierProfile.name}`, dateISO);
             } else {
               await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO, useMain);
-              if (useMain) await recordMainTreasuryOut(splitPayments as any, 'main_supplier_payment', `سداد مورد ${selectedSupplierProfile.name}`, dateISO);
             }
             alert(isCollection ? 'تم تسجيل تحصيل من المورد بنجاح' : 'تم تسجيل سداد للمورد بنجاح');
             setSupplierFinancialPay({});

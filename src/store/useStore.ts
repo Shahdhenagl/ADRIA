@@ -4907,6 +4907,14 @@ setupRealtime: () => {
         purchaseInvoices: [newPayment, ...state.purchaseInvoices]
       });
       const supplier = state.suppliers.find((s) => s.id === supplierId);
+      if (fromMainTreasury) {
+        await get().recordMainTreasuryOut(
+          splits,
+          'main_supplier_payment',
+          `سداد مورد ${supplier?.name || 'مورد'} - ${invoiceNumber}`,
+          (data as any).created_at,
+        );
+      }
       sendTelegramAlert({
         type: 'supplier_payment',
         actor: getActorName(state),
