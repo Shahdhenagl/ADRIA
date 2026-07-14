@@ -273,6 +273,7 @@ export default function POS() {
   const isMaster = activeCashier?.id === 'master';
   // صلاحية كاملة: كاشير يتجاوز الـ OTP في العمليات الحسّاسة (صرف/تحويل الخزنة الرئيسية، حذف فاتورة، أسعار الجملة).
   const cashierFullAccess = isMaster || !!(activeCashier as any)?.full_access;
+  const canExchangeWithoutOtp = cashierFullAccess || !!(storeSettings as any).cashierPermissions?.exchangeNoOtp;
   const pricesHidden = invoiceType !== 'retail' && !wholesaleUnlocked && !cashierFullAccess;
   const perm = (k: string) => isMaster || ((storeSettings as any).cashierPermissions?.[k] !== false);
   // تسميات وسائل الدفع
@@ -2436,7 +2437,7 @@ export default function POS() {
       )}
 
       {editingOrder && (
-        <EditInvoiceModal invoice={editingOrder} onClose={() => setEditingOrder(null)} requireOtp exchangeMode />
+        <EditInvoiceModal invoice={editingOrder} onClose={() => setEditingOrder(null)} requireOtp={!canExchangeWithoutOtp} exchangeMode />
       )}
 
       {viewExchange && (() => {

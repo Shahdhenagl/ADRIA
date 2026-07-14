@@ -283,6 +283,18 @@ export default function Settings() {
             <span className="text-sm font-bold text-amber-800">السماح للكاشير بصرف سلف للموظفين (تُخصم من راتب الشهر)</span>
             <input type="checkbox" checked={!!formData.allowCashierEmployeeAdvance} onChange={(e) => setFormData({ ...formData, allowCashierEmployeeAdvance: e.target.checked })} className="w-5 h-5 accent-amber-600" />
           </label>
+          <label className="mt-2 flex items-center justify-between gap-2 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 cursor-pointer">
+            <span className="text-sm font-bold text-emerald-800">السماح للكاشير بعمل استبدال بدون OTP</span>
+            <input
+              type="checkbox"
+              checked={!!formData.cashierPermissions?.exchangeNoOtp}
+              onChange={(e) => setFormData({
+                ...formData,
+                cashierPermissions: { ...(formData.cashierPermissions || {}), exchangeNoOtp: e.target.checked }
+              })}
+              className="w-5 h-5 accent-emerald-600"
+            />
+          </label>
         </div>
 
         {/* ── إعدادات العرض ── */}
