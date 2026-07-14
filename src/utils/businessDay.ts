@@ -39,11 +39,9 @@ export function businessDayRange(dayStr: string, settings?: { dayStartHour?: num
 
 /**
  * وقت (ISO) لتسجيل حركة في حسابات يوم محاسبي مُحدَّد YYYY-MM-DD:
- * - لو التاريخ هو اليوم المحاسبي الحالي → الوقت الفعلي الآن (يحفظ التوقيت الحقيقي).
- * - غير كده (يوم سابق/لاحق) → منتصف اليوم المحاسبي المطلوب (مضمون داخل نطاق التقفيل مهما كانت ساعة البداية).
+ * - يثبت الحركة في منتصف اليوم المحاسبي المطلوب، حتى لو تم تسجيلها بعد منتصف الليل.
  */
-export function timestampForBusinessDate(dayStr: string, settings?: { dayStartHour?: number } | null, now: Date = new Date()): string {
-  if (dayStr === businessDateStr(settings, now)) return now.toISOString();
+export function timestampForBusinessDate(dayStr: string, settings?: { dayStartHour?: number } | null): string {
   const { start } = businessDayRange(dayStr, settings);
   const mid = new Date(start);
   mid.setHours(mid.getHours() + 12); // منتصف اليوم المحاسبي
