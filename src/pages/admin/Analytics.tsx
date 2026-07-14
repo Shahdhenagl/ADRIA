@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
-import { calculateOrderReturnValue } from '../../utils/returns';
+import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -29,7 +29,6 @@ declare module 'jspdf' {
 export default function Analytics() {
   const { storeSettings, loadAnalyticsData, purchaseInvoices, products, expenses, orders: globalOrders } = useStore();
   const [orders, setOrders] = useState<any[]>([]);
-  const [currentCustomerDebt, setCurrentCustomerDebt] = useState(0);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<'today' | '7d' | '30d' | 'thisMonth' | 'thisYear' | 'all'>('30d');
   // فلتر يوم محدد: لو متعبّى، يتجاهل أزرار الفترة ويعرض هذا اليوم فقط.
@@ -38,39 +37,6 @@ export default function Analytics() {
   useEffect(() => {
     fetchData();
   }, [timeRange, customDay]);
-
-  useEffect(() => {
-    loadCurrentCustomerDebt();
-  }, []);
-
-  const loadCurrentCustomerDebt = async () => {
-    try {
-      const { supabase } = await import('../../lib/supabase');
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*, order_items(*)')
-        .not('customer_id', 'is', null)
-        .eq('is_deleted', false);
-      if (error) throw error;
-
-      const debtByCustomer: Record<string, number> = {};
-      for (const row of data || []) {
-        const customerId = (row as any).customer_id;
-        if (!customerId) continue;
-        const returnedValue = calculateOrderReturnValue({ ...row, items: (row as any).order_items || [] });
-        const effectiveTotal = (row as any).type === 'payment' ? 0 : (Number((row as any).total) || 0) - returnedValue;
-        const debt = effectiveTotal - (Number((row as any).paid_amount) || 0);
-        if (debtByCustomer[customerId] === undefined) debtByCustomer[customerId] = 0;
-        debtByCustomer[customerId] += debt;
-      }
-
-      const total = Object.values(debtByCustomer).reduce((sum, value) => sum + Math.max(0, value), 0);
-      setCurrentCustomerDebt(total);
-    } catch (err) {
-      console.error('Failed to load current customer debt:', err);
-      setCurrentCustomerDebt(0);
-    }
-  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -108,8 +74,6 @@ export default function Analytics() {
     let revenue = 0;
     let cost = 0;
     let invoiceProfit = 0;
-    let serviceRevenues = 0;
-    let serviceExpenses = 0;
     let collectedFromInvoices = 0;
     let collectedFromOther = 0;
 
@@ -120,8 +84,8 @@ export default function Analytics() {
 
     const debtPaymentsByInvoice = new Map<string, number>();
     globalOrders.filter(o => !o.is_deleted).forEach(o => {
-      if (o.type === 'payment' && o.notes?.includes('سداد أجل للفاتورة رقم #')) {
-        const match = o.notes.match(/سداد أجل للفاتورة رقم #([\w-]+)/);
+      if (o.type === 'payment' && /سداد [آأ]?جل للفاتورة رقم #/.test(o.notes || '')) {
+        const match = String(o.notes || '').match(/سداد [آأ]?جل للفاتورة رقم #([\w-]+)/);
         if (match && match[1]) {
           const invoiceId = match[1];
           debtPaymentsByInvoice.set(invoiceId, (debtPaymentsByInvoice.get(invoiceId) || 0) + (o.paid_amount || 0));
@@ -133,8 +97,7 @@ export default function Analytics() {
       if (order.type === 'payment') {
         const { toSales, toServices, toOldDebt } = allocatePayment(order, globalOrders);
         collectedFromInvoices += toSales;
-        serviceRevenues += toServices;
-        collectedFromOther += toOldDebt;
+        collectedFromOther += toOldDebt + toServices;
         revenue += (order.paid_amount || 0);
         return; // Skip items calculation for payment orders
       }
@@ -144,14 +107,10 @@ export default function Analytics() {
       if (sumSplits > 0) {
         initialPaid = sumSplits;
       } else {
-        initialPaid = (order.paid_amount || 0) - (debtPaymentsByInvoice.get(order.id) || 0);
+        initialPaid = (order.paid_amount || 0) - (debtPaymentsByInvoice.get(order.id) || 0) + calculateCashRefunded(order);
       }
 
-      if (order.car_id) {
-        serviceRevenues += initialPaid;
-      } else {
-        invoiceProfit += calculateInvoiceProfit(order);
-      }
+      invoiceProfit += calculateInvoiceProfit(order);
       
       collectedFromInvoices += initialPaid;
       revenue += initialPaid;
@@ -182,7 +141,14 @@ export default function Analytics() {
       }
     });
 
-    const totalCustomerDebt = currentCustomerDebt;
+    const totalCustomerDebt = Math.max(0, globalOrders
+      .filter((o: any) => !o.is_deleted && o.type === 'sale')
+      .reduce((sum: number, o: any) => {
+        const effectiveTotal = Math.max(0, (Number(o.total) || 0) - calculateOrderReturnValue(o));
+        const splitPaid = (Number(o.paid_cash) || 0) + (Number(o.paid_visa) || 0) + (Number(o.paid_wallet) || 0) + (Number(o.paid_instapay) || 0) + (Number(o.paid_method5) || 0) + (Number(o.paid_method6) || 0);
+        const paid = Math.max(Number(o.paid_amount) || 0, splitPaid + (debtPaymentsByInvoice.get(o.id) || 0));
+        return sum + Math.max(0, effectiveTotal - paid);
+      }, 0));
     const totalSupplierDebt = Math.max(0, purchaseInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0));
 
     const profit = revenue - cost;
@@ -200,7 +166,6 @@ export default function Analytics() {
       .sort((a, b) => b.total - a.total)
       .slice(0, 10);
 
-    const procurementCost = purchaseInvoices.reduce((sum, inv) => sum + inv.total, 0);
     const totalInventoryValue = products.reduce((sum, p) => sum + (p.stock_quantity * (p.average_purchase_price || p.purchase_price || 0)), 0);
 
     // Calculate time-filtered expenses
@@ -231,18 +196,22 @@ export default function Analytics() {
       return true;
     });
 
-    const extraIncomes = filteredExpenses.filter(e => e.amount < 0 && !e.car_id).reduce((sum, e) => sum + Math.abs(e.amount), 0);
-    const totalExpenses = filteredExpenses.filter(e => e.amount > 0 && !e.car_id).reduce((sum, exp) => sum + exp.amount, 0);
-    
-    serviceExpenses = filteredExpenses.filter(e => e.car_id).reduce((sum, exp) => sum + exp.amount, 0);
-    const serviceProfit = serviceRevenues - serviceExpenses;
+    const extraIncomes = filteredExpenses.filter(e => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
+    const totalExpenses = filteredExpenses.filter(e => e.amount > 0).reduce((sum, exp) => sum + exp.amount, 0);
+    const filteredPurchases = purchaseInvoices.filter(inv => {
+      const d = new Date(inv.created_at);
+      if (startLimit && d < startLimit) return false;
+      if (endLimit && d > endLimit) return false;
+      return true;
+    });
+    const procurementCost = filteredPurchases.reduce((sum, inv) => sum + inv.total, 0);
 
     collectedFromOther += extraIncomes;
     revenue += extraIncomes;
-    const finalNetProfit = invoiceProfit + serviceProfit + extraIncomes - totalExpenses;
+    const finalNetProfit = invoiceProfit + extraIncomes - totalExpenses;
 
     return { 
-      revenue, cost, profit, invoiceProfit, margin, serviceRevenues, serviceExpenses, serviceProfit,
+      revenue, cost, profit, invoiceProfit, margin,
       orderCount: activeOrders.filter(o => o.type === 'sale').length,
       topProductsByQty, 
       topProductsByProfit, 
@@ -256,7 +225,7 @@ export default function Analytics() {
       totalCustomerDebt,
       totalSupplierDebt
     };
-  }, [orders, expenses, purchaseInvoices, products, timeRange, customDay, globalOrders, currentCustomerDebt]);
+  }, [orders, expenses, purchaseInvoices, products, timeRange, customDay, globalOrders]);
 
   // ── Export Logic ─────────────────────────────────────────────
   const exportExcel = () => {
@@ -268,7 +237,6 @@ export default function Analytics() {
       ['إجمالي المبيعات والإيرادات', stats.revenue, storeSettings.currency, ''],
       ['إجمالي التكلفة', stats.cost, storeSettings.currency, ''],
       ['إجمالي الربح من الفواتير', stats.invoiceProfit, storeSettings.currency, ''],
-      ['إجمالي ربح الخدمات (السيارات)', stats.serviceProfit, storeSettings.currency, ''],
       ['إجمالي المصاريف العامة', stats.totalExpenses, storeSettings.currency, ''],
       ['صافي الربح النهائي', stats.finalNetProfit, storeSettings.currency, ''],
       ['هامش الربح', stats.margin.toFixed(2) + '%', '', ''],
@@ -401,28 +369,28 @@ export default function Analytics() {
       {/* Cards: New Financial Indicators */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <StatCard 
-          title="المحصل من الفواتير" 
+          title="تحصيل فواتير البيع" 
           value={stats.collectedFromInvoices} 
           unit={storeSettings.currency}
           icon={DollarSign} 
           color="emerald" 
         />
         <StatCard 
-          title="إيرادات أخرى ومسدد آجل" 
+          title="سداد آجل وإيرادات أخرى" 
           value={stats.collectedFromOther} 
           unit={storeSettings.currency}
           icon={TrendingUp} 
           color="indigo" 
         />
         <StatCard 
-          title="إجمالي الآجل الحالي على العملاء"
+          title="آجل العملاء الحالي"
           value={stats.totalCustomerDebt} 
           unit={storeSettings.currency}
           icon={Users} 
           color="amber" 
         />
         <StatCard 
-          title="إجمالي المديونية للموردين" 
+          title="مديونية الموردين الحالية" 
           value={stats.totalSupplierDebt} 
           unit={storeSettings.currency}
           icon={FileText} 
@@ -433,7 +401,7 @@ export default function Analytics() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
-          title="إجمالي المبيعات والإيرادات" 
+          title="إجمالي الداخل" 
           value={stats.revenue} 
           unit={storeSettings.currency}
           icon={TrendingUp} 
@@ -449,22 +417,14 @@ export default function Analytics() {
           increase={stats.invoiceProfit > 0} 
         />
         <StatCard 
-          title="صافي ربح الخدمات (السيارات)" 
-          value={stats.serviceProfit} 
-          unit={storeSettings.currency}
-          icon={TrendingUp} 
-          color="indigo" 
-          increase={stats.serviceProfit > 0} 
-        />
-        <StatCard 
-          title="المصاريف والتكاليف" 
+          title="المصاريف العامة" 
           value={stats.totalExpenses} 
           unit={storeSettings.currency}
           icon={TrendingDown} 
           color="slate" 
         />
         <StatCard 
-          title="صافي الربح النهائي" 
+          title="صافي الربح" 
           value={stats.finalNetProfit} 
           unit={storeSettings.currency}
           icon={DollarSign} 
