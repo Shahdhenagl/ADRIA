@@ -8,7 +8,8 @@ import {
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, type PaymentKey } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance, type PaymentKey } from '../../utils/paymentMethods';
+import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 
 interface UnifiedTransaction {
   id: string;
@@ -137,10 +138,10 @@ export default function Budget() {
     // 2. Orders (Sales revenues & Debt payments & Refunds)
     orders.filter((order) => !order.is_deleted).forEach(o => {
       const isPaymentOrder = o.type === 'payment';
-      const totalRefunded = o.items?.reduce((sum, item) => sum + (item.refunded_amount || 0), 0) || 0;
+      const totalRefunded = calculateCashRefunded(o);
 
       let initialPaidAmount = o.paid_amount || 0;
-      const sumSplits = (o.paid_cash || 0) + (o.paid_visa || 0) + (o.paid_wallet || 0) + (o.paid_instapay || 0);
+      const sumSplits = ALL_PAYMENT_KEYS.reduce((s, k) => s + (Number((o as any)[`paid_${k}`]) || 0), 0);
 
       if (isPaymentOrder) {
         initialPaidAmount = o.paid_amount || 0;
@@ -172,7 +173,7 @@ export default function Budget() {
           payment_method: ((o.refund_method && ['cash', 'visa', 'wallet', 'instapay'].includes(o.refund_method))
             ? o.refund_method
             : (['visa', 'wallet', 'instapay'].includes(o.payment_method) ? o.payment_method : 'cash')) as 'cash' | 'visa' | 'wallet' | 'instapay',
-          date: new Date(o.date),
+          date: new Date((o as any).refunded_at || o.date),
           car_id: o.car_id
         });
       }
@@ -275,16 +276,28 @@ export default function Budget() {
     let serviceRevenues = 0;
     let serviceExpenses = 0;
 
+    const seenPaymentOrders = new Set<string>();
     filteredTransactions.forEach(tx => {
       if (tx.type === 'revenue') {
         totalRevenue += tx.amount;
         if (tx.category === 'تحصيل من العميل') {
           const origOrder = orders.find((o: any) => o.id === tx.originalId);
           if (origOrder) {
+            if (seenPaymentOrders.has(tx.originalId)) return;
+            seenPaymentOrders.add(tx.originalId);
             const { toSales, toServices, toOldDebt } = allocatePayment(origOrder, orders);
-            collectedFromInvoices += toSales;
-            serviceRevenues += toServices;
-            collectedFromOther += toOldDebt;
+            if (methodFilter === 'all') {
+              collectedFromInvoices += toSales;
+              serviceRevenues += toServices;
+              collectedFromOther += toOldDebt;
+            } else {
+              const paid = Math.max(0.001, Number(origOrder.paid_amount) || 0);
+              const methodPaid = Number((origOrder as any)[`paid_${methodFilter}`]) || 0;
+              const ratio = Math.max(0, methodPaid / paid);
+              collectedFromInvoices += toSales * ratio;
+              serviceRevenues += toServices * ratio;
+              collectedFromOther += toOldDebt * ratio;
+            }
           } else {
             collectedFromOther += tx.amount;
           }
@@ -374,8 +387,12 @@ export default function Budget() {
     };
 
     const endOfPeriod = getEndOfPeriod();
-    const closingBalance = allTransactions
+    const openingForFilter = methodFilter === 'all'
+      ? totalOpeningBalance(storeSettings as any)
+      : Number((storeSettings as any).paymentOpeningBalances?.[methodFilter] ?? (methodFilter === 'cash' ? storeSettings.initial_balance : 0)) || 0;
+    const closingBalance = openingForFilter + allTransactions
       .filter(tx => tx.date <= endOfPeriod)
+      .filter(tx => methodFilter === 'all' || tx.payment_method === methodFilter)
       .reduce((sum, tx) => sum + (tx.type === 'revenue' ? tx.amount : -tx.amount), 0);
 
     return {
@@ -387,12 +404,24 @@ export default function Budget() {
       collectedFromOther,
       closingBalance,
       netProfit: totalRevenue - totalExpense,
-      count: filteredTransactions.length
+      count: new Set(filteredTransactions.map((tx) => tx.originalId)).size
     };
-  }, [filteredTransactions, allTransactions, orders, dateFilter, customDate, customMonth, customYear, methodFilter]);
+  }, [filteredTransactions, allTransactions, orders, dateFilter, customDate, customMonth, customYear, methodFilter, storeSettings]);
 
   const totalCustomerDebt = useMemo(() => {
-    return Math.max(0, orders.filter(o => !o.is_deleted).reduce((sum, o) => sum + (o.total - o.paid_amount), 0));
+    const debtPaidByInvoice = new Map<string, number>();
+    orders.filter(o => !o.is_deleted && o.type === 'payment').forEach((o: any) => {
+      const match = String(o.notes || '').match(/سداد [آأ]?جل للفاتورة رقم #([\w-]+)/);
+      if (match?.[1]) debtPaidByInvoice.set(match[1], (debtPaidByInvoice.get(match[1]) || 0) + (Number(o.paid_amount) || 0));
+    });
+    return Math.max(0, orders
+      .filter(o => !o.is_deleted && o.type === 'sale')
+      .reduce((sum, o: any) => {
+        const effectiveTotal = Math.max(0, (Number(o.total) || 0) - calculateOrderReturnValue(o));
+        const splitPaid = ALL_PAYMENT_KEYS.reduce((s, k) => s + Math.abs(Number(o[`paid_${k}`]) || 0), 0);
+        const paid = Math.max(Number(o.paid_amount) || 0, splitPaid + (debtPaidByInvoice.get(o.id) || 0));
+        return sum + Math.max(0, effectiveTotal - paid);
+      }, 0));
   }, [orders]);
 
   const totalSupplierDebt = useMemo(() => {
