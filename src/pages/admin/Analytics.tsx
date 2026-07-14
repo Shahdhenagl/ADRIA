@@ -204,7 +204,13 @@ export default function Analytics() {
       if (endLimit && d > endLimit) return false;
       return true;
     });
-    const procurementCost = filteredPurchases.reduce((sum, inv) => sum + inv.total, 0);
+    const procurementCost = filteredPurchases
+      .filter((inv) => inv.invoice_number !== 'رصيد افتتاحي' && (Number(inv.total) || 0) > 0)
+      .reduce((sum, inv) => {
+        const invoiceTotal = Math.max(0, Number(inv.total) || 0);
+        const paid = Math.max(0, Number(inv.paid_amount) || 0);
+        return sum + Math.min(paid, invoiceTotal);
+      }, 0);
 
     collectedFromOther += extraIncomes;
     revenue += extraIncomes;
@@ -445,7 +451,7 @@ export default function Analytics() {
           color="slate" 
         />
         <StatCard 
-          title="تكلفة المشتريات" 
+          title="مدفوع المشتريات" 
           value={stats.procurementCost} 
           unit={storeSettings.currency}
           icon={DollarSign} 
