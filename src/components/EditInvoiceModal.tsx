@@ -22,6 +22,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   const oldPaid = invoice.paid_amount || 0;
 
   const [cart, setCart] = useState<OrderItem[]>(() => exchangeMode ? [] : [...invoice.items]);
+  const [selectedOldIds, setSelectedOldIds] = useState<Set<string>>(() => new Set(invoice.items.map((i) => i.id)));
   const [searchQuery, setSearchQuery] = useState('');
 
   const payKeys = activePaymentKeys(storeSettings as any);
@@ -46,6 +47,12 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   const [orderDate, setOrderDate] = useState<string>(() => toDateInput(invoice.date));
 
   const total = cart.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
+  const selectedOldItems = originalItems.filter((item) => selectedOldIds.has(item.id));
+  const keptOldItems = exchangeMode ? originalItems.filter((item) => !selectedOldIds.has(item.id)) : [];
+  const selectedOldTotal = selectedOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
+  const keptOldTotal = keptOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
+  const finalExchangeItems = [...keptOldItems.map((item) => ({ ...item })), ...cart.map((item) => ({ ...item }))];
+  const finalExchangeTotal = keptOldTotal + total;
   const paidAmount = payKeys.reduce((s, k) => s + (pay[k] || 0), 0);
   const debt = Math.max(0, total - paidAmount);
 
@@ -69,6 +76,15 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       return [...prev, { ...product, quantity: 1, returned_quantity: 0 }];
     });
     setSearchQuery('');
+  };
+
+  const toggleOldItem = (id: string) => {
+    setSelectedOldIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
   const handleUpdateQuantity = (id: string, delta: number) => {
@@ -95,7 +111,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   };
 
   // فرق الاستبدال: موجب = نحصّل من العميل، سالب = نرجّع للعميل
-  const settleAmount = total - oldPaid;
+  const settleAmount = exchangeMode ? total - selectedOldTotal : total - oldPaid;
   const methodLabelOf = (m: string) => payLabelOf(storeSettings as any, m);
 
   const printExchangeReceipt = () => {
@@ -127,8 +143,8 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       <div class="r"><span>المحاسب:</span><span>${escapeHtml(activeCashier?.name || invoice.cashier_name || 'مدير النظام')}</span></div>
       <div class="r"><span>العميل:</span><span>${escapeHtml(invoice.customer?.name || 'عميل نقدي')}</span></div>
       <div class="sec">قبل الاستبدال</div>
-      <table>${rows(originalItems)}</table>
-      <div class="tot"><span>الإجمالي القديم:</span><span>${oldTotal.toFixed(2)} ${cur}</span></div>
+      <table>${rows(selectedOldItems)}</table>
+      <div class="tot"><span>إجمالي المستبدل:</span><span>${selectedOldTotal.toFixed(2)} ${cur}</span></div>
       <div class="sec">بعد الاستبدال</div>
       <table>${rows(cart)}</table>
       <div class="tot"><span>الإجمالي الجديد:</span><span>${total.toFixed(2)} ${cur}</span></div>
@@ -145,6 +161,10 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
     }
     if (cart.length === 0) {
       setError('لا يمكن حفظ فاتورة بدون منتجات. قم بحذف الفاتورة بدلاً من ذلك.');
+      return;
+    }
+    if (exchangeMode && selectedOldItems.length === 0) {
+      setError('اختاري قطعة واحدة على الأقل من الفاتورة القديمة للاستبدال.');
       return;
     }
 
@@ -177,13 +197,13 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       const base: Record<string, number> = {};
       payKeys.forEach((k) => { base[k] = (invoice as any)['paid_' + k] || 0; });
       if (payKeys.reduce((s, k) => s + base[k], 0) === 0) base[invoice.payment_method || 'cash'] = oldPaid;
-      updatedData = { total, paid_amount: total, paid_cash: base.cash || 0, paid_visa: base.visa || 0, paid_wallet: base.wallet || 0, paid_instapay: base.instapay || 0, paid_method5: base.method5 || 0, paid_method6: base.method6 || 0, payment_method: invoice.payment_method as any };
+      updatedData = { total: finalExchangeTotal, paid_amount: finalExchangeTotal, paid_cash: base.cash || 0, paid_visa: base.visa || 0, paid_wallet: base.wallet || 0, paid_instapay: base.instapay || 0, paid_method5: base.method5 || 0, paid_method6: base.method6 || 0, payment_method: invoice.payment_method as any };
     } else {
       const newDateISO = (() => { const d = new Date(orderDate); return isNaN(d.getTime()) ? invoice.date : d.toISOString(); })();
       updatedData = { total, paid_amount: paidAmount, paid_cash: pay.cash || 0, paid_visa: pay.visa || 0, paid_wallet: pay.wallet || 0, paid_instapay: pay.instapay || 0, paid_method5: pay.method5 || 0, paid_method6: pay.method6 || 0, payment_method: paymentMethod as any, date: newDateISO };
     }
 
-    const success = await editOrder(invoice.id, updatedData, cart, reason);
+    const success = await editOrder(invoice.id, updatedData, exchangeMode ? finalExchangeItems : cart, reason);
 
     if (success) {
       if (exchangeMode) {
@@ -202,9 +222,10 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
           } as any);
         }
         await markOrderExchanged(invoice.id, {
-          before: originalItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
+          before: selectedOldItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
+          kept: keptOldItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
           after: cart.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
-          oldTotal, newTotal: total, diff: settleAmount, method: settleMethod, date: new Date().toISOString(),
+          originalTotal: oldTotal, oldTotal: selectedOldTotal, keptTotal: keptOldTotal, newTotal: total, finalTotal: finalExchangeTotal, diff: settleAmount, method: settleMethod, date: new Date().toISOString(),
         });
         printExchangeReceipt();
       }
@@ -281,6 +302,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                   <table className="w-full text-sm text-right">
                     <thead className="text-slate-500 font-bold">
                       <tr>
+                        <th className="p-3 w-10"></th>
                         <th className="p-3">المنتج</th>
                         <th className="p-3 text-center">الكمية</th>
                         <th className="p-3">الإجمالي</th>
@@ -288,7 +310,15 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                     </thead>
                     <tbody className="divide-y divide-slate-200">
                       {originalItems.map(item => (
-                        <tr key={item.id}>
+                        <tr key={item.id} className={selectedOldIds.has(item.id) ? 'bg-amber-50/70' : ''}>
+                          <td className="p-3">
+                            <input
+                              type="checkbox"
+                              checked={selectedOldIds.has(item.id)}
+                              onChange={() => toggleOldItem(item.id)}
+                              className="w-5 h-5 accent-amber-600"
+                            />
+                          </td>
                           <td className="p-3 font-bold text-slate-800">{item.name}</td>
                           <td className="p-3 text-center font-black">{item.quantity}</td>
                           <td className="p-3 font-black text-slate-700">{(item.quantity * (item.sale_price || 0)).toLocaleString()} {storeSettings.currency}</td>
@@ -297,9 +327,15 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                     </tbody>
                   </table>
                 </div>
-                <div className="px-4 py-3 bg-white border-t border-slate-200 flex justify-between font-black">
-                  <span>إجمالي القديم</span>
-                  <span>{oldTotal.toLocaleString()} {storeSettings.currency}</span>
+                <div className="px-4 py-3 bg-white border-t border-slate-200 space-y-2 text-sm">
+                  <div className="flex justify-between font-black text-amber-700">
+                    <span>إجمالي المحدد للاستبدال</span>
+                    <span>{selectedOldTotal.toLocaleString()} {storeSettings.currency}</span>
+                  </div>
+                  <div className="flex justify-between font-bold text-slate-500">
+                    <span>باقي في الفاتورة</span>
+                    <span>{keptOldTotal.toLocaleString()} {storeSettings.currency}</span>
+                  </div>
                 </div>
               </div>
 
@@ -475,13 +511,25 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
 
             <div className="bg-slate-50 rounded-2xl p-6 flex flex-col justify-center space-y-4 border border-slate-100">
               <div className="flex justify-between items-center pb-4 border-b border-slate-200">
-                <span className="text-slate-600 font-medium">الإجمالي القديم:</span>
-                <span className="text-lg font-bold text-slate-500">{(invoice.total || 0).toLocaleString()} {storeSettings.currency}</span>
+                <span className="text-slate-600 font-medium">{exchangeMode ? 'إجمالي المحدد للاستبدال:' : 'الإجمالي القديم:'}</span>
+                <span className="text-lg font-bold text-slate-500">{(exchangeMode ? selectedOldTotal : (invoice.total || 0)).toLocaleString()} {storeSettings.currency}</span>
               </div>
               <div className="flex justify-between items-center pb-4 border-b border-slate-200">
-                <span className="text-slate-600 font-medium">الإجمالي الجديد:</span>
+                <span className="text-slate-600 font-medium">{exchangeMode ? 'إجمالي القطع الجديدة:' : 'الإجمالي الجديد:'}</span>
                 <span className="text-2xl font-black text-slate-800">{total.toLocaleString()} {storeSettings.currency}</span>
               </div>
+              {exchangeMode && keptOldTotal > 0.009 && (
+                <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+                  <span className="text-slate-600 font-medium">باقي الفاتورة بدون استبدال:</span>
+                  <span className="text-lg font-bold text-slate-500">{keptOldTotal.toLocaleString()} {storeSettings.currency}</span>
+                </div>
+              )}
+              {exchangeMode && (
+                <div className="flex justify-between items-center pb-4 border-b border-slate-200">
+                  <span className="text-slate-600 font-medium">إجمالي الفاتورة بعد الاستبدال:</span>
+                  <span className="text-xl font-black text-slate-800">{finalExchangeTotal.toLocaleString()} {storeSettings.currency}</span>
+                </div>
+              )}
               {(() => {
                 const diff = exchangeMode ? settleAmount : total - (invoice.total || 0);
                 if (Math.abs(diff) < 0.01) return null;

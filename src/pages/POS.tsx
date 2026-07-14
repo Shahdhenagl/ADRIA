@@ -542,7 +542,7 @@ export default function POS() {
         if (inDay) {
           // في الاستبدال نعرض إجمالي البيع الأصلي (oldTotal) على يوم البيع، والفرق يبان بيومه —
           // عشان يوم مقفول ما تتغيّرش «مبيعاته» بأثر رجعي عند استبدال فاتورة قديمة.
-          const saleTotal = o.exchange_data ? (Number(o.exchange_data.oldTotal) || Number(o.total) || 0) : (Number(o.total) || 0);
+          const saleTotal = o.exchange_data ? (Number(o.exchange_data.originalTotal) || Number(o.exchange_data.oldTotal) || Number(o.total) || 0) : (Number(o.total) || 0);
           if (o.type === 'sale') { bd.salesCount += 1; bd.salesTotal += saleTotal; bd.collected += collectedRow; }
           if (o.type === 'payment') { bd.collected += collectedRow; }
         }
