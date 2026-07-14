@@ -95,8 +95,11 @@ export default function Finance() {
     } else if (filterType === 'yearly') {
       startOfPeriod = new Date(selDate.getFullYear(), 0, 1);
     } else {
+      // حدّ «قبل اليوم» بتوقيت UTC ليطابق تصنيف «معاملات اليوم» (getDateStr = toISOString UTC).
+      // كان setHours بيستخدم منتصف الليل المحلي، فالمعاملات القريبة من منتصف الليل كانت
+      // تتحسب في خانة مختلفة عن «اليوم» → رصيد إغلاق اليوم ما يطابقش افتتاح اليوم اللي بعده.
+      // (منتصف ليل UTC = 3 الفجر بتوقيت مصر صيفاً = نفس بداية يوم تقفيل POS.)
       startOfPeriod = new Date(selectedDate);
-      startOfPeriod.setHours(0,0,0,0);
     }
     
     const ordersIn = activeOrders
@@ -172,8 +175,11 @@ export default function Finance() {
     } else if (filterType === 'yearly') {
       startOfPeriod = new Date(selDate.getFullYear(), 0, 1);
     } else {
+      // حدّ «قبل اليوم» بتوقيت UTC ليطابق تصنيف «معاملات اليوم» (getDateStr = toISOString UTC).
+      // كان setHours بيستخدم منتصف الليل المحلي، فالمعاملات القريبة من منتصف الليل كانت
+      // تتحسب في خانة مختلفة عن «اليوم» → رصيد إغلاق اليوم ما يطابقش افتتاح اليوم اللي بعده.
+      // (منتصف ليل UTC = 3 الفجر بتوقيت مصر صيفاً = نفس بداية يوم تقفيل POS.)
       startOfPeriod = new Date(selectedDate);
-      startOfPeriod.setHours(0,0,0,0);
     }
 
     const ordersIn = activeOrders
