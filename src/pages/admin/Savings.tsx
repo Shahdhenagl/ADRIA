@@ -400,16 +400,19 @@ export default function Savings() {
             <tbody>
               {loading ? <tr><td colSpan={6} className="text-center text-slate-400 py-6">جاري التحميل...</td></tr>
                 : filteredTxs.length === 0 ? <tr><td colSpan={6} className="text-center text-slate-400 py-6">{txs.length === 0 ? 'لا توجد معاملات' : 'لا توجد معاملات في هذه الفترة'}</td></tr>
-                : filteredTxs.map((t) => (
-                  <tr key={t.id} className="border-b border-slate-100 dark:border-slate-700/50">
-                    <td className="p-2">{new Date(t.created_at).toLocaleString('ar-EG')}</td>
-                    <td className="p-2 font-bold"><span className={t.source === 'convert' ? 'text-indigo-600' : t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}>{t.source === 'convert' ? (t.direction === 'in' ? 'دخول (تحويل بين الطرق)' : 'خروج (تحويل بين الطرق)') : t.source === 'main_income' ? 'إيراد للرئيسية' : t.source === 'main_expense' ? 'مصروف من الرئيسية' : t.direction === 'in' ? 'إيداع للرئيسية' : 'سحب للمحل'}</span></td>
-                    <td className={`p-2 font-black ${t.source === 'convert' ? 'text-indigo-600' : t.direction === 'in' ? 'text-emerald-600' : 'text-red-600'}`}>{t.direction === 'in' ? '+' : '−'}{Number(t.amount).toFixed(2)} {cur}</td>
-                    <td className="p-2">{METHODS.find((m) => m.key === t.method)?.label || t.method}</td>
-                    <td className="p-2 text-xs text-slate-500">{t.source === 'day_closing' ? 'تقفيل اليوم' : t.source === 'shop_transfer' ? 'تحويل من المحل' : t.source === 'to_shop' ? 'تحويل للمحل' : t.source === 'convert' ? 'تحويل بين الطرق' : (t.source === 'main_income' || t.source === 'main_expense') ? 'معاملة مالية' : 'يدوي'}</td>
-                    <td className="p-2 text-slate-600 dark:text-slate-300">{t.note || '-'}</td>
-                  </tr>
-                ))}
+                : filteredTxs.map((t) => {
+                  const directionColor = t.direction === 'in' ? 'text-emerald-600' : 'text-red-600';
+                  return (
+                    <tr key={t.id} className="border-b border-slate-100 dark:border-slate-700/50">
+                      <td className="p-2">{new Date(t.created_at).toLocaleString('ar-EG')}</td>
+                      <td className="p-2 font-bold"><span className={directionColor}>{t.source === 'convert' ? (t.direction === 'in' ? 'دخول (تحويل بين الطرق)' : 'خروج (تحويل بين الطرق)') : t.source === 'main_income' ? 'إيراد للرئيسية' : t.source === 'main_expense' ? 'مصروف من الرئيسية' : t.direction === 'in' ? 'إيداع للرئيسية' : 'سحب للمحل'}</span></td>
+                      <td className={`p-2 font-black ${directionColor}`}>{t.direction === 'in' ? '+' : '−'}{Number(t.amount).toFixed(2)} {cur}</td>
+                      <td className="p-2">{METHODS.find((m) => m.key === t.method)?.label || t.method}</td>
+                      <td className="p-2 text-xs text-slate-500">{t.source === 'day_closing' ? 'تقفيل اليوم' : t.source === 'shop_transfer' ? 'تحويل من المحل' : t.source === 'to_shop' ? 'تحويل للمحل' : t.source === 'convert' ? 'تحويل بين الطرق' : (t.source === 'main_income' || t.source === 'main_expense') ? 'معاملة مالية' : 'يدوي'}</td>
+                      <td className="p-2 text-slate-600 dark:text-slate-300">{t.note || '-'}</td>
+                    </tr>
+                  );
+                })}
             </tbody>
           </table>
         </div>
