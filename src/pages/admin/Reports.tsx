@@ -4,7 +4,8 @@ import { FileBarChart, Printer } from 'lucide-react';
 import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } from '../../utils/paymentMethods';
-import { applySplit, isInternalTransfer, routeInternalTransfer } from '../../utils/treasury';
+import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
+import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase } from '../../utils/treasury';
 
 const todayStr = () => { const d = new Date(); return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); };
 
@@ -30,7 +31,7 @@ export default function Reports() {
           fetchAllRows('expenses'),
           fetchAllRows('purchase_invoices'),
           fetchAllRows('employee_transactions'),
-          fetchAllRows('orders', '*, order_items(refunded_amount)'),
+          fetchAllRows('orders', '*, order_items(*)'),
         ]);
         setExtra({ expenses: (e as any[]) || [], purchases: (p as any[]) || [], salaries: (s as any[]) || [] });
         setOrders(((o as any[]) || []).map((r) => ({ ...r, date: r.created_at, items: r.order_items || [] })));
@@ -50,20 +51,61 @@ export default function Reports() {
     const pass = (dt: any) => beforeStart ? new Date(dt) < start : (rangeOnly ? inRange(dt) : true);
     const add = (target: Record<string, number>, rec: any, field: string, methodOverride?: string) =>
       applySplit(target, rec, field, { methodOverride });
+
+    const splitsSumAbs = (rec: any) => ALL_PAYMENT_KEYS.reduce((t, k) => t + Math.abs(Number(rec?.['paid_' + k]) || 0), 0);
+    const absSplits = (rec: any) => {
+      const out: any = { ...rec };
+      ALL_PAYMENT_KEYS.forEach((k) => { out['paid_' + k] = Math.abs(Number(rec?.['paid_' + k]) || 0); });
+      return out;
+    };
+
+    const debtByInvoice = new Map<string, number>();
     orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
-      if ((o.type === 'sale' || o.type === 'payment') && pass(o.date)) add(inN, o, 'paid_amount');
-      const ref = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
+      if (o.type === 'payment' && /سداد [آأ]?جل للفاتورة رقم #/.test(o.notes || '')) {
+        const match = String(o.notes || '').match(/سداد [آأ]?جل للفاتورة رقم #([\w-]+)/);
+        if (match?.[1]) debtByInvoice.set(match[1], (debtByInvoice.get(match[1]) || 0) + (Number(o.paid_amount) || 0));
+      }
+    });
+
+    orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
+      if ((o.type === 'sale' || o.type === 'payment') && pass(o.date)) {
+        let paid = Number(o.paid_amount) || 0;
+        if (o.type === 'sale') {
+          const splitSum = splitsSumAbs(o);
+          const refunded = calculateCashRefunded(o);
+          paid = splitSum > 0 ? splitSum : Math.max(0, paid - (debtByInvoice.get(o.id) || 0) + refunded);
+        }
+        if (paid > 0.001) add(inN, { ...o, paid_amount: paid }, 'paid_amount');
+      }
+      const ref = calculateCashRefunded(o);
       // المرتجع على يوم الاسترجاع (refunded_at) لا يوم البيع؛ fallback للتاريخ القديم.
       if (ref > 0 && pass(o.refunded_at || o.date)) add(outN, { paid_amount: ref, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
     });
-    extra.expenses.filter((e) => pass(e.created_at)).forEach((e) => {
+    extra.expenses.filter((e) => !isMainTreasuryExpense(e) && pass(e.created_at)).forEach((e) => {
       const amt = Number(e.amount) || 0;
       if (isInternalTransfer(e.category)) { routeInternalTransfer(inN, outN, e); return; }
-      if (amt < 0) { const absRec: any = { ...e, amount: Math.abs(amt) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(inN, absRec, 'amount'); }
+      if (amt < 0) add(inN, { ...absSplits(e), amount: Math.abs(amt) }, 'amount');
       else add(outN, e, 'amount');
     });
-    extra.purchases.filter((p) => pass(p.created_at)).forEach((p) => add(outN, p, 'paid_amount'));
-    extra.salaries.filter((s) => pass(s.created_at)).forEach((s) => add(outN, s, 'amount'));
+    extra.purchases.filter((p) => !isMainTreasuryPurchase(p) && pass(p.created_at)).forEach((p) => {
+      const paid = Number(p.paid_amount) || 0;
+      if (paid > 0) add(outN, p, 'paid_amount');
+      else if (paid < 0) add(inN, { ...absSplits(p), paid_amount: Math.abs(paid) }, 'paid_amount');
+    });
+
+    const hasMatchingSalaryExpense = (tx: any) => {
+      const txDate = new Date(tx.created_at).toISOString().slice(0, 10);
+      return extra.expenses.some((e) => {
+        const eDate = new Date(e.created_at || e.date).toISOString().slice(0, 10);
+        return e.category === 'رواتب'
+          && eDate === txDate
+          && Math.abs(Number(e.amount) || 0) === Math.abs(Number(tx.amount) || 0)
+          && ALL_PAYMENT_KEYS.every((k) => Math.abs(Number(e['paid_' + k]) || 0) === Math.abs(Number(tx['paid_' + k]) || 0));
+      });
+    };
+    extra.salaries
+      .filter((s) => !isMainTreasuryExpense(s) && !hasMatchingSalaryExpense(s) && pass(s.created_at))
+      .forEach((s) => add(outN, s, 'amount'));
     return { inN, outN };
   };
 
@@ -81,8 +123,19 @@ export default function Reports() {
 
   // ── sales list ──
   const profitOf = (o: any) => (o.items || []).reduce((s: number, it: any) => { const q = (Number(it.quantity) || 0) - (Number(it.returned_quantity) || 0); const cost = Number(it.average_purchase_price ?? it.purchase_price) || 0; return s + ((Number(it.sale_price) || 0) - cost) * q; }, 0);
+  const splitsSumAbs = (rec: any) => ALL_PAYMENT_KEYS.reduce((t, k) => t + Math.abs(Number(rec?.['paid_' + k]) || 0), 0);
+  const deferredPaidForInvoice = (invoiceId: string) =>
+    orders
+      .filter((o: any) => !o.is_deleted && o.type === 'payment' && String(o.notes || '').match(new RegExp(`سداد [آأ]?جل للفاتورة رقم #${invoiceId}(\\D|$)`)))
+      .reduce((sum: number, o: any) => sum + (Number(o.paid_amount) || 0), 0);
+  const originalPaidOf = (o: any) => {
+    const splitSum = splitsSumAbs(o);
+    if (splitSum > 0) return splitSum;
+    return Math.max(0, (Number(o.paid_amount) || 0) - deferredPaidForInvoice(o.id) + calculateCashRefunded(o));
+  };
+  const effectiveTotalOf = (o: any) => Math.max(0, (Number(o.total) || 0) - calculateOrderReturnValue(o));
   const sales = useMemo(() => orders.filter((o: any) => !o.is_deleted && o.type === 'sale' && inRange(o.date)).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()), [orders, from, to]);
-  const salesTotals = useMemo(() => sales.reduce((acc: any, o: any) => { acc.total += Number(o.total) || 0; acc.paid += Number(o.paid_amount) || 0; acc.profit += profitOf(o); return acc; }, { total: 0, paid: 0, profit: 0 }), [sales]);
+  const salesTotals = useMemo(() => sales.reduce((acc: any, o: any) => { acc.total += effectiveTotalOf(o); acc.paid += originalPaidOf(o); acc.profit += profitOf(o); return acc; }, { total: 0, paid: 0, profit: 0 }), [sales, orders]);
 
   const fmt = (n: number) => `${(n || 0).toFixed(2)} ${cur}`;
 
@@ -91,7 +144,7 @@ export default function Reports() {
     if (tab === 'sales') {
       title = 'كشف حساب المبيعات';
       body = `<table><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>العميل</th><th>مسؤول المبيعات</th><th>الإجمالي</th><th>المدفوع</th><th>الباقي</th><th>الربح</th></tr></thead><tbody>
-        ${sales.map((o: any) => `<tr><td>#${o.id}</td><td>${new Date(o.date).toLocaleString('ar-EG')}</td><td>${escapeHtml(o.customer?.name || 'نقدي')}</td><td>${escapeHtml(o.salesperson_name || '-')}</td><td>${(Number(o.total) || 0).toFixed(2)}</td><td>${(Number(o.paid_amount) || 0).toFixed(2)}</td><td>${((Number(o.total) || 0) - (Number(o.paid_amount) || 0)).toFixed(2)}</td><td>${profitOf(o).toFixed(2)}</td></tr>`).join('')}
+        ${sales.map((o: any) => `<tr><td>#${o.id}</td><td>${new Date(o.date).toLocaleString('ar-EG')}</td><td>${escapeHtml(o.customer?.name || 'نقدي')}</td><td>${escapeHtml(o.salesperson_name || '-')}</td><td>${effectiveTotalOf(o).toFixed(2)}</td><td>${originalPaidOf(o).toFixed(2)}</td><td>${(effectiveTotalOf(o) - originalPaidOf(o)).toFixed(2)}</td><td>${profitOf(o).toFixed(2)}</td></tr>`).join('')}
         </tbody><tfoot><tr><td colspan="4">الإجمالي (${sales.length} فاتورة)</td><td>${salesTotals.total.toFixed(2)}</td><td>${salesTotals.paid.toFixed(2)}</td><td>${(salesTotals.total - salesTotals.paid).toFixed(2)}</td><td>${salesTotals.profit.toFixed(2)}</td></tr></tfoot></table>`;
     } else if (tab === 'methods') {
       title = 'كشف وسائل الدفع (مدين / دائن)';
@@ -177,9 +230,9 @@ export default function Reports() {
                       <td className="p-2 text-xs">{new Date(o.date).toLocaleString('ar-EG')}</td>
                       <td className="p-2">{o.customer?.name || 'نقدي'}</td>
                       <td className="p-2">{o.salesperson_name || '-'}</td>
-                      <td className="p-2 font-bold">{(Number(o.total) || 0).toFixed(2)}</td>
-                      <td className="p-2 text-emerald-600 font-bold">{(Number(o.paid_amount) || 0).toFixed(2)}</td>
-                      <td className="p-2 text-red-600 font-bold">{((Number(o.total) || 0) - (Number(o.paid_amount) || 0)).toFixed(2)}</td>
+                      <td className="p-2 font-bold">{effectiveTotalOf(o).toFixed(2)}</td>
+                      <td className="p-2 text-emerald-600 font-bold">{originalPaidOf(o).toFixed(2)}</td>
+                      <td className="p-2 text-red-600 font-bold">{(effectiveTotalOf(o) - originalPaidOf(o)).toFixed(2)}</td>
                       <td className="p-2 font-bold">{profitOf(o).toFixed(2)}</td>
                     </tr>
                   ))}
