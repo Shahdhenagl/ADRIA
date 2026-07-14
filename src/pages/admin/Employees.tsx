@@ -7,6 +7,7 @@ import {
   DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn
 } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
+import { markMainTreasuryNote } from '../../utils/treasury';
 
 export default function Employees() {
   const {
@@ -14,8 +15,31 @@ export default function Employees() {
     addEmployee, updateEmployee, addEmployeeTransaction,
     updateEmployeeTransaction, deleteEmployeeTransaction,
     addEmployeeLeave, deleteEmployeeLeave,
-    addEmployeeAttendance, deleteEmployeeAttendance
+    addEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut
   } = useStore();
+
+  // مصدر صرف معاملة الموظف: خزنة المحل (الكاشير) أو الخزنة الرئيسية.
+  const [transTreasury, setTransTreasury] = useState<'shop' | 'main'>('shop');
+
+  // تأكيد الصرف من الخزنة الرئيسية عبر OTP للمدير (نفس منطق باقي الشاشات).
+  const confirmMainTreasurySpend = async (amount: number, details: string): Promise<boolean> => {
+    if (!window.confirm(`سيتم الصرف من الخزنة الرئيسية بمبلغ ${amount.toFixed(2)} ${storeSettings.currency}.\nسيتم إرسال OTP للمدير للتأكيد.`)) return false;
+    try {
+      const { supabase } = await import('../../lib/supabase');
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+      const r1 = await fetch('/api/wholesale-otp', { method: 'POST', headers, body: JSON.stringify({ action: 'request', purpose: 'savings', details }) });
+      const j1 = await r1.json();
+      if (!j1.ok) { alert('تعذّر إرسال رمز التأكيد: ' + (j1.error || '')); return false; }
+      const code = window.prompt('تم إرسال رمز التأكيد للمدير على تيليجرام.\nأدخل الرمز لتأكيد الصرف من الخزنة الرئيسية:');
+      if (!code) return false;
+      const r2 = await fetch('/api/wholesale-otp', { method: 'POST', headers, body: JSON.stringify({ action: 'verify', purpose: 'savings', code: code.trim() }) });
+      const j2 = await r2.json();
+      if (!j2.ok) { alert(j2.error || 'رمز غير صحيح'); return false; }
+      return true;
+    } catch { alert('تعذّر التحقق من رمز الخزنة الرئيسية'); return false; }
+  };
 
   const DEFAULT_MONTHLY_LEAVE = 4;
   const monthlyLeaveDaysOf = (emp: Employee) => Number(emp.monthly_leave_days ?? DEFAULT_MONTHLY_LEAVE);
@@ -437,6 +461,7 @@ export default function Employees() {
     setSelectedEmployee(emp);
     setTransType(type);
     setEditingTransaction(transaction || null);
+    setTransTreasury('shop'); // الافتراضي: خزنة المحل
 
     if (transaction) {
       setTransFormData({
@@ -504,8 +529,21 @@ export default function Employees() {
       ? new Date(`${transFormData.date}T12:00:00`).toISOString()
       : undefined;
 
+    // مصدر الصرف: الخزنة الرئيسية متاح للمعاملات الجديدة فقط (مش عند التعديل).
+    const toMain = !editingTransaction && transTreasury === 'main';
+    const typeLabel = transType === 'salary' ? 'راتب' : transType === 'advance' ? 'سلفة' : 'حافز';
+    const emp = selectedEmployee!;
+
+    // الصرف من الخزنة الرئيسية يتطلب OTP للمدير.
+    if (toMain) {
+      const details = `صرف من الخزنة الرئيسية\nالنوع: ${typeLabel} موظف\nالموظف: ${emp.name}\nالمبلغ: ${total.toFixed(2)} ${storeSettings.currency}`;
+      const ok = await confirmMainTreasurySpend(total, details);
+      if (!ok) return;
+    }
+
+    const baseNote = transFormData.note;
     const transactionData = {
-      employee_id: selectedEmployee!.id,
+      employee_id: emp.id,
       amount: total,
       type: transType,
       payment_method: paymentMethod as any,
@@ -516,8 +554,10 @@ export default function Employees() {
       paid_method5: split.method5 || 0,
       paid_method6: split.method6 || 0,
       month: transFormData.month,
-      deductions: (parseFloat(transFormData.dedAmount) || 0) + ((parseFloat(transFormData.dedDays) || 0) * (selectedEmployee!.monthly_salary / 30)),
-      note: transFormData.note,
+      deductions: (parseFloat(transFormData.dedAmount) || 0) + ((parseFloat(transFormData.dedDays) || 0) * (emp.monthly_salary / 30)),
+      // الصرف من الرئيسية: نعلّم الملاحظة بـ [MAIN_TREASURY] فتُستبعد من خزينة الكاشير
+      // (القوائم/الإجماليات/التقفيل)، والمبلغ يتخصم من الخزنة الرئيسية بدلها.
+      note: toMain ? markMainTreasuryNote(baseNote) : baseNote,
       ...(chosenDate ? { created_at: chosenDate } : {})
     };
 
@@ -525,6 +565,9 @@ export default function Employees() {
       await updateEmployeeTransaction(editingTransaction.id, transactionData as any);
     } else {
       await addEmployeeTransaction(transactionData);
+      if (toMain) {
+        await recordMainTreasuryOut(split as any, 'main_expense', `${typeLabel} موظف: ${emp.name}${baseNote ? ` - ${baseNote}` : ''}`, chosenDate);
+      }
     }
 
     setShowTransModal(false);
@@ -1523,6 +1566,25 @@ export default function Employees() {
                   </div>
                 );
               })()}
+
+              {!editingTransaction && (
+                <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                  <label className="block text-sm font-bold text-slate-700 mb-2">مصدر الصرف</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => setTransTreasury('shop')}
+                      className={`py-2.5 rounded-xl font-black text-sm ${transTreasury === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                      خزنة المحل (الكاشير)
+                    </button>
+                    <button type="button" onClick={() => setTransTreasury('main')}
+                      className={`py-2.5 rounded-xl font-black text-sm ${transTreasury === 'main' ? 'bg-amber-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                      الخزنة الرئيسية
+                    </button>
+                  </div>
+                  {transTreasury === 'main' && (
+                    <p className="text-[11px] text-amber-700 font-bold mt-2">سيتم طلب OTP من المدير، والمبلغ يتخصم من الخزنة الرئيسية ولن يظهر في خزينة الكاشير.</p>
+                  )}
+                </div>
+              )}
 
               <div className="space-y-4">
                 <p className="text-sm font-bold text-slate-700 border-b border-slate-100 pb-2">تفاصيل الدفع (طرق الدفع)</p>
