@@ -216,8 +216,11 @@ export default function Finance() {
     };
     return {
       orders: activeOrders.filter(o => matchDate(o.date)),
-      expenses: expenses.filter(e => matchDate(e.date)),
-      purchases: purchaseInvoices.filter(inv => matchDate(inv.created_at)),
+      // معاملات الخزنة الرئيسية (المعلَّمة MAIN_TREASURY: مصاريف/إيرادات/مشتريات/سداد
+      // موردين من الرئيسية) تُستبعَد تماماً من خزينة الكاشير — لا في القوائم ولا في
+      // الإجماليات ولا في الرصيد. مكانها الطبيعي صفحة «الخزنة الرئيسية».
+      expenses: expenses.filter(e => matchDate(e.date) && !isMainTreasuryExpense(e)),
+      purchases: purchaseInvoices.filter(inv => matchDate(inv.created_at) && !isMainTreasuryPurchase(inv)),
       // المرتجعات تُجمَّع على يوم الاسترجاع (refunded_at) مستقلّةً عن يوم البيع.
       refundOrders: activeOrders.filter(o => calculateCashRefunded(o) > 0 && matchDate(refundDateOf(o))),
     };
