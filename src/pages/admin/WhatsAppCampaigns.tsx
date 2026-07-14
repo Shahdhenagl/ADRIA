@@ -420,7 +420,7 @@ export default function WhatsAppCampaigns() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="font-black text-slate-800">{campaign.name}</p>
-                        <p className="text-xs text-slate-500 mt-1">{new Date(campaign.createdAt).toLocaleDateString('ar-SA')}</p>
+                        <p className="text-xs text-slate-500 mt-1">{new Date(campaign.createdAt).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</p>
                       </div>
                       <span className="text-xs font-black text-emerald-600 bg-white px-2 py-1 rounded-lg border border-emerald-100">
                         {sent}/{campaign.customerIds.length}

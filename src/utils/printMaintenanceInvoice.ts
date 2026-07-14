@@ -273,7 +273,7 @@ export const printMaintenanceInvoice = (
         <div class="invoice-title">
           <h2>فاتورة صيانة سيارة</h2>
           <p>رقم الفاتورة: #${(order.id || '').slice(0, 8)}</p>
-          <p>التاريخ: ${new Date(order.date).toLocaleString('ar-SA')}</p>
+          <p>التاريخ: ${new Date(order.date).toLocaleString('ar-EG', { calendar: 'gregory' })}</p>
         </div>
       </div>
 
@@ -313,7 +313,7 @@ export const printMaintenanceInvoice = (
             const qty = item.quantity || 1;
             const price = item.sale_price || 0;
             const itemTotal = qty * price;
-            const itemDate = item.date || new Date(order.date).toLocaleDateString('ar-SA');
+            const itemDate = item.date || new Date(order.date).toLocaleDateString('ar-EG', { calendar: 'gregory' });
             return `
               <tr>
                 <td>${i + 1}</td>

@@ -140,7 +140,7 @@ export default function Overview() {
                 return (
                   <tr key={order.id} className="hover:bg-slate-50 transition">
                     <td className="p-4 font-bold text-indigo-600 font-mono">{order.id}</td>
-                    <td className="p-4 text-slate-600">{new Date(order.date).toLocaleDateString('ar-SA')}</td>
+                    <td className="p-4 text-slate-600">{new Date(order.date).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</td>
                     <td className="p-4 text-slate-600 truncate max-w-xs">{order.items.map(i => i.name).join(', ')}</td>
                     <td className="p-4 font-black">{netTotal.toFixed(2)} {storeSettings.currency}</td>
                   </tr>

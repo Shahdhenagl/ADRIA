@@ -34,6 +34,7 @@ export default function POS() {
   const saveXferToken = async () => { const { supabase } = await import('../lib/supabase'); const { data } = await supabase.auth.getSession(); return data.session?.access_token; };
   const saveXferTotal = PAY_KEYS.reduce((s, [k]) => s + (Number(saveXfer[k]) || 0), 0);
   const saveXferValidate = () => {
+    if (dayBudget?.isClosed) { alert('اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى أو تسجيل تحويلات على يوم مقفول.'); return false; }
     const avail = dayBudget?.shopAvail || {};
     if (saveXferTotal <= 0) { alert('حدّد المبلغ المراد تحويله'); return false; }
     for (const [k, label] of PAY_KEYS) { if ((Number(saveXfer[k]) || 0) > (avail[k] || 0) + 0.001) { alert(`مبلغ ${label} أكبر من المتاح في خزنة المحل (${(avail[k] || 0).toFixed(2)})`); return false; } }
@@ -94,6 +95,7 @@ export default function POS() {
   };
   // فتح لوحة الجرد: تعبئة الحقول بالرصيد المحسوب الحالي لكل طريقة.
   const openReconcile = () => {
+    if (dayBudget?.isClosed) { alert('اليوم مقفول بالفعل. لا يمكن تعديل حساباته أو ضبط الجرد بعد التقفيل.'); return; }
     const a = dayBudget?.shopAvail || {};
     const next: Record<string, string> = {};
     activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = (Number(a[k]) || 0).toFixed(2); });
@@ -1732,7 +1734,7 @@ export default function POS() {
                         const branchLocationLink = storeSettings.locationUrl || '';
                         const message = `*فاتورة جديدة من ${storeSettings.name}*\n\n` +
                           `*رقم الفاتورة:* #${invId}\n` +
-                          `*التاريخ:* ${new Date().toLocaleString('ar-SA')}\n` +
+                          `*التاريخ:* ${new Date().toLocaleString('ar-EG', { calendar: 'gregory' })}\n` +
                           (orderDetails.salesperson ? `*مسؤول المبيعات:* ${orderDetails.salesperson}\n` : '') +
                           `*الإجمالي:* ${orderDetails.total.toFixed(2)} ${storeSettings.currency}\n\n` +
                           `*عرض الفاتورة بالتفاصيل:*\n${invoiceLink}\n\n` +
@@ -2324,11 +2326,9 @@ export default function POS() {
                         setShowSaveXfer(true);
                         const a = dayBudget.shopAvail || {};
                         const next: Record<string, string> = {};
-                        // اليوم مقفول: تحويل إضافي اختياري — نسيب الحقول فاضية عشان تحدّدي مبلغ بعينه
-                        // (الباقي بيترحّل تلقائياً). أول تقفيل: نملأها بكامل المتاح.
-                        activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = dayBudget.isClosed ? '' : String(Math.max(0, a[k] || 0) || ''); });
+                        activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = String(Math.max(0, a[k] || 0) || ''); });
                         setSaveXfer(next);
-                      }} className={`w-full font-black py-3 rounded-xl flex items-center justify-center gap-2 text-white ${dayBudget.isClosed ? 'bg-slate-500 hover:bg-slate-600' : 'bg-indigo-600 hover:bg-indigo-700'}`}>🏦 {dayBudget.isClosed ? 'تحويل مبلغ إضافي للخزنة الرئيسية' : 'تحويل للخزنة الرئيسية'}</button>
+                      }} disabled={dayBudget.isClosed} className={`w-full font-black py-3 rounded-xl flex items-center justify-center gap-2 text-white ${dayBudget.isClosed ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}>🏦 {dayBudget.isClosed ? 'اليوم مقفول - لا يمكن التقفيل مرة أخرى' : 'تحويل للخزنة الرئيسية'}</button>
                     ) : (
                       <div className="bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-800 rounded-2xl p-3 space-y-2">
                         <div className="flex items-center justify-between">

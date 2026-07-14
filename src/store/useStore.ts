@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf } from '../utils/paymentMethods';
 import { markMainTreasuryNote } from '../utils/treasury';
+import { businessDateStr, businessDayRange } from '../utils/businessDay';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -773,6 +774,37 @@ function primaryOfSplit(split?: Record<string, number>): string {
   return best;
 }
 
+const DAY_CLOSING_CATEGORY = 'تحويل للخزنة الرئيسية';
+
+function dateValueForAccounting(value?: string | Date | null): Date {
+  const d = value ? new Date(value) : new Date();
+  return Number.isNaN(d.getTime()) ? new Date() : d;
+}
+
+async function isAccountingDayClosed(settings: StoreSettings, value?: string | Date | null): Promise<boolean> {
+  const day = businessDateStr(settings, dateValueForAccounting(value));
+  const { start, end } = businessDayRange(day, settings);
+  const { data, error } = await supabase
+    .from('expenses')
+    .select('id')
+    .eq('category', DAY_CLOSING_CATEGORY)
+    .gte('created_at', start.toISOString())
+    .lt('created_at', end.toISOString())
+    .limit(1);
+  if (error) {
+    console.warn('Could not check closed accounting day:', error.message);
+    return false;
+  }
+  return !!data?.length;
+}
+
+async function ensureAccountingDayOpen(state: CashierStore, value?: string | Date | null): Promise<boolean> {
+  const day = businessDateStr(state.storeSettings, dateValueForAccounting(value));
+  if (!(await isAccountingDayClosed(state.storeSettings, value))) return true;
+  alert(`اليوم ${day} تم تقفيله بالفعل. لا يمكن إضافة أو تعديل أو حذف أي حركة مالية في يوم مقفول.`);
+  return false;
+}
+
 function isExchangeAdjustmentForOrder(expense: any, orderId: string, diff?: number): boolean {
   const note = String(expense?.note || '');
   const category = String(expense?.category || '');
@@ -1525,6 +1557,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     const finalCashierName = cashierName || state.activeCashier?.name || 'مدير النظام';
     const sp = state.salesperson;
     if (state.cart.length === 0 && type !== 'payment' && type !== 'previous_debt') return state.activeInvoiceId;
+    if (!(await ensureAccountingDayOpen(state, dateISO))) return state.activeInvoiceId;
 
     const savedPaidAmount = type === 'payment' ? paidAmount : Math.min(total, paidAmount);
 
@@ -1854,6 +1887,7 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       const depAmt = Math.max(0, Number(deposit) || 0);
       const depSplit = depositSplit || {};
+      if (depAmt > 0 && !(await ensureAccountingDayOpen(state, new Date()))) return false;
 
       const { data, error } = await supabase
         .from('held_invoices')
@@ -2028,6 +2062,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   recordHeldDepositConversion: async (deposit, split, invoiceId) => {
     const depAmt = Math.max(0, Number(deposit) || 0);
     if (depAmt <= 0) return;
+    if (!(await ensureAccountingDayOpen(get(), new Date()))) return;
     const s = split || { cash: depAmt };
     await get().addExpense({
       category: 'تحويل حجز',
@@ -2095,6 +2130,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     const state = get();
     const invoice = state.orders.find(o => o.id === invoiceId);
     if (!invoice) return;
+    if (!(await ensureAccountingDayOpen(state, new Date()))) return null;
 
     // Validate: don't accept more than what's owed
     const currentDebt = invoice.total - (invoice.paid_amount || 0);
@@ -2178,6 +2214,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     const state = get();
     const orderIndex = state.orders.findIndex((o) => o.id === orderId);
     if (orderIndex === -1 || returns.length === 0) return false;
+    if (!(await ensureAccountingDayOpen(state, new Date()))) return false;
 
     const order = state.orders[orderIndex];
 
@@ -2374,6 +2411,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     const state = get();
     const order = state.orders.find((o) => o.id === orderId);
     if (!order || order.is_deleted || order.isOffline) return false;
+    if (!(await ensureAccountingDayOpen(state, order.date))) return false;
 
     const deletedAt = new Date().toISOString();
     const deletionReason = reason?.trim() || 'حذف يدوي من شاشة الفواتير';
@@ -2500,6 +2538,8 @@ export const useStore = create<CashierStore>((set, get) => ({
     const state = get();
     const order = state.orders.find((o) => o.id === orderId);
     if (!order || order.is_deleted || order.isOffline) return false;
+    if (!(await ensureAccountingDayOpen(state, order.date))) return false;
+    if (updatedData.date && !(await ensureAccountingDayOpen(state, updatedData.date))) return false;
 
     const oldTotal = order.total;
     const oldPaid = order.paid_amount;
@@ -2648,6 +2688,9 @@ export const useStore = create<CashierStore>((set, get) => ({
 
   // يسجّل بيانات الاستبدال على الفاتورة (قبل/بعد) لمنع تكراره وعرضه لاحقاً.
   markOrderExchanged: async (orderId, exchangeData) => {
+    const state = get();
+    const order = state.orders.find((o) => o.id === orderId);
+    if (order && !(await ensureAccountingDayOpen(state, order.date))) return false;
     const { error } = await supabase.from('orders').update({ exchange_data: exchangeData }).eq('id', orderId);
     if (error) { console.error('markOrderExchanged:', error); return false; }
     set((state) => ({ orders: state.orders.map((o) => (o.id === orderId ? { ...o, exchange_data: exchangeData } : o)) }));
@@ -3916,6 +3959,15 @@ setupRealtime: () => {
 
   // ── Expenses ──────────────────────────────────────────────
   addExpense: async (expense) => {
+    const state = get();
+    const expenseDate = (expense as any).created_at || new Date();
+    const isClosingEntry = expense.category === DAY_CLOSING_CATEGORY;
+    if (await isAccountingDayClosed(state.storeSettings, expenseDate)) {
+      alert(isClosingEntry
+        ? 'هذا اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى.'
+        : `اليوم ${businessDateStr(state.storeSettings, dateValueForAccounting(expenseDate))} تم تقفيله بالفعل. لا يمكن إضافة أو تعديل أو حذف أي حركة مالية في يوم مقفول.`);
+      return;
+    }
     const { data, error } = await supabase.from('expenses').insert({
       category: expense.category,
       amount: expense.amount,
@@ -3988,6 +4040,7 @@ setupRealtime: () => {
   // معاملة شريك (إيداع/سحب). على خزنة المحل تنعكس في الخزنة كمصروف/إيراد؛ على الخزنة
   // الأساسية تُسجَّل في دفتر الشركاء فقط. لا تُحذف.
   recordPartnerTransaction: async (tx) => {
+    if (tx.treasury === 'shop' && !(await ensureAccountingDayOpen(get(), new Date()))) return false;
     const amount = Math.abs(Number(tx.amount) || 0);
     if (amount <= 0) return false;
     const method = tx.method || 'cash';
@@ -4041,6 +4094,11 @@ setupRealtime: () => {
   // تحويل بين خزنة المحل والخزنة الرئيسية (كل طريقة بطريقتها). ينعكس على خزنة المحل
   // كمصروف (تحويل للرئيسية) أو إيراد (تحويل من الرئيسية)، ويُسجَّل في دفتر الخزنة الرئيسية.
   savingsTransfer: async (split, direction, source, note, dateISO) => {
+    const state = get();
+    if (await isAccountingDayClosed(state.storeSettings, dateISO || new Date())) {
+      alert('هذا اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى أو تسجيل تحويلات على يوم مقفول.');
+      return false;
+    }
     const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
     if (total <= 0) return false;
@@ -4164,6 +4222,10 @@ setupRealtime: () => {
   },
 
   updateExpense: async (id, expense) => {
+    const state = get();
+    const current = state.expenses.find((e) => e.id === id);
+    if (current && !(await ensureAccountingDayOpen(state, current.date))) return;
+    if (expense.date && !(await ensureAccountingDayOpen(state, expense.date))) return;
     const { data, error } = await supabase.from('expenses').update({
       category: expense.category,
       amount: expense.amount,
@@ -4191,6 +4253,9 @@ setupRealtime: () => {
   },
 
   deleteExpense: async (id: string) => {
+    const state = get();
+    const current = state.expenses.find((e) => e.id === id);
+    if (current && !(await ensureAccountingDayOpen(state, current.date))) return;
     await supabase.from('expenses').delete().eq('id', id);
     set((state) => ({ expenses: state.expenses.filter((e) => e.id !== id) }));
   },
@@ -4289,6 +4354,7 @@ setupRealtime: () => {
     const state = get();
     const payment = state.financingPayments.find((p) => p.id === paymentId);
     if (!payment || payment.status === 'paid') return;
+    if (!(await ensureAccountingDayOpen(state, new Date()))) return;
 
     const account = state.financingAccounts.find((a) => a.id === payment.account_id);
     const remainingBefore = Math.max(0, Number(payment.remaining_amount ?? payment.amount) || 0);
@@ -4512,6 +4578,7 @@ setupRealtime: () => {
 
   addPurchaseInvoice: async (invoice, items, splitPayments) => {
     const state = get();
+    if (!(await ensureAccountingDayOpen(state, new Date()))) return;
     const splits = getSplits(splitPayments, invoice.payment_method, invoice.paid_amount);
     // 1. Insert Invoice
     const { data: invData, error: invError } = await supabase
@@ -4631,6 +4698,7 @@ setupRealtime: () => {
     const state = get();
     const oldInvoice = state.purchaseInvoices.find(inv => inv.id === invoiceId);
     if (!oldInvoice) throw new Error('الفاتورة غير موجودة');
+    if (!(await ensureAccountingDayOpen(state, oldInvoice.created_at))) return;
 
     // 1. Revert old items impact
     const updatedProducts = [...state.products];
@@ -4737,6 +4805,7 @@ setupRealtime: () => {
     try {
       const state = get();
       const invoice = state.purchaseInvoices.find(inv => inv.id === id);
+      if (invoice && !(await ensureAccountingDayOpen(state, invoice.created_at))) return;
       const supplierName = invoice ? state.suppliers.find(s => s.id === invoice.supplier_id)?.name : 'مورد';
 
       // Delete purchase items first
@@ -4766,6 +4835,7 @@ setupRealtime: () => {
 
   paySupplierDebt: async (supplierId, amount, splitPayments, dateISO, fromMainTreasury) => {
     const state = get();
+    if (!(await ensureAccountingDayOpen(state, dateISO || new Date()))) return;
     const invoiceNumber = `PAY-${Date.now()}`;
 
     // Paying beyond the current debt is allowed: the excess is an advance, and
@@ -4846,6 +4916,7 @@ setupRealtime: () => {
 
   collectSupplierCredit: async (supplierId, amount, splitPayments, dateISO, toMainTreasury) => {
     const state = get();
+    if (!(await ensureAccountingDayOpen(state, dateISO || new Date()))) return;
     const invoiceNumber = `SUP-COL-${Date.now()}`;
 
     const supplierInvoices = state.purchaseInvoices.filter(inv => inv.supplier_id === supplierId);
@@ -5007,6 +5078,8 @@ setupRealtime: () => {
   },
 
   addEmployeeTransaction: async (transaction) => {
+    const state = get();
+    if (!(await ensureAccountingDayOpen(state, (transaction as any).created_at || new Date()))) return;
     const { data, error } = await supabase.from('employee_transactions').insert(transaction).select().single();
     if (error) {
       console.error("Add Employee Transaction Error:", error);
@@ -5041,6 +5114,7 @@ setupRealtime: () => {
   updateEmployeeTransaction: async (id, transaction) => {
     const current = get().employeeTransactions.find(t => t.id === id);
     if (!current) return;
+    if (!(await ensureAccountingDayOpen(get(), current.created_at))) return;
 
     const { data, error } = await supabase.from('employee_transactions').update(transaction).eq('id', id).select().single();
     if (error) {
@@ -5086,6 +5160,7 @@ setupRealtime: () => {
   deleteEmployeeTransaction: async (id) => {
     const current = get().employeeTransactions.find(t => t.id === id);
     if (!current) return;
+    if (!(await ensureAccountingDayOpen(get(), current.created_at))) return;
 
     const { error } = await supabase.from('employee_transactions').delete().eq('id', id);
     if (error) {

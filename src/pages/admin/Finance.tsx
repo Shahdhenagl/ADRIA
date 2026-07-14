@@ -318,7 +318,7 @@ export default function Finance() {
         split: { cash, visa, wallet, instapay },
         note: o.customer?.name || 'عميل نقدي',
         isOut: false,
-        time: new Date(o.date).toLocaleString('ar-SA'),
+        time: new Date(o.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
         rawDate: o.date,
         original: o,
         originType: 'order'
@@ -344,7 +344,7 @@ export default function Finance() {
         },
         note: `مرتجع من فاتورة #${o.id}`,
         isOut: true,
-        time: new Date(rDate).toLocaleString('ar-SA'),
+        time: new Date(rDate).toLocaleString('ar-EG', { calendar: 'gregory' }),
         rawDate: rDate
       });
     });
@@ -379,7 +379,7 @@ export default function Finance() {
           note: e.note,
           isOut: false,
           isTransfer: true,
-          time: new Date(e.date).toLocaleString('ar-SA'),
+          time: new Date(e.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
           rawDate: e.date,
           original: e,
           originType: 'expense'
@@ -393,7 +393,7 @@ export default function Finance() {
           split: { cash, visa, wallet, instapay },
           note: e.note,
           isOut: !isIncome,
-          time: new Date(e.date).toLocaleString('ar-SA'),
+          time: new Date(e.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
           rawDate: e.date,
           original: e,
           originType: 'expense'
@@ -423,7 +423,7 @@ export default function Finance() {
         split: { cash, visa, wallet, instapay },
         note: `${supplier?.name || 'مورد'} - #${inv.invoice_number}`,
         isOut: true,
-        time: new Date(inv.created_at).toLocaleString('ar-SA'),
+        time: new Date(inv.created_at).toLocaleString('ar-EG', { calendar: 'gregory' }),
         rawDate: inv.created_at,
         original: inv,
         originType: 'purchase'
@@ -882,7 +882,7 @@ export default function Finance() {
 
   <div class="info-grid">
     <div class="info-item"><strong>${isOrder ? 'العميل:' : 'المورد:'}</strong> <span>${isOrder ? (inv.customer?.name || 'عميل نقدي') : (useStore.getState().suppliers.find(s => s.id === inv.supplier_id)?.name || 'مورد')}</span></div>
-    <div class="info-item"><strong>التاريخ:</strong> <span>${new Date(isOrder ? inv.date : inv.created_at).toLocaleString('ar-SA')}</span></div>
+    <div class="info-item"><strong>التاريخ:</strong> <span>${new Date(isOrder ? inv.date : inv.created_at).toLocaleString('ar-EG', { calendar: 'gregory' })}</span></div>
     <div class="info-item"><strong>رقم المستند:</strong> <span>#${isOrder ? inv.id : inv.invoice_number}</span></div>
     <div class="info-item"><strong>المسؤول:</strong> <span>${isOrder ? (inv.cashier_name || '—') : 'المدير'}</span></div>
   </div>

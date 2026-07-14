@@ -96,7 +96,7 @@ export default function Customers() {
           metrics.totalReturns,
           metrics.totalDebt,
           metrics.totalProfit,
-          new Date(c.timestamp).toLocaleDateString('ar-SA')
+          new Date(c.timestamp).toLocaleDateString('ar-EG', { calendar: 'gregory' })
         ];
       })
     ];
@@ -219,7 +219,7 @@ export default function Customers() {
       return;
     }
     
-    const printDate = new Date(order.date).toLocaleString('ar-SA');
+    const printDate = new Date(order.date).toLocaleString('ar-EG', { calendar: 'gregory' });
     
     let itemsHtml = order.items.map((item: any) =>
         `<tr>
@@ -415,7 +415,7 @@ export default function Customers() {
                         )}
                       </td>
                       <td className="p-5 text-center text-slate-500 font-medium">
-                        {new Date(customer.timestamp).toLocaleDateString('ar-SA')}
+                        {new Date(customer.timestamp).toLocaleDateString('ar-EG', { calendar: 'gregory' })}
                       </td>
                       <td className="p-5 text-left">
                         <button 
@@ -497,7 +497,7 @@ export default function Customers() {
                         )}
                         <span className="bg-indigo-50 px-2 py-0.5 rounded-lg text-indigo-600 font-mono font-black border border-indigo-100 text-[10px]">ID: {selectedCustomer.custom_id || selectedCustomer.id.substring(0, 8)}</span>
                         <span className="w-1 h-1 rounded-full bg-slate-300" />
-                        <span className="text-[10px] whitespace-nowrap">سجل منذ: {new Date(selectedCustomer.timestamp).toLocaleDateString('ar-SA')}</span>
+                        <span className="text-[10px] whitespace-nowrap">سجل منذ: {new Date(selectedCustomer.timestamp).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</span>
                       </div>
                     </div>
                   )}
@@ -669,7 +669,7 @@ export default function Customers() {
                         return (
                           <tr key={order.id} className="hover:bg-slate-50 transition">
                             <td className="p-4 font-mono font-bold text-slate-800">#{order.id}</td>
-                            <td className="p-4 text-xs font-medium">{new Date(order.date).toLocaleDateString('ar-SA')}</td>
+                            <td className="p-4 text-xs font-medium">{new Date(order.date).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</td>
                             <td className="p-4">
                               {order.is_deleted ? (
                                 <span className="bg-red-100 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold inline-flex items-center gap-1">

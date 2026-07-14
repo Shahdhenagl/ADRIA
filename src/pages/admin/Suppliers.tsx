@@ -631,7 +631,7 @@ export default function Suppliers() {
     <div class="info-item"><strong>المورد:</strong> <span>${escapeHtml(supplier?.name || 'مورد محذوف')}</span></div>
     <div class="info-item"><strong>رقم الهاتف:</strong> <span dir="ltr">${escapeHtml(supplier?.phone || '—')}</span></div>
     <div class="info-item"><strong>رقم المستند:</strong> <span>#${inv.invoice_number}</span></div>
-    <div class="info-item"><strong>التاريخ:</strong> <span>${new Date(inv.created_at).toLocaleString('ar-SA')}</span></div>
+    <div class="info-item"><strong>التاريخ:</strong> <span>${new Date(inv.created_at).toLocaleString('ar-EG', { calendar: 'gregory' })}</span></div>
   </div>
 
   ${!isPaymentReceipt ? `
@@ -812,7 +812,7 @@ export default function Suppliers() {
                     <div className="flex items-center gap-3"><MapPin size={16} className="text-slate-400" /><span>{supplier.address || 'لا يوجد عنوان'}</span></div>
                     <div className="flex items-center gap-3 pt-3 border-t border-slate-50">
                       <Calendar size={16} className="text-slate-400" />
-                      <span className="text-xs text-slate-400">أضيف في: {new Date(supplier.created_at).toLocaleDateString('ar-SA')}</span>
+                      <span className="text-xs text-slate-400">أضيف في: {new Date(supplier.created_at).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</span>
                     </div>
                   </div>
                 </div>
@@ -865,7 +865,7 @@ export default function Suppliers() {
                       <div>
                         <p className="font-black text-slate-800 text-lg">{inv.invoice_number}</p>
                         <p className="text-slate-500 text-sm font-medium">{supplier?.name || 'مورد محذوف'}</p>
-                        <p className="text-slate-400 text-xs mt-1">{new Date(inv.created_at).toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+                        <p className="text-slate-400 text-xs mt-1">{new Date(inv.created_at).toLocaleDateString('ar-EG', { calendar: 'gregory', year: 'numeric', month: 'long', day: 'numeric' })}</p>
                       </div>
                     </div>
                     <div className="flex gap-6 items-start">
@@ -1542,7 +1542,7 @@ export default function Suppliers() {
                       ) : (
                         ledgerRows.map(({ inv, credit, debit, balance, label, isOpening, isPayment, isCollection }) => (
                           <tr key={inv.id} className={`hover:bg-slate-50 transition ${isCollection ? 'bg-sky-50/40' : isPayment ? 'bg-emerald-50/30' : isOpening ? 'bg-amber-50/40' : ''}`}>
-                            <td className="p-4 text-xs font-medium whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString('ar-SA')}</td>
+                            <td className="p-4 text-xs font-medium whitespace-nowrap">{new Date(inv.created_at).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</td>
                             <td className="p-4 font-bold text-slate-800">
                               {label}
                               <span className="block text-[10px] text-slate-400 font-mono">{inv.invoice_number}</span>

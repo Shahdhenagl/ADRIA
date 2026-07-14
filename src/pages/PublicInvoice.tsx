@@ -408,7 +408,7 @@ export default function PublicInvoice() {
              <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100 flex flex-col gap-2">
                 <div className="flex justify-between items-center">
                   <span className="text-[11px] font-black text-slate-400 uppercase tracking-wider">التفاصيل</span>
-                  <span className="text-[10px] text-slate-400 font-mono">{new Date(order.date).toLocaleDateString('ar-SA')}</span>
+                  <span className="text-[10px] text-slate-400 font-mono">{new Date(order.date).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-bold text-slate-600">التاريخ:</span>

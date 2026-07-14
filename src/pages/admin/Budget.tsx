@@ -689,10 +689,10 @@ export default function Budget() {
                       <td className="px-4 py-3">
                         <div className="flex flex-col">
                           <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
-                            {tx.date.toLocaleDateString('ar-SA')}
+                            {tx.date.toLocaleDateString('ar-EG', { calendar: 'gregory' })}
                           </span>
                           <span className="text-xs text-slate-500">
-                            {tx.date.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                            {tx.date.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
                       </td>
@@ -754,10 +754,10 @@ export default function Budget() {
                       <td className="px-4 py-3">
                         <div className="flex flex-col">
                           <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
-                            {tx.date.toLocaleDateString('ar-SA')}
+                            {tx.date.toLocaleDateString('ar-EG', { calendar: 'gregory' })}
                           </span>
                           <span className="text-xs text-slate-500">
-                            {tx.date.toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit' })}
+                            {tx.date.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
                           </span>
                         </div>
                       </td>

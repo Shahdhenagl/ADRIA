@@ -2,7 +2,7 @@ import { escapeHtml } from './escapeHtml';
 import { openPrintWindow } from './printWindow';
 
 export const printPaymentReceipt = (order: any, storeSettings: any) => {
-  const printDate = new Date(order.date || order.created_at || new Date()).toLocaleString('ar-SA');
+  const printDate = new Date(order.date || order.created_at || new Date()).toLocaleString('ar-EG', { calendar: 'gregory' });
   
   // Extract info from notes if available
   let description = 'تحصيل مديونية سابقة';

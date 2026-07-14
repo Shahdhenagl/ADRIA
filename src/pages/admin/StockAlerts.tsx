@@ -220,7 +220,7 @@ export default function StockAlerts() {
                         </p>
                       )}
                       <p className="text-xs text-slate-400 mt-3 flex justify-end">
-                        {new Date(suggestion.created_at).toLocaleDateString('ar-SA')}
+                        {new Date(suggestion.created_at).toLocaleDateString('ar-EG', { calendar: 'gregory' })}
                       </p>
                     </div>
                   ))}
@@ -270,7 +270,7 @@ export default function StockAlerts() {
                     </p>
                     <div className="mt-3 text-left">
                       <span className="text-xs text-slate-400 font-medium">
-                        {new Date(note.created_at).toLocaleString('ar-SA', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        {new Date(note.created_at).toLocaleString('ar-EG', { calendar: 'gregory', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </span>
                     </div>
                   </div>

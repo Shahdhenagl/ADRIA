@@ -870,7 +870,7 @@ export default function Employees() {
                 <tbody className="divide-y divide-slate-50">
                   {profileTransactions.map((t: any) => (
                     <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-6 text-slate-400 text-xs font-bold">{new Date(t.created_at).toLocaleDateString('ar-SA')}</td>
+                      <td className="p-6 text-slate-400 text-xs font-bold">{new Date(t.created_at).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</td>
                       <td className="p-6">
                         <span className={`px-2.5 py-1 rounded-lg font-bold text-[10px] ${
                           t.type === 'salary' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100' : t.type === 'incentive' ? 'bg-sky-50 text-sky-600 border border-sky-100' : 'bg-amber-50 text-amber-600 border border-amber-100'
@@ -1195,7 +1195,7 @@ export default function Employees() {
                   const emp = employees.find(e => e.id === t.employee_id);
                   return (
                     <tr key={t.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-6 text-slate-400 text-xs font-bold">{new Date(t.created_at).toLocaleDateString('ar-SA')}</td>
+                      <td className="p-6 text-slate-400 text-xs font-bold">{new Date(t.created_at).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</td>
                       <td className="p-6 font-bold text-slate-800">{emp?.name || 'موظف محذوف'}</td>
                       <td className="p-6">
                         <span className={`px-2.5 py-1 rounded-lg font-bold text-[10px] ${

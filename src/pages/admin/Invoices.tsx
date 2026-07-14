@@ -227,7 +227,7 @@ export default function Invoices() {
     if (isPayment) {
       message = `*إيصال سداد مديونية من ${storeSettings.name}*\n\n` +
         `*رقم الإيصال:* #${order.id}\n` +
-        `*التاريخ:* ${new Date(order.created_at || order.date).toLocaleString('ar-SA')}\n` +
+        `*التاريخ:* ${new Date(order.created_at || order.date).toLocaleString('ar-EG', { calendar: 'gregory' })}\n` +
         `*المبلغ المسدد:* ${order.paid_amount.toFixed(2)} ${storeSettings.currency}\n\n` +
         `*عرض التفاصيل:*\n${invoiceLink}\n\n` +
         (order.notes ? `*ملاحظات:* ${order.notes}\n\n` : '') +
@@ -238,7 +238,7 @@ export default function Invoices() {
       const branchLocationLink = storeSettings.locationUrl || '';
       message = `*فاتورة جديدة من ${storeSettings.name}*\n\n` +
         `*رقم الفاتورة:* #${order.id}\n` +
-        `*التاريخ:* ${new Date(order.created_at || order.date).toLocaleString('ar-SA')}\n` +
+        `*التاريخ:* ${new Date(order.created_at || order.date).toLocaleString('ar-EG', { calendar: 'gregory' })}\n` +
         `*الإجمالي:* ${order.total.toFixed(2)} ${storeSettings.currency}\n\n` +
         `*عرض الفاتورة بالتفاصيل:*\n${invoiceLink}\n\n` +
         `*تفاصيل الطلب:*\n${itemsText}\n\n` +
@@ -309,7 +309,7 @@ export default function Invoices() {
       ...filteredOrders.map(o => [
         o.id,
         o.customer?.name || 'عميل نقدي',
-        new Date(o.date).toLocaleString('ar-SA'),
+        new Date(o.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
         o.total,
         o.paid_amount,
         o.paid_cash,
@@ -726,7 +726,7 @@ export default function Invoices() {
                           <span className="text-slate-400 text-xs font-bold bg-slate-100 px-2 py-1 rounded">عميل نقدي</span>
                         )}
                       </td>
-                      <td className="p-4 text-slate-500">{new Date(order.date).toLocaleString('ar-SA')}</td>
+                      <td className="p-4 text-slate-500">{new Date(order.date).toLocaleString('ar-EG', { calendar: 'gregory' })}</td>
                       <td className="p-4 text-center font-bold text-indigo-600">{order.cashier_name || 'غير معروف'}</td>
                       <td className="p-4 text-center font-bold text-purple-600">
                         {(order as any).salesperson_name || '—'}
