@@ -2402,39 +2402,103 @@ export default function POS() {
               {(() => {
                 const q = historySearch.trim().toLowerCase();
                 const todayStr = new Date().toDateString();
-                const list = orders
+                const matchOrder = (o: any, extra = '') => !q || o.id.toLowerCase().includes(q) || (o.customer?.name || '').toLowerCase().includes(q) || (o.customer?.phone || '').includes(q) || extra.toLowerCase().includes(q);
+                const money = (value: number) => `${(value || 0).toFixed(2)} ${storeSettings.currency}`;
+                const transactions = orders
                   .filter((o) => !o.is_deleted && o.type !== 'payment')
-                  .filter((o) => !historyToday || new Date(o.date).toDateString() === todayStr)
-                  .filter((o) => !q || o.id.toLowerCase().includes(q) || (o.customer?.name || '').toLowerCase().includes(q) || (o.customer?.phone || '').includes(q))
+                  .flatMap((o: any) => {
+                    const rows: any[] = [{ kind: 'invoice', id: `invoice-${o.id}`, order: o, date: o.date }];
+                    const returnedValue = calculateOrderReturnValue(o);
+                    if (returnedValue > 0.005) {
+                      rows.push({
+                        kind: 'return',
+                        id: `return-${o.id}`,
+                        order: o,
+                        date: o.refunded_at || o.date,
+                        value: returnedValue,
+                      });
+                    }
+                    if (o.exchange_data) {
+                      const ex = o.exchange_data || {};
+                      const diff = Number(ex.diff) || 0;
+                      rows.push({
+                        kind: 'exchange',
+                        id: `exchange-${o.id}`,
+                        order: o,
+                        date: ex.date || o.date,
+                        value: Math.abs(diff),
+                        diff,
+                      });
+                    }
+                    return rows;
+                  })
+                  .filter((row) => !historyToday || new Date(row.date).toDateString() === todayStr)
+                  .filter((row) => matchOrder(row.order, row.kind === 'return' ? 'مرتجع return' : row.kind === 'exchange' ? 'استبدال exchange' : 'فاتورة invoice'))
                   .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
                   .slice(0, 100);
-                if (list.length === 0) return <p className="text-center text-slate-400 py-10 font-bold">لا توجد فواتير</p>;
-                return list.map((o) => (
-                  <div key={o.id} className="bg-slate-50 dark:bg-slate-900/40 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div>
-                        <p className="font-black text-slate-800 dark:text-slate-100 text-sm">#{o.id} · {o.customer?.name || 'عميل نقدي'}</p>
-                        <p className="text-[11px] text-slate-500">{new Date(o.date).toLocaleString('ar-EG')} · الإجمالي: <b>{(o.total || 0).toFixed(2)} {storeSettings.currency}</b>{(o.total - calculateOrderReturnValue(o) - o.paid_amount) > 0.5 ? ` · باقي: ${(o.total - calculateOrderReturnValue(o) - o.paid_amount).toFixed(2)}` : ''}</p>
+                if (transactions.length === 0) return <p className="text-center text-slate-400 py-10 font-bold">لا توجد فواتير</p>;
+                return transactions.map((row) => {
+                  const o = row.order;
+                  if (row.kind === 'return') {
+                    return (
+                      <div key={row.id} className="bg-red-50 dark:bg-red-900/15 rounded-xl p-3 border border-red-100 dark:border-red-800/60">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div>
+                            <p className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center gap-2"><span className="text-[11px] px-2 py-1 rounded-lg bg-red-100 text-red-700">مرتجع</span> فاتورة #{o.id} · {o.customer?.name || 'عميل نقدي'}</p>
+                            <p className="text-[11px] text-slate-500">{new Date(row.date).toLocaleString('ar-EG')} · قيمة المرتجع: <b>{money(row.value)}</b></p>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => window.open(`/view-invoice/${o.id}`, '_blank')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300">عرض</button>
+                            <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <button onClick={() => window.open(`/view-invoice/${o.id}`, '_blank')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300">عرض</button>
-                        <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
-                        <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
-                        {(() => {
-                          // فاتورة اترجعت بالكامل = كل أصنافها مرتجعة → مايصحّش نستبدل فيها.
-                          const items = o.items || [];
-                          const fullyReturned = items.length > 0 && items.every((it: any) => (it.returned_quantity || 0) >= (it.quantity || 0));
-                          if (o.exchange_data) return <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تم الاستبدال</button>;
-                          if (fullyReturned) return <span className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 flex items-center gap-1"><RefreshCcw size={14} /> مرتجعة بالكامل</span>;
-                          return perm('editDelete') ? <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال</button> : null;
-                        })()}
-                        {perm('editDelete') && (
-                          <button onClick={() => deleteOrderWithOtp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
-                        )}
+                    );
+                  }
+                  if (row.kind === 'exchange') {
+                    const diffLabel = Math.abs(row.diff) < 0.01 ? 'بدون فرق' : row.diff > 0 ? 'تحصيل فرق' : 'رد فرق';
+                    return (
+                      <div key={row.id} className="bg-amber-50 dark:bg-amber-900/15 rounded-xl p-3 border border-amber-100 dark:border-amber-800/60">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div>
+                            <p className="font-black text-slate-800 dark:text-slate-100 text-sm flex items-center gap-2"><span className="text-[11px] px-2 py-1 rounded-lg bg-amber-100 text-amber-700">استبدال</span> فاتورة #{o.id} · {o.customer?.name || 'عميل نقدي'}</p>
+                            <p className="text-[11px] text-slate-500">{new Date(row.date).toLocaleString('ar-EG')} · {diffLabel}: <b>{money(row.value)}</b></p>
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تفاصيل</button>
+                            <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  }
+                  return (
+                    <div key={row.id} className="bg-slate-50 dark:bg-slate-900/40 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <div>
+                          <p className="font-black text-slate-800 dark:text-slate-100 text-sm">#{o.id} · {o.customer?.name || 'عميل نقدي'}</p>
+                          <p className="text-[11px] text-slate-500">{new Date(o.date).toLocaleString('ar-EG')} · الإجمالي: <b>{money(o.total || 0)}</b>{(o.total - calculateOrderReturnValue(o) - o.paid_amount) > 0.5 ? ` · باقي: ${(o.total - calculateOrderReturnValue(o) - o.paid_amount).toFixed(2)}` : ''}</p>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button onClick={() => window.open(`/view-invoice/${o.id}`, '_blank')} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-300">عرض</button>
+                          <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
+                          <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
+                          {(() => {
+                            // فاتورة اترجعت بالكامل = كل أصنافها مرتجعة → مايصحّش نستبدل فيها.
+                            const items = o.items || [];
+                            const fullyReturned = items.length > 0 && items.every((it: any) => (it.returned_quantity || 0) >= (it.quantity || 0));
+                            if (o.exchange_data) return <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تم الاستبدال</button>;
+                            if (fullyReturned) return <span className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 flex items-center gap-1"><RefreshCcw size={14} /> مرتجعة بالكامل</span>;
+                            return perm('editDelete') ? <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال</button> : null;
+                          })()}
+                          {perm('editDelete') && (
+                            <button onClick={() => deleteOrderWithOtp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                ));
+                  );
+                });
               })()}
             </div>
           </div>
