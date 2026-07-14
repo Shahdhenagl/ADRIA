@@ -9,19 +9,39 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
-        name: 'نظام الكاشير المتقدم',
-        short_name: 'كاشير',
+        name: 'ADRIA كاشير',
+        short_name: 'ADRIA',
         description: 'نظام إدارة مبيعات وكاشير',
+        lang: 'ar',
+        dir: 'rtl',
+        display: 'standalone',
+        orientation: 'any',
+        start_url: '/',
+        scope: '/',
         theme_color: '#ffffff',
+        background_color: '#f6f2ff',
         icons: [
           {
             src: 'pwa-192x192.png',
             sizes: '192x192',
-            type: 'image/png'
+            type: 'image/png',
+            purpose: 'any'
           },
           {
             src: 'pwa-512x512.png',
             sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any'
+          },
+          {
+            src: 'pwa-maskable-512x512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
+          },
+          {
+            src: 'apple-touch-icon.png',
+            sizes: '180x180',
             type: 'image/png'
           }
         ]
