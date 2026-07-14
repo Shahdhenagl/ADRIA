@@ -22,7 +22,9 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   const oldPaid = invoice.paid_amount || 0;
 
   const [cart, setCart] = useState<OrderItem[]>(() => exchangeMode ? [] : [...invoice.items]);
-  const [selectedOldIds, setSelectedOldIds] = useState<Set<string>>(() => new Set(invoice.items.map((i) => i.id)));
+  const [selectedOldQty, setSelectedOldQty] = useState<Record<string, number>>(() =>
+    Object.fromEntries(invoice.items.map((i) => [i.id, Math.max(0, (i.quantity || 0) - ((i as any).returned_quantity || 0))]))
+  );
   const [searchQuery, setSearchQuery] = useState('');
 
   const payKeys = activePaymentKeys(storeSettings as any);
@@ -47,8 +49,17 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   const [orderDate, setOrderDate] = useState<string>(() => toDateInput(invoice.date));
 
   const total = cart.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
-  const selectedOldItems = originalItems.filter((item) => selectedOldIds.has(item.id));
-  const keptOldItems = exchangeMode ? originalItems.filter((item) => !selectedOldIds.has(item.id)) : [];
+  const exchangeableQty = (item: OrderItem) => Math.max(0, (item.quantity || 0) - ((item as any).returned_quantity || 0));
+  const selectedQtyOf = (item: OrderItem) => Math.min(exchangeableQty(item), Math.max(0, selectedOldQty[item.id] || 0));
+  const selectedOldItems = originalItems
+    .map((item) => ({ ...item, quantity: selectedQtyOf(item), returned_quantity: 0 }))
+    .filter((item) => item.quantity > 0);
+  const keptOldItems = exchangeMode ? originalItems
+    .map((item) => {
+      const quantity = Math.max(0, (item.quantity || 0) - selectedQtyOf(item));
+      return { ...item, quantity, returned_quantity: Math.min((item as any).returned_quantity || 0, quantity) };
+    })
+    .filter((item) => item.quantity > 0) : [];
   const selectedOldTotal = selectedOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
   const keptOldTotal = keptOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
   const finalExchangeItems = [...keptOldItems.map((item) => ({ ...item })), ...cart.map((item) => ({ ...item }))];
@@ -79,11 +90,19 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   };
 
   const toggleOldItem = (id: string) => {
-    setSelectedOldIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
+    const item = originalItems.find((i) => i.id === id);
+    if (!item) return;
+    setSelectedOldQty((prev) => ({ ...prev, [id]: (prev[id] || 0) > 0 ? 0 : exchangeableQty(item) }));
+  };
+
+  const updateOldItemQty = (id: string, delta: number) => {
+    const item = originalItems.find((i) => i.id === id);
+    if (!item) return;
+    const maxQty = exchangeableQty(item);
+    setSelectedOldQty((prev) => {
+      const current = prev[id] || 0;
+      const next = Math.min(maxQty, Math.max(1, current + delta));
+      return { ...prev, [id]: next };
     });
   };
 
@@ -309,21 +328,35 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
-                      {originalItems.map(item => (
-                        <tr key={item.id} className={selectedOldIds.has(item.id) ? 'bg-amber-50/70' : ''}>
-                          <td className="p-3">
-                            <input
-                              type="checkbox"
-                              checked={selectedOldIds.has(item.id)}
-                              onChange={() => toggleOldItem(item.id)}
-                              className="w-5 h-5 accent-amber-600"
-                            />
-                          </td>
-                          <td className="p-3 font-bold text-slate-800">{item.name}</td>
-                          <td className="p-3 text-center font-black">{item.quantity}</td>
-                          <td className="p-3 font-black text-slate-700">{(item.quantity * (item.sale_price || 0)).toLocaleString()} {storeSettings.currency}</td>
-                        </tr>
-                      ))}
+                      {originalItems.map(item => {
+                        const maxQty = exchangeableQty(item);
+                        const selectedQty = selectedQtyOf(item);
+                        return (
+                          <tr key={item.id} className={selectedQty > 0 ? 'bg-amber-50/70' : ''}>
+                            <td className="p-3">
+                              <input
+                                type="checkbox"
+                                checked={selectedQty > 0}
+                                disabled={maxQty <= 0}
+                                onChange={() => toggleOldItem(item.id)}
+                                className="w-5 h-5 accent-amber-600 disabled:opacity-40"
+                              />
+                            </td>
+                            <td className="p-3 font-bold text-slate-800">
+                              {item.name}
+                              {maxQty < (item.quantity || 0) && <div className="text-[11px] text-slate-400 font-bold">متاح للاستبدال: {maxQty}</div>}
+                            </td>
+                            <td className="p-3">
+                              <div className="flex items-center justify-center gap-2">
+                                <button disabled={selectedQty <= 1} onClick={() => updateOldItemQty(item.id, -1)} className="p-1 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded disabled:opacity-30"><Minus size={16} /></button>
+                                <span className="w-10 text-center font-black text-slate-700">{selectedQty || 0} / {maxQty}</span>
+                                <button disabled={selectedQty >= maxQty || maxQty <= 0} onClick={() => updateOldItemQty(item.id, 1)} className="p-1 text-slate-400 hover:text-amber-700 hover:bg-amber-50 rounded disabled:opacity-30"><Plus size={16} /></button>
+                              </div>
+                            </td>
+                            <td className="p-3 font-black text-slate-700">{(selectedQty * (item.sale_price || 0)).toLocaleString()} {storeSettings.currency}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
