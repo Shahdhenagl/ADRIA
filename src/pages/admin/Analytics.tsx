@@ -195,9 +195,16 @@ export default function Analytics() {
       if (endLimit && expDate > endLimit) return false;
       return true;
     });
+    const isSupplierAccountMovement = (exp: any) => {
+      const text = `${exp.category || ''} ${exp.note || ''}`.toLowerCase();
+      const hasSupplier = text.includes('مورد') || text.includes('supplier');
+      const hasSettlement = ['سداد', 'دفع', 'مديونية', 'حسابات', 'pay', 'payment', 'debt'].some((word) => text.includes(word));
+      return hasSupplier && hasSettlement;
+    };
+    const operatingExpenses = filteredExpenses.filter((exp) => !isSupplierAccountMovement(exp));
 
-    const extraIncomes = filteredExpenses.filter(e => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
-    const totalExpenses = filteredExpenses.filter(e => e.amount > 0).reduce((sum, exp) => sum + exp.amount, 0);
+    const extraIncomes = operatingExpenses.filter(e => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
+    const totalExpenses = operatingExpenses.filter(e => e.amount > 0).reduce((sum, exp) => sum + exp.amount, 0);
     const filteredPurchases = purchaseInvoices.filter(inv => {
       const d = new Date(inv.created_at);
       if (startLimit && d < startLimit) return false;
@@ -211,6 +218,10 @@ export default function Analytics() {
         const paid = Math.max(0, Number(inv.paid_amount) || 0);
         return sum + Math.min(paid, invoiceTotal);
       }, 0);
+    const supplierDebtPayments = filteredPurchases
+      .filter((inv) => inv.invoice_number !== 'رصيد افتتاحي' && (Number(inv.total) || 0) === 0)
+      .reduce((sum, inv) => sum + Math.max(0, Number(inv.paid_amount) || 0), 0);
+    const supplierPaidTotal = procurementCost + supplierDebtPayments;
 
     collectedFromOther += extraIncomes;
     revenue += extraIncomes;
@@ -222,7 +233,7 @@ export default function Analytics() {
       topProductsByQty, 
       topProductsByProfit, 
       topCustomers,
-      procurementCost,
+      procurementCost: supplierPaidTotal,
       totalInventoryValue,
       totalExpenses,
       finalNetProfit,
@@ -451,7 +462,7 @@ export default function Analytics() {
           color="slate" 
         />
         <StatCard 
-          title="مدفوع المشتريات" 
+          title="مدفوع للموردين" 
           value={stats.procurementCost} 
           unit={storeSettings.currency}
           icon={DollarSign} 
