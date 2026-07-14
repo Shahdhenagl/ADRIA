@@ -189,6 +189,18 @@ export default function Analytics() {
       startLimit = new Date(now.getFullYear(), 0, 1);
     }
 
+    const supplierOpeningInvoiceNumber = '\u0631\u0635\u064a\u062f \u0627\u0641\u062a\u062a\u0627\u062d\u064a';
+    const supplierWords = ['\u0645\u0648\u0631\u062f', '\u0627\u0644\u0645\u0648\u0631\u062f', 'supplier'];
+    const supplierSettlementWords = [
+      '\u0633\u062f\u0627\u062f',
+      '\u062f\u0641\u0639',
+      '\u0645\u062f\u064a\u0648\u0646\u064a\u0629',
+      '\u062d\u0633\u0627\u0628\u0627\u062a',
+      'pay',
+      'payment',
+      'debt',
+    ];
+
     const filteredExpenses = expenses.filter(exp => {
       const expDate = new Date(exp.date);
       if (startLimit && expDate < startLimit) return false;
@@ -197,8 +209,8 @@ export default function Analytics() {
     });
     const isSupplierAccountMovement = (exp: any) => {
       const text = `${exp.category || ''} ${exp.note || ''}`.toLowerCase();
-      const hasSupplier = text.includes('مورد') || text.includes('supplier');
-      const hasSettlement = ['سداد', 'دفع', 'مديونية', 'حسابات', 'pay', 'payment', 'debt'].some((word) => text.includes(word));
+      const hasSupplier = supplierWords.some((word) => text.includes(word));
+      const hasSettlement = supplierSettlementWords.some((word) => text.includes(word));
       return hasSupplier && hasSettlement;
     };
     const operatingExpenses = filteredExpenses.filter((exp) => !isSupplierAccountMovement(exp));
@@ -212,14 +224,14 @@ export default function Analytics() {
       return true;
     });
     const procurementCost = filteredPurchases
-      .filter((inv) => inv.invoice_number !== 'رصيد افتتاحي' && (Number(inv.total) || 0) > 0)
+      .filter((inv) => inv.invoice_number !== supplierOpeningInvoiceNumber && (Number(inv.total) || 0) > 0)
       .reduce((sum, inv) => {
         const invoiceTotal = Math.max(0, Number(inv.total) || 0);
         const paid = Math.max(0, Number(inv.paid_amount) || 0);
         return sum + Math.min(paid, invoiceTotal);
       }, 0);
     const supplierDebtPayments = filteredPurchases
-      .filter((inv) => inv.invoice_number !== 'رصيد افتتاحي' && (Number(inv.total) || 0) === 0)
+      .filter((inv) => inv.invoice_number !== supplierOpeningInvoiceNumber && (Number(inv.total) || 0) === 0)
       .reduce((sum, inv) => sum + Math.max(0, Number(inv.paid_amount) || 0), 0);
     const supplierPaidTotal = procurementCost + supplierDebtPayments;
 
