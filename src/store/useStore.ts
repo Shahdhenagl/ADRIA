@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf } from '../utils/paymentMethods';
 import { markMainTreasuryNote } from '../utils/treasury';
-import { businessDateStr, businessDayRange } from '../utils/businessDay';
+import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -805,6 +805,10 @@ async function ensureAccountingDayOpen(state: CashierStore, value?: string | Dat
   return false;
 }
 
+function accountingTimestampForNow(settings: StoreSettings): string {
+  return timestampForBusinessDate(businessDateStr(settings), settings);
+}
+
 function isExchangeAdjustmentForOrder(expense: any, orderId: string, diff?: number): boolean {
   const note = String(expense?.note || '');
   const category = String(expense?.category || '');
@@ -1558,6 +1562,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     const sp = state.salesperson;
     if (state.cart.length === 0 && type !== 'payment' && type !== 'previous_debt') return state.activeInvoiceId;
     if (!(await ensureAccountingDayOpen(state, dateISO))) return state.activeInvoiceId;
+    const orderCreatedAt = dateISO || accountingTimestampForNow(state.storeSettings);
 
     const savedPaidAmount = type === 'payment' ? paidAmount : Math.min(total, paidAmount);
 
@@ -1606,7 +1611,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         paid_method6: splits.method6 || 0,
         type,
         payment_method: paymentMethod as any,
-        date: dateISO || new Date().toISOString(),
+        date: orderCreatedAt,
         customer: finalCustomer,
         cashier_name: finalCashierName,
         salesperson_id: sp?.id || undefined,
@@ -1742,7 +1747,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         coupon_code: couponCode || null,
         discount_amount: discountAmount || 0,
         car_id: carId || null,
-        ...(dateISO ? { created_at: dateISO } : {})
+        created_at: orderCreatedAt
       });
 
       if (orderError) {
@@ -1788,7 +1793,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         paid_method6: splits.method6 || 0,
         type,
         payment_method: paymentMethod as any,
-        date: dateISO || new Date().toISOString(),
+        date: orderCreatedAt,
         customer: finalCustomer,
         cashier_name: finalCashierName,
         salesperson_id: sp?.id,
@@ -2158,6 +2163,7 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       // 2. Insert a payment transaction
       const paymentId = `PAY-${Date.now()}`;
+      const paymentCreatedAt = accountingTimestampForNow(state.storeSettings);
       const cashierName = state.activeCashier?.name || 'مدير النظام';
       const remainingDebt = invoice.total - newPaidAmount;
       const debtBefore = remainingDebt + totalReduction;
@@ -2178,7 +2184,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         customer_id: customerId,
         payment_method: paymentMethod,
         cashier_name: cashierName,
-        notes: note
+        notes: note,
+        created_at: paymentCreatedAt
       };
 
       const { error: insertError } = await supabase.from('orders').insert(paymentOrder);
@@ -2190,7 +2197,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         ...paymentOrder,
         items: [],
         type: 'payment',
-        date: new Date().toISOString(),
+        date: paymentCreatedAt,
         customer: customer,
         payment_method: paymentMethod as any
       };
@@ -2338,7 +2345,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       const totalRefundAmount = returns.reduce((sum, ret) => sum + (ret.refundAmount || 0), 0);
       let finalPaidAmount = order.paid_amount || 0;
       
-      const refundedAt = new Date().toISOString();
+      const refundedAt = accountingTimestampForNow(state.storeSettings);
       if (totalRefundAmount > 0) {
         finalPaidAmount = finalPaidAmount - totalRefundAmount;
         const { error: paidError } = await supabase
@@ -3960,7 +3967,8 @@ setupRealtime: () => {
   // ── Expenses ──────────────────────────────────────────────
   addExpense: async (expense) => {
     const state = get();
-    const expenseDate = (expense as any).created_at || new Date();
+    const createdAt = (expense as any).created_at || accountingTimestampForNow(state.storeSettings);
+    const expenseDate = createdAt;
     const isClosingEntry = expense.category === DAY_CLOSING_CATEGORY;
     if (await isAccountingDayClosed(state.storeSettings, expenseDate)) {
       alert(isClosingEntry
@@ -3980,7 +3988,7 @@ setupRealtime: () => {
       note: expense.note,
       payment_method: expense.payment_method,
       car_id: expense.car_id || null,
-      ...((expense as any).created_at ? { created_at: (expense as any).created_at } : {})
+      created_at: createdAt
     }).select().single();
 
     if (error) {
@@ -4354,7 +4362,8 @@ setupRealtime: () => {
     const state = get();
     const payment = state.financingPayments.find((p) => p.id === paymentId);
     if (!payment || payment.status === 'paid') return;
-    if (!(await ensureAccountingDayOpen(state, new Date()))) return;
+    const paidAt = accountingTimestampForNow(state.storeSettings);
+    if (!(await ensureAccountingDayOpen(state, paidAt))) return;
 
     const account = state.financingAccounts.find((a) => a.id === payment.account_id);
     const remainingBefore = Math.max(0, Number(payment.remaining_amount ?? payment.amount) || 0);
@@ -4384,6 +4393,7 @@ setupRealtime: () => {
         ...split,
         note,
         payment_method: paymentMethod,
+        created_at: paidAt,
       })
       .select()
       .single();
@@ -4394,7 +4404,6 @@ setupRealtime: () => {
       return;
     }
 
-    const paidAt = new Date().toISOString();
     const newPaidAmount = (Number(payment.paid_amount) || 0) + amount;
     const newRemainingAmount = Math.max(0, remainingBefore - amount);
     const newStatus = newRemainingAmount <= 0.009 ? 'paid' : 'pending';
@@ -4578,7 +4587,8 @@ setupRealtime: () => {
 
   addPurchaseInvoice: async (invoice, items, splitPayments) => {
     const state = get();
-    if (!(await ensureAccountingDayOpen(state, new Date()))) return;
+    const createdAt = accountingTimestampForNow(state.storeSettings);
+    if (!(await ensureAccountingDayOpen(state, createdAt))) return;
     const splits = getSplits(splitPayments, invoice.payment_method, invoice.paid_amount);
     // 1. Insert Invoice
     const { data: invData, error: invError } = await supabase
@@ -4595,7 +4605,8 @@ setupRealtime: () => {
         paid_method5: splits.method5 || 0,
         paid_method6: splits.method6 || 0,
         payment_method: invoice.payment_method,
-        notes: (invoice as any).notes || null
+        notes: (invoice as any).notes || null,
+        created_at: createdAt
       })
       .select()
       .single();
@@ -5079,8 +5090,10 @@ setupRealtime: () => {
 
   addEmployeeTransaction: async (transaction) => {
     const state = get();
-    if (!(await ensureAccountingDayOpen(state, (transaction as any).created_at || new Date()))) return;
-    const { data, error } = await supabase.from('employee_transactions').insert(transaction).select().single();
+    const createdAt = (transaction as any).created_at || accountingTimestampForNow(state.storeSettings);
+    if (!(await ensureAccountingDayOpen(state, createdAt))) return;
+    const row = { ...transaction, created_at: createdAt };
+    const { data, error } = await supabase.from('employee_transactions').insert(row).select().single();
     if (error) {
       console.error("Add Employee Transaction Error:", error);
       alert('تعذّر حفظ المعاملة (راتب/سلفة):\n' + (error.message || '') + '\n(جرّبي تسجيل الدخول من جديد كأدمن.)');
@@ -5104,7 +5117,7 @@ setupRealtime: () => {
         paid_method6: (transaction as any).paid_method6 || 0,
         note: note,
         payment_method: transaction.payment_method,
-        ...((transaction as any).created_at ? { created_at: (transaction as any).created_at } : {})
+        created_at: createdAt
       } as any);
 
       set((state) => ({ employeeTransactions: [data as EmployeeTransaction, ...state.employeeTransactions] }));

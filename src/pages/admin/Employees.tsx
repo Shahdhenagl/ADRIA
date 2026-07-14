@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 import { markMainTreasuryNote } from '../../utils/treasury';
+import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 
 export default function Employees() {
   const {
@@ -483,7 +484,8 @@ export default function Employees() {
       return;
     }
     
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const currentBusinessDate = businessDateStr(storeSettings as any);
+    const currentMonth = currentBusinessDate.slice(0, 7);
     const stats = getEmployeeMonthStats(emp.id, currentMonth);
     const netAmount = type === 'salary' ? stats.remaining : '';
 
@@ -494,7 +496,7 @@ export default function Employees() {
       paid_wallet: '',
       paid_instapay: '',
       month: currentMonth,
-      date: new Date().toISOString().slice(0, 10),
+      date: currentBusinessDate,
       dedDays: '',
       dedAmount: '',
       commissionRate: (type === 'salary' && emp.commission_rate) ? String(emp.commission_rate) : '',
@@ -526,7 +528,7 @@ export default function Employees() {
 
     // نُثبّت التاريخ المُختار كـ created_at (منتصف اليوم لتفادي إزاحة المنطقة الزمنية)
     const chosenDate = transFormData.date
-      ? new Date(`${transFormData.date}T12:00:00`).toISOString()
+      ? timestampForBusinessDate(transFormData.date, storeSettings as any)
       : undefined;
 
     // مصدر الصرف: الخزنة الرئيسية متاح للمعاملات الجديدة فقط (مش عند التعديل).

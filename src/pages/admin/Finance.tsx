@@ -13,7 +13,7 @@ import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
 import { isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../../utils/treasury';
-import { businessDateStr, businessDayRange } from '../../utils/businessDay';
+import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
 
 export default function Finance() {
   const { 
@@ -77,7 +77,7 @@ export default function Finance() {
     transfer_to: 'cash',
     transfer_amount: '',
     treasury_source: 'shop',
-    date: new Date().toISOString().split('T')[0]
+    date: businessDateStr(storeSettings as any)
   });
 
   // --- Calculations ---
@@ -475,7 +475,7 @@ export default function Finance() {
         transfer_to: 'cash',
         transfer_amount: '',
         treasury_source: 'shop',
-        date: getDateStr(new Date())
+        date: businessDateStr(storeSettings as any)
       });
     }
     setShowModal(true);
@@ -572,9 +572,7 @@ export default function Finance() {
   const handleSubmit = async () => {
     // التاريخ المختار → طابع زمني: لو اليوم نستخدم الوقت الحالي (ترتيب طبيعي)،
     // ولو يوم تاني نثبّت الساعة 12 ظهراً بتوقيت المتصفح.
-    const pickedCreatedAt = formData.date === getDateStr(new Date())
-      ? new Date().toISOString()
-      : new Date(`${formData.date}T12:00:00`).toISOString();
+    const pickedCreatedAt = timestampForBusinessDate(formData.date || businessDateStr(storeSettings as any), storeSettings as any);
 
     // Handle transfer type separately
     if (formData.transaction_type === 'transfer' && !editingExpense && !editingOrder && !editingPurchase) {
@@ -1417,7 +1415,7 @@ export default function Finance() {
                       <input
                         type="date"
                         value={formData.date}
-                        max={getDateStr(new Date())}
+                        max={businessDateStr(storeSettings as any)}
                         onChange={e => setFormData({ ...formData, date: e.target.value })}
                         className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-2 focus:ring-indigo-500/20 outline-none font-bold"
                       />
