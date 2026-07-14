@@ -8,9 +8,10 @@ import {
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance, type PaymentKey } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
+import { isMainTreasuryExpense, isMainTreasuryPurchase } from '../../utils/treasury';
 
 interface UnifiedTransaction {
   id: string;
@@ -22,6 +23,7 @@ interface UnifiedTransaction {
   payment_method: PaymentKey;
   date: Date;
   car_id?: string;
+  treasury: 'cashier' | 'main';
 }
 
 export default function Budget() {
@@ -42,6 +44,22 @@ export default function Budget() {
   const [methodFilter, setMethodFilter] = useState<'all' | PaymentKey>('all');
   const activePayKeys = activePaymentKeys(storeSettings as any);
   const [isExporting, setIsExporting] = useState(false);
+  const [savingsTransactions, setSavingsTransactions] = useState<any[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { fetchAllRows } = await import('../../lib/supabase');
+        const rows = await fetchAllRows('savings_transactions');
+        if (!cancelled) setSavingsTransactions(Array.isArray(rows) ? rows : []);
+      } catch (error) {
+        console.error('load savings_transactions:', error);
+        if (!cancelled) setSavingsTransactions([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const exportToPDF = async () => {
     const element = document.getElementById('budget-report');
@@ -104,12 +122,12 @@ export default function Budget() {
     // Helper to add split transactions by payment method
     const addSplits = (
       id: string, type: 'revenue' | 'expense', category: string, desc: string, dateStr: string,
-      split: Partial<Record<PaymentKey, number>>, carId?: string
+      split: Partial<Record<PaymentKey, number>>, carId?: string, treasury: 'cashier' | 'main' = 'cashier'
     ) => {
       const date = new Date(dateStr);
       ALL_PAYMENT_KEYS.forEach((m) => {
         const amt = Number(split[m]) || 0;
-        if (amt > 0) txs.push({ id: `${id}-${m}`, originalId: id, type, category, description: desc, amount: amt, payment_method: m, date, car_id: carId });
+        if (amt > 0) txs.push({ id: `${id}-${m}`, originalId: id, type, category, description: desc, amount: amt, payment_method: m, date, car_id: carId, treasury });
       });
     };
     // Read a record's per-method split; if all zero, fall back to its single payment_method.
@@ -175,7 +193,8 @@ export default function Budget() {
             ? o.refund_method
             : (['visa', 'wallet', 'instapay'].includes(o.payment_method) ? o.payment_method : 'cash')) as 'cash' | 'visa' | 'wallet' | 'instapay',
           date: new Date((o as any).refunded_at || o.date),
-          car_id: o.car_id
+          car_id: o.car_id,
+          treasury: 'cashier'
         });
       }
     });
@@ -183,6 +202,7 @@ export default function Budget() {
     // 2. Manual finance transactions (store expenses and extra revenues)
     expenses.forEach(e => {
       const isRevenue = e.amount < 0;
+      const treasury = isMainTreasuryExpense(e) ? 'main' : 'cashier';
       addSplits(
         e.id,
         isRevenue ? 'revenue' : 'expense',
@@ -190,7 +210,8 @@ export default function Budget() {
         e.note || (isRevenue ? 'إيراد عام' : 'مصروف عام'),
         e.date,
         splitOf(e, e.amount),
-        e.car_id
+        e.car_id,
+        treasury
       );
     });
 
@@ -223,6 +244,11 @@ export default function Budget() {
       const cat = et.type === 'salary' ? 'رواتب' : 'سلف موظفين';
       
       addSplits(et.id, 'expense', `رواتب وموظفين - ${cat}`, et.note || `دفع ${cat}`, et.created_at, splitOf(et, et.amount));
+    });
+
+    const mainPurchaseIds = new Set(purchaseInvoices.filter(isMainTreasuryPurchase).map((p) => p.id));
+    txs.forEach((tx) => {
+      if (mainPurchaseIds.has(tx.originalId)) tx.treasury = 'main';
     });
 
     // Sort by date descending
@@ -381,13 +407,25 @@ export default function Budget() {
     };
 
     const endOfPeriod = getEndOfPeriod();
-    const openingForFilter = methodFilter === 'all'
-      ? totalOpeningBalance(storeSettings as any)
-      : Number((storeSettings as any).paymentOpeningBalances?.[methodFilter] ?? (methodFilter === 'cash' ? storeSettings.initial_balance : 0)) || 0;
-    const closingBalance = openingForFilter + allTransactions
+    const cashierOpeningForFilter = methodFilter === 'all'
+      ? activePayKeys.reduce((sum, key) => sum + openingBalanceOf(storeSettings as any, key), 0)
+      : openingBalanceOf(storeSettings as any, methodFilter);
+    const cashierTreasuryBalance = cashierOpeningForFilter + allTransactions
       .filter(tx => tx.date <= endOfPeriod)
+      .filter(tx => tx.treasury === 'cashier')
       .filter(tx => methodFilter === 'all' || tx.payment_method === methodFilter)
       .reduce((sum, tx) => sum + (tx.type === 'revenue' ? tx.amount : -tx.amount), 0);
+    const mainOpeningForFilter = methodFilter === 'all'
+      ? activePayKeys.reduce((sum, key) => sum + savingsOpeningBalanceOf(storeSettings as any, key), 0)
+      : savingsOpeningBalanceOf(storeSettings as any, methodFilter);
+    const mainTreasuryBalance = mainOpeningForFilter + savingsTransactions
+      .filter((tx) => new Date(tx.created_at || tx.date || 0) <= endOfPeriod)
+      .filter((tx) => methodFilter === 'all' || tx.method === methodFilter || tx.payment_method === methodFilter)
+      .reduce((sum, tx) => {
+        const direction = String(tx.direction || '').toLowerCase();
+        const sign = direction === 'out' ? -1 : 1;
+        return sum + (sign * (Number(tx.amount) || 0));
+      }, 0);
 
     return {
       totalRevenue,
@@ -396,11 +434,11 @@ export default function Budget() {
       serviceProfit: serviceRevenues - serviceExpenses,
       collectedFromInvoices,
       collectedFromOther,
-      closingBalance,
-      netProfit: totalRevenue - totalExpense,
+      cashierTreasuryBalance,
+      mainTreasuryBalance,
       count: new Set(filteredTransactions.map((tx) => tx.originalId)).size
     };
-  }, [filteredTransactions, allTransactions, orders, dateFilter, customDate, customMonth, customYear, methodFilter, storeSettings]);
+  }, [filteredTransactions, allTransactions, orders, dateFilter, customDate, customMonth, customYear, methodFilter, storeSettings, activePayKeys, savingsTransactions]);
 
   const totalCustomerDebt = useMemo(() => {
     const debtPaidByInvoice = new Map<string, number>();
@@ -545,9 +583,9 @@ export default function Budget() {
               <Banknote size={24} />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-500">رصيد الخزنة (الإغلاق)</p>
+              <p className="text-sm font-bold text-slate-500">رصيد نهاية خزنة الكاشير</p>
               <h3 className="text-2xl font-black mt-1 text-blue-600 dark:text-blue-400">
-                {stats.closingBalance.toFixed(2)} <span className="text-xs text-slate-400">{storeSettings.currency}</span>
+                {stats.cashierTreasuryBalance.toFixed(2)} <span className="text-xs text-slate-400">{storeSettings.currency}</span>
               </h3>
             </div>
           </div>
@@ -661,15 +699,15 @@ export default function Budget() {
         </div>
 
         <div className="bg-white dark:bg-slate-800 p-6 rounded-3xl shadow-sm border border-slate-200 dark:border-slate-700 relative overflow-hidden group">
-          <div className={`absolute inset-0 opacity-10 transition-opacity group-hover:opacity-20 ${stats.netProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`} />
+          <div className="absolute inset-0 opacity-10 transition-opacity group-hover:opacity-20 bg-indigo-500" />
           <div className="flex items-center gap-4 mb-4 relative z-10">
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg ${stats.netProfit >= 0 ? 'bg-emerald-500' : 'bg-red-500'}`}>
+            <div className="w-12 h-12 rounded-2xl flex items-center justify-center text-white shadow-lg bg-indigo-500">
               <DollarSign size={24} />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-500">صافي حركة الخزنة</p>
-              <h3 className={`text-2xl font-black mt-1 ${stats.netProfit >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                {stats.netProfit.toFixed(2)}
+              <p className="text-sm font-bold text-slate-500">رصيد نهاية الخزنة الرئيسية</p>
+              <h3 className="text-2xl font-black mt-1 text-indigo-600 dark:text-indigo-400">
+                {stats.mainTreasuryBalance.toFixed(2)}
               </h3>
             </div>
           </div>
