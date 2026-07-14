@@ -10,6 +10,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance, type PaymentKey } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
+import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 
 interface UnifiedTransaction {
   id: string;
@@ -35,9 +36,9 @@ export default function Budget() {
   );
 
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'month' | 'custom_month' | 'year' | 'custom_year' | 'custom'>('month');
-  const [customDate, setCustomDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [customMonth, setCustomMonth] = useState<string>(new Date().toISOString().slice(0, 7));
-  const [customYear, setCustomYear] = useState<string>(new Date().getFullYear().toString());
+  const [customDate, setCustomDate] = useState<string>(() => businessDateStr());
+  const [customMonth, setCustomMonth] = useState<string>(() => businessDateStr().slice(0, 7));
+  const [customYear, setCustomYear] = useState<string>(() => businessDateStr().slice(0, 4));
   const [methodFilter, setMethodFilter] = useState<'all' | PaymentKey>('all');
   const activePayKeys = activePaymentKeys(storeSettings as any);
   const [isExporting, setIsExporting] = useState(false);
@@ -231,29 +232,24 @@ export default function Budget() {
   // Filtering Logic
   const filteredTransactions = useMemo(() => {
     let result = allTransactions;
+    const currentBusinessDay = businessDateStr(storeSettings as any);
 
     // Date Filter
     if (dateFilter !== 'all') {
-      const now = new Date();
       result = result.filter(tx => {
+        const txBusinessDate = businessDateStr(storeSettings as any, tx.date);
         if (dateFilter === 'today') {
-          return tx.date.toDateString() === now.toDateString();
+          return txBusinessDate === currentBusinessDay;
         } else if (dateFilter === 'month') {
-          return tx.date.getMonth() === now.getMonth() && tx.date.getFullYear() === now.getFullYear();
+          return txBusinessDate.slice(0, 7) === currentBusinessDay.slice(0, 7);
         } else if (dateFilter === 'year') {
-          return tx.date.getFullYear() === now.getFullYear();
+          return txBusinessDate.slice(0, 4) === currentBusinessDay.slice(0, 4);
         } else if (dateFilter === 'custom') {
-          const txYear = tx.date.getFullYear();
-          const txMonth = String(tx.date.getMonth() + 1).padStart(2, '0');
-          const txDay = String(tx.date.getDate()).padStart(2, '0');
-          const txDateStr = `${txYear}-${txMonth}-${txDay}`;
-          return txDateStr === customDate;
+          return txBusinessDate === customDate;
         } else if (dateFilter === 'custom_month') {
-          const txYear = tx.date.getFullYear();
-          const txMonth = String(tx.date.getMonth() + 1).padStart(2, '0');
-          return `${txYear}-${txMonth}` === customMonth;
+          return txBusinessDate.slice(0, 7) === customMonth;
         } else if (dateFilter === 'custom_year') {
-          return tx.date.getFullYear().toString() === customYear;
+          return txBusinessDate.slice(0, 4) === customYear;
         }
         return true;
       });
@@ -265,7 +261,7 @@ export default function Budget() {
     }
 
     return result;
-  }, [allTransactions, dateFilter, methodFilter, customDate, customMonth, customYear]);
+  }, [allTransactions, dateFilter, methodFilter, customDate, customMonth, customYear, storeSettings]);
 
   // Stats Logic
   const stats = useMemo(() => {
@@ -319,29 +315,25 @@ export default function Budget() {
 
     const orderMatchesDateFilter = (date: Date) => {
       if (dateFilter === 'all') return true;
-      const now = new Date();
+      const txBusinessDate = businessDateStr(storeSettings as any, date);
+      const currentBusinessDay = businessDateStr(storeSettings as any);
       if (dateFilter === 'today') {
-        return date.toDateString() === now.toDateString();
+        return txBusinessDate === currentBusinessDay;
       }
       if (dateFilter === 'month') {
-        return date.getMonth() === now.getMonth() && date.getFullYear() === now.getFullYear();
+        return txBusinessDate.slice(0, 7) === currentBusinessDay.slice(0, 7);
       }
       if (dateFilter === 'year') {
-        return date.getFullYear() === now.getFullYear();
+        return txBusinessDate.slice(0, 4) === currentBusinessDay.slice(0, 4);
       }
       if (dateFilter === 'custom') {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        return `${year}-${month}-${day}` === customDate;
+        return txBusinessDate === customDate;
       }
       if (dateFilter === 'custom_month') {
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        return `${year}-${month}` === customMonth;
+        return txBusinessDate.slice(0, 7) === customMonth;
       }
       if (dateFilter === 'custom_year') {
-        return date.getFullYear().toString() === customYear;
+        return txBusinessDate.slice(0, 4) === customYear;
       }
       return true;
     };
@@ -362,26 +354,28 @@ export default function Budget() {
       .reduce((sum, order) => sum + getInvoiceProfitByMethod(order), 0);
 
     const getEndOfPeriod = () => {
-      const now = new Date();
+      const currentBusinessDay = businessDateStr(storeSettings as any);
       if (dateFilter === 'today') {
-        return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        return businessDayRange(currentBusinessDay, storeSettings as any).end;
       }
       if (dateFilter === 'month') {
-        return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        const [year, month] = currentBusinessDay.split('-');
+        const lastDay = new Date(Number(year), Number(month), 0).getDate();
+        return businessDayRange(`${year}-${month}-${String(lastDay).padStart(2, '0')}`, storeSettings as any).end;
       }
       if (dateFilter === 'year') {
-        return new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999);
+        return businessDayRange(`${currentBusinessDay.slice(0, 4)}-12-31`, storeSettings as any).end;
       }
       if (dateFilter === 'custom') {
-        const d = new Date(customDate);
-        return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+        return businessDayRange(customDate, storeSettings as any).end;
       }
       if (dateFilter === 'custom_month') {
         const [year, month] = customMonth.split('-');
-        return new Date(Number(year), Number(month), 0, 23, 59, 59, 999);
+        const lastDay = new Date(Number(year), Number(month), 0).getDate();
+        return businessDayRange(`${year}-${month}-${String(lastDay).padStart(2, '0')}`, storeSettings as any).end;
       }
       if (dateFilter === 'custom_year') {
-        return new Date(Number(customYear), 11, 31, 23, 59, 59, 999);
+        return businessDayRange(`${customYear}-12-31`, storeSettings as any).end;
       }
       return new Date(8640000000000000);
     };
@@ -439,6 +433,10 @@ export default function Budget() {
   };
 
   const getMethodName = (method: string) => payLabelOf(storeSettings as any, method);
+  const formatBusinessDisplayDate = (date: Date) => {
+    const day = businessDateStr(storeSettings as any, date);
+    return new Date(`${day}T12:00:00`).toLocaleDateString('ar-EG', { calendar: 'gregory' });
+  };
 
   return (
     <div className="p-6 md:p-8 space-y-8 animate-fade-in" id="budget-report">
@@ -718,7 +716,7 @@ export default function Budget() {
                       <td className="px-4 py-3">
                         <div className="flex flex-col">
                           <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
-                            {tx.date.toLocaleDateString('ar-EG', { calendar: 'gregory' })}
+                            {formatBusinessDisplayDate(tx.date)}
                           </span>
                           <span className="text-xs text-slate-500">
                             {tx.date.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
@@ -783,7 +781,7 @@ export default function Budget() {
                       <td className="px-4 py-3">
                         <div className="flex flex-col">
                           <span className="font-bold text-slate-800 dark:text-slate-200 text-sm">
-                            {tx.date.toLocaleDateString('ar-EG', { calendar: 'gregory' })}
+                            {formatBusinessDisplayDate(tx.date)}
                           </span>
                           <span className="text-xs text-slate-500">
                             {tx.date.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}
