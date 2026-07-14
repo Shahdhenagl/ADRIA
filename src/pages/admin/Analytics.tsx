@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
+import { calculateOrderReturnValue } from '../../utils/returns';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -147,8 +148,13 @@ export default function Analytics() {
       }
     });
 
-    // Global Debts
-    const totalCustomerDebt = Math.max(0, globalOrders.filter(o => !o.is_deleted).reduce((sum, o) => sum + (o.total - o.paid_amount), 0));
+    const totalCustomerDebt = activeOrders.reduce((sum, o) => {
+      const customerId = o.customer_id || o.customer?.id;
+      if (!customerId || o.type === 'payment') return sum;
+      const effectiveTotal = (Number(o.total) || 0) - calculateOrderReturnValue(o);
+      const debt = effectiveTotal - (Number(o.paid_amount) || 0);
+      return debt > 0.009 ? sum + debt : sum;
+    }, 0);
     const totalSupplierDebt = Math.max(0, purchaseInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0));
 
     const profit = revenue - cost;
