@@ -13,6 +13,7 @@ import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
 import { isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../../utils/treasury';
+import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 
 export default function Finance() {
   const { 
@@ -48,7 +49,7 @@ export default function Finance() {
 
 
   
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(businessDateStr(storeSettings as any));
   const [filterType, setFilterType] = useState<'daily' | 'monthly' | 'yearly'>('daily');
   const selectedDateDisplay = useMemo(() => {
     const [year, month, day] = selectedDate.split('-');
@@ -95,11 +96,10 @@ export default function Finance() {
     } else if (filterType === 'yearly') {
       startOfPeriod = new Date(selDate.getFullYear(), 0, 1);
     } else {
-      // حدّ «قبل اليوم» بتوقيت UTC ليطابق تصنيف «معاملات اليوم» (getDateStr = toISOString UTC).
-      // كان setHours بيستخدم منتصف الليل المحلي، فالمعاملات القريبة من منتصف الليل كانت
-      // تتحسب في خانة مختلفة عن «اليوم» → رصيد إغلاق اليوم ما يطابقش افتتاح اليوم اللي بعده.
-      // (منتصف ليل UTC = 3 الفجر بتوقيت مصر صيفاً = نفس بداية يوم تقفيل POS.)
-      startOfPeriod = new Date(selectedDate);
+      // بداية اليوم المحاسبي (افتراضي 3 الفجر بالتوقيت المحلي) — نفس منطق تقفيل POS.
+      // أي معاملة قبل الساعة 3 الفجر تُحسب على اليوم السابق. لازم يطابق matchDate
+      // (businessDateStr) وإلا رصيد إغلاق اليوم ما يطابقش رصيد افتتاح اليوم اللي بعده.
+      startOfPeriod = businessDayRange(selectedDate, storeSettings as any).start;
     }
     
     const ordersIn = activeOrders
@@ -175,11 +175,10 @@ export default function Finance() {
     } else if (filterType === 'yearly') {
       startOfPeriod = new Date(selDate.getFullYear(), 0, 1);
     } else {
-      // حدّ «قبل اليوم» بتوقيت UTC ليطابق تصنيف «معاملات اليوم» (getDateStr = toISOString UTC).
-      // كان setHours بيستخدم منتصف الليل المحلي، فالمعاملات القريبة من منتصف الليل كانت
-      // تتحسب في خانة مختلفة عن «اليوم» → رصيد إغلاق اليوم ما يطابقش افتتاح اليوم اللي بعده.
-      // (منتصف ليل UTC = 3 الفجر بتوقيت مصر صيفاً = نفس بداية يوم تقفيل POS.)
-      startOfPeriod = new Date(selectedDate);
+      // بداية اليوم المحاسبي (افتراضي 3 الفجر بالتوقيت المحلي) — نفس منطق تقفيل POS.
+      // أي معاملة قبل الساعة 3 الفجر تُحسب على اليوم السابق. لازم يطابق matchDate
+      // (businessDateStr) وإلا رصيد إغلاق اليوم ما يطابقش رصيد افتتاح اليوم اللي بعده.
+      startOfPeriod = businessDayRange(selectedDate, storeSettings as any).start;
     }
 
     const ordersIn = activeOrders
@@ -212,7 +211,8 @@ export default function Finance() {
       const d = new Date(dateVal);
       if (filterType === 'monthly') return d.getFullYear() === selDate.getFullYear() && d.getMonth() === selDate.getMonth();
       if (filterType === 'yearly') return d.getFullYear() === selDate.getFullYear();
-      return getDateStr(dateVal) === selectedDate;
+      // اليوم المحاسبي (3 الفجر): معاملة قبلها تُحسب على اليوم السابق — نفس منطق POS.
+      return businessDateStr(storeSettings as any, new Date(dateVal)) === selectedDate;
     };
     return {
       orders: activeOrders.filter(o => matchDate(o.date)),
