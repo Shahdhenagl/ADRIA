@@ -6,16 +6,16 @@ import { escapeHtml } from '../../utils/escapeHtml';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase } from '../../utils/treasury';
-
-const todayStr = () => { const d = new Date(); return [d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), String(d.getDate()).padStart(2, '0')].join('-'); };
+import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 
 export default function Reports() {
   const { storeSettings } = useStore();
   const cur = storeSettings.currency;
   // الوسائل المعروضة = الأربع الأساسية + أي طريقة إضافية (5/6) مفعّلة في الإعدادات
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => [k, payLabelOf(storeSettings as any, k)] as const);
-  const [from, setFrom] = useState(todayStr());
-  const [to, setTo] = useState(todayStr());
+  const currentBusinessDay = () => businessDateStr(storeSettings as any);
+  const [from, setFrom] = useState(currentBusinessDay());
+  const [to, setTo] = useState(currentBusinessDay());
   const [tab, setTab] = useState<'sales' | 'methods' | 'treasury'>('sales');
   const [extra, setExtra] = useState<{ expenses: any[]; purchases: any[]; salaries: any[] }>({ expenses: [], purchases: [], salaries: [] });
   const [orders, setOrders] = useState<any[]>([]);
@@ -40,8 +40,8 @@ export default function Reports() {
     })();
   }, []);
 
-  const start = useMemo(() => new Date(`${from}T00:00:00`), [from]);
-  const end = useMemo(() => { const d = new Date(`${to}T00:00:00`); d.setDate(d.getDate() + 1); return d; }, [to]);
+  const start = useMemo(() => businessDayRange(from, storeSettings as any).start, [from, storeSettings.dayStartHour]);
+  const end = useMemo(() => businessDayRange(to, storeSettings as any).end, [to, storeSettings.dayStartHour]);
   const inRange = (dt: any) => { const d = new Date(dt); return d >= start && d < end; };
 
   // ── per-method in/out (with manual-income handling) ──
@@ -197,7 +197,7 @@ export default function Reports() {
         <div><label className="text-[11px] font-bold text-slate-500 block mb-1">إلى</label><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-bold" /></div>
         <div className="flex gap-1.5">
           {([['today', 'اليوم'], ['month', 'الشهر']] as const).map(([k, l]) => (
-            <button key={k} onClick={() => { const d = new Date(); if (k === 'today') { setFrom(todayStr()); setTo(todayStr()); } else { setFrom([d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), '01'].join('-')); setTo(todayStr()); } }} className="text-xs font-bold bg-slate-100 dark:bg-slate-900 px-3 py-2 rounded-xl">{l}</button>
+            <button key={k} onClick={() => { const businessToday = currentBusinessDay(); const d = new Date(`${businessToday}T00:00:00`); if (k === 'today') { setFrom(businessToday); setTo(businessToday); } else { setFrom([d.getFullYear(), String(d.getMonth() + 1).padStart(2, '0'), '01'].join('-')); setTo(businessToday); } }} className="text-xs font-bold bg-slate-100 dark:bg-slate-900 px-3 py-2 rounded-xl">{l}</button>
           ))}
         </div>
         <button onClick={printReport} className="mr-auto bg-indigo-600 hover:bg-indigo-700 text-white font-black px-5 py-2.5 rounded-xl flex items-center gap-2"><Printer size={18} /> طباعة / PDF</button>
