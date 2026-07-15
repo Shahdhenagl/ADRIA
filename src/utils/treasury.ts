@@ -65,6 +65,22 @@ export function isMainTreasuryExpense(row: any): boolean {
   return String(row?.note || '').includes(MAIN_TREASURY_MARKER);
 }
 
+// ── ربط صف المصروف بمعاملة الخزنة الرئيسية (لعكس الأثر عند الحذف) ──────────
+// نخزّن معرّف المجموعة داخل نص الملاحظة كوسم مخفي: [SVG:<uuid>]
+// (نفس أسلوب MAIN_TREASURY_MARKER — بدون تعديل سكيمة جدول expenses).
+const SAVINGS_GROUP_RE = /\[SVG:([0-9a-fA-F-]{6,})\]/;
+
+export function markSavingsGroupNote(note: string | undefined, groupId?: string | null): string {
+  const clean = String(note || '').trim();
+  if (!groupId) return clean;
+  return SAVINGS_GROUP_RE.test(clean) ? clean : `${clean}${clean ? ' ' : ''}[SVG:${groupId}]`;
+}
+
+export function savingsGroupIdOf(note: any): string | null {
+  const m = String(note || '').match(SAVINGS_GROUP_RE);
+  return m ? m[1] : null;
+}
+
 export function isMainTreasuryPurchase(row: any): boolean {
   return String(row?.notes || '').includes(MAIN_TREASURY_MARKER);
 }

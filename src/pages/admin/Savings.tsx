@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
-import { PiggyBank, ArrowLeftRight, Banknote, Save } from 'lucide-react';
+import { PiggyBank, ArrowLeftRight, Banknote, Save, Trash2 } from 'lucide-react';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
-import { applySplit, applyInternalTransferNet, isInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../../utils/treasury';
+import { applySplit, applyInternalTransferNet, isInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote } from '../../utils/treasury';
 
 type Split = Record<string, number>;
 const zero = (): Split => { const z: Split = {}; ALL_PAYMENT_KEYS.forEach((k) => { z[k] = 0; }); return z; };
 
 export default function Savings() {
-  const { storeSettings, savingsTransfer, savingsConvert, updateSettings, addExpense, recordMainTreasuryIn, recordMainTreasuryOut } = useStore();
+  const { storeSettings, savingsTransfer, savingsConvert, updateSettings, addExpense, recordMainTreasuryIn, recordMainTreasuryOut, deleteSavingsOperation } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
@@ -191,18 +191,23 @@ export default function Savings() {
         const isIncome = mode === 'income';
         const mult = isIncome ? -1 : 1; // إيراد = مبلغ سالب (زي Finance)، مصروف = موجب
         const desc = `${category}${note.trim() ? ` - ${note.trim()}` : ''}`;
-        await addExpense({
-          category,
-          amount: total * mult,
-          paid_cash: (split.cash || 0) * mult, paid_visa: (split.visa || 0) * mult, paid_wallet: (split.wallet || 0) * mult,
-          paid_instapay: (split.instapay || 0) * mult, paid_method5: (split.method5 || 0) * mult, paid_method6: (split.method6 || 0) * mult,
-          note: markMainTreasuryNote(note.trim()),
-          payment_method: primaryMethod(split as any),
-          ...(dateISO ? { created_at: dateISO } : {}),
-        } as any);
+        // معرّف مشترك يربط صف المصروف بصفوف الدفتر — عشان الحذف يعكس الأثر المحاسبي بدقّة.
+        const groupId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID() : `svg-${Date.now()}`;
+        // نسجّل حركة الدفتر أولاً؛ وبس لو نجحت نسجّل صف المصروف (لتفادي اختلال لو فشل الإدراج).
         ok = isIncome
-          ? await recordMainTreasuryIn(split as any, 'main_income', desc, dateISO)
-          : await recordMainTreasuryOut(split as any, 'main_expense', desc, dateISO);
+          ? await recordMainTreasuryIn(split as any, 'main_income', desc, dateISO, groupId)
+          : await recordMainTreasuryOut(split as any, 'main_expense', desc, dateISO, groupId);
+        if (ok) {
+          await addExpense({
+            category,
+            amount: total * mult,
+            paid_cash: (split.cash || 0) * mult, paid_visa: (split.visa || 0) * mult, paid_wallet: (split.wallet || 0) * mult,
+            paid_instapay: (split.instapay || 0) * mult, paid_method5: (split.method5 || 0) * mult, paid_method6: (split.method6 || 0) * mult,
+            note: markSavingsGroupNote(markMainTreasuryNote(note.trim()), groupId),
+            payment_method: primaryMethod(split as any),
+            ...(dateISO ? { created_at: dateISO } : {}),
+          } as any);
+        }
       } else {
         const split: Record<string, number> = {};
         ALL_PAYMENT_KEYS.forEach((k) => { split[k] = Number(amt[k]) || 0; });
@@ -211,6 +216,47 @@ export default function Savings() {
       if (ok) { alert(isFinancial ? 'تم تسجيل المعاملة ✅' : 'تم التحويل ✅'); setAmt({}); setConvAmt(''); setNote(''); setCategory('عام'); setOtpInput(''); setOtpSent(false); setTxDate(new Date().toISOString().slice(0, 10)); load(); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setBusy(false);
+  };
+
+  // ── حذف معاملة من الخزنة الرئيسية (بتأكيد OTP للمدير) ──────────────
+  const [delTx, setDelTx] = useState<any | null>(null);   // المعاملة قيد الحذف (بعد إرسال الرمز)
+  const [delOtp, setDelOtp] = useState('');
+  const [delBusy, setDelBusy] = useState(false);
+
+  const txTypeLabel = (t: any) =>
+    t.source === 'convert' ? 'تحويل بين الطرق'
+      : t.source === 'main_income' ? 'إيراد للرئيسية'
+        : t.source === 'main_expense' ? 'مصروف من الرئيسية'
+          : t.direction === 'in' ? 'إيداع/تحويل للرئيسية' : 'سحب/تحويل للمحل';
+
+  const requestDeleteOtp = async (t: any) => {
+    if (t.source === 'day_closing') { alert('معاملة «تقفيل يوم» لا يمكن حذفها من هنا — أعيدي فتح اليوم من شاشة تقفيل اليوم.'); return; }
+    if (delBusy) return;
+    setDelBusy(true);
+    try {
+      const tok = await token();
+      const details = `🗑️ حذف معاملة من الخزنة الرئيسية\nالنوع: ${txTypeLabel(t)}\nالمبلغ: ${Number(t.amount).toFixed(2)} ${cur}\nالطريقة: ${labelOfKey(t.method)}\nالتاريخ: ${new Date(t.created_at).toLocaleString('ar-EG')}${t.note ? `\nملاحظة: ${t.note}` : ''}`;
+      const r = await fetch('/api/wholesale-otp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }, body: JSON.stringify({ action: 'request', purpose: 'savings', details }) });
+      const j = await r.json();
+      if (j.ok) { setDelTx(t); setDelOtp(''); alert('تم إرسال تفاصيل الحذف ورمز التأكيد للمدير على تليجرام 📲'); }
+      else alert('تعذّر إرسال الرمز: ' + (j.error || ''));
+    } catch { alert('تعذّر إرسال الرمز'); }
+    setDelBusy(false);
+  };
+
+  const confirmDelete = async () => {
+    if (!delTx) return;
+    if (!delOtp.trim()) { alert('أدخل رمز التأكيد'); return; }
+    setDelBusy(true);
+    try {
+      const tok = await token();
+      const r = await fetch('/api/wholesale-otp', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: `Bearer ${tok}` } : {}) }, body: JSON.stringify({ action: 'verify', purpose: 'savings', code: delOtp.trim() }) });
+      const j = await r.json();
+      if (!j.ok) { alert(j.error || 'رمز غير صحيح'); setDelBusy(false); return; }
+      const ok = await deleteSavingsOperation(delTx);
+      if (ok) { alert('تم حذف المعاملة وعكس أثرها المحاسبي ✅'); setDelTx(null); setDelOtp(''); await load(); }
+    } catch { alert('تعذّر حذف المعاملة'); }
+    setDelBusy(false);
   };
 
   // فلترة سجل المعاملات بالتاريخ المحلي (مطابق للعرض) — بالشهر أو باليوم.
@@ -396,10 +442,10 @@ export default function Savings() {
 
         <div className="overflow-x-auto">
           <table className="w-full text-right text-sm">
-            <thead><tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">المبلغ</th><th className="p-2">الطريقة</th><th className="p-2">المصدر</th><th className="p-2">ملاحظة</th></tr></thead>
+            <thead><tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">المبلغ</th><th className="p-2">الطريقة</th><th className="p-2">المصدر</th><th className="p-2">ملاحظة</th><th className="p-2 text-center">حذف</th></tr></thead>
             <tbody>
-              {loading ? <tr><td colSpan={6} className="text-center text-slate-400 py-6">جاري التحميل...</td></tr>
-                : filteredTxs.length === 0 ? <tr><td colSpan={6} className="text-center text-slate-400 py-6">{txs.length === 0 ? 'لا توجد معاملات' : 'لا توجد معاملات في هذه الفترة'}</td></tr>
+              {loading ? <tr><td colSpan={7} className="text-center text-slate-400 py-6">جاري التحميل...</td></tr>
+                : filteredTxs.length === 0 ? <tr><td colSpan={7} className="text-center text-slate-400 py-6">{txs.length === 0 ? 'لا توجد معاملات' : 'لا توجد معاملات في هذه الفترة'}</td></tr>
                 : filteredTxs.map((t) => {
                   const directionColor = t.direction === 'in' ? 'text-emerald-600' : 'text-red-600';
                   return (
@@ -410,6 +456,13 @@ export default function Savings() {
                       <td className="p-2">{METHODS.find((m) => m.key === t.method)?.label || t.method}</td>
                       <td className="p-2 text-xs text-slate-500">{t.source === 'day_closing' ? 'تقفيل اليوم' : t.source === 'shop_transfer' ? 'تحويل من المحل' : t.source === 'to_shop' ? 'تحويل للمحل' : t.source === 'convert' ? 'تحويل بين الطرق' : (t.source === 'main_income' || t.source === 'main_expense') ? 'معاملة مالية' : 'يدوي'}</td>
                       <td className="p-2 text-slate-600 dark:text-slate-300">{t.note || '-'}</td>
+                      <td className="p-2 text-center">
+                        {t.source === 'day_closing' ? (
+                          <span className="text-[10px] text-slate-400" title="معاملة تقفيل يوم — تُعدّل من شاشة تقفيل اليوم">مقفّلة</span>
+                        ) : (
+                          <button onClick={() => requestDeleteOtp(t)} disabled={delBusy} className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-40" title="حذف المعاملة (بتأكيد المدير)"><Trash2 size={16} /></button>
+                        )}
+                      </td>
                     </tr>
                   );
                 })}
@@ -417,6 +470,30 @@ export default function Savings() {
           </table>
         </div>
       </div>
+
+      {/* نافذة تأكيد الحذف بالـ OTP */}
+      {delTx && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={() => { if (!delBusy) { setDelTx(null); setDelOtp(''); } }}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="text-lg font-black text-red-600 flex items-center gap-2"><Trash2 size={20} /> تأكيد حذف معاملة</h3>
+            <div className="bg-slate-50 dark:bg-slate-900/40 rounded-xl p-3 text-sm space-y-1">
+              <div className="flex justify-between"><span className="text-slate-500">النوع</span><span className="font-bold">{txTypeLabel(delTx)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">المبلغ</span><span className="font-black text-red-600">{Number(delTx.amount).toFixed(2)} {cur}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">الطريقة</span><span className="font-bold">{labelOfKey(delTx.method)}</span></div>
+              <div className="flex justify-between"><span className="text-slate-500">التاريخ</span><span className="font-bold text-xs">{new Date(delTx.created_at).toLocaleString('ar-EG')}</span></div>
+            </div>
+            <p className="text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 rounded-lg p-2">سيتم حذف كل صفوف هذه العملية وعكس أثرها على الحسابات (خزنة المحل / التقارير). وصل رمز التأكيد للمدير على تليجرام.</p>
+            <div className="flex gap-2">
+              <input className={input + ' text-center tracking-widest'} dir="ltr" placeholder="رمز التأكيد" value={delOtp} onChange={(e) => setDelOtp(e.target.value)} />
+              <button onClick={confirmDelete} disabled={delBusy} className="shrink-0 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-black px-5 rounded-xl">{delBusy ? '...' : 'حذف نهائي'}</button>
+            </div>
+            <div className="flex justify-between items-center">
+              <button onClick={() => requestDeleteOtp(delTx)} disabled={delBusy} className="text-[11px] font-bold text-amber-700">إعادة إرسال الرمز</button>
+              <button onClick={() => { setDelTx(null); setDelOtp(''); }} disabled={delBusy} className="text-[11px] font-bold text-slate-500">إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf } from '../utils/paymentMethods';
-import { markMainTreasuryNote } from '../utils/treasury';
+import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
@@ -572,8 +572,9 @@ interface CashierStore {
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
   savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, direction: 'in' | 'out', source: string, note?: string, dateISO?: string) => Promise<boolean>;
   savingsConvert: (from: string, to: string, amount: number, note?: string, createdAt?: string) => Promise<boolean>;
-  recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string) => Promise<boolean>;
-  recordMainTreasuryIn: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string) => Promise<boolean>;
+  recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string, groupId?: string) => Promise<boolean>;
+  recordMainTreasuryIn: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string, groupId?: string) => Promise<boolean>;
+  deleteSavingsOperation: (tx: { id: string; group_id?: string | null; created_at: string; source?: string | null; note?: string | null }) => Promise<boolean>;
   updateExpense: (id: string, expense: Partial<Expense>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
 
@@ -775,6 +776,12 @@ function primaryOfSplit(split?: Record<string, number>): string {
 }
 
 const DAY_CLOSING_CATEGORY = 'تحويل للخزنة الرئيسية';
+
+// معرّف مجموعة لربط صفوف معاملة الخزنة الرئيسية الواحدة (مع fallback لو randomUUID غير متاح).
+function newGroupId(): string {
+  try { return crypto.randomUUID(); }
+  catch { return 'svg-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
+}
 
 function dateValueForAccounting(value?: string | Date | null): Date {
   const d = value ? new Date(value) : new Date();
@@ -4111,23 +4118,29 @@ setupRealtime: () => {
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
     if (total <= 0) return false;
     const primary = primaryOfSplit(s);
+    const groupId = newGroupId(); // يربط صف المصروف بصفوف دفتر الخزنة الرئيسية للحذف لاحقاً
+
+    // دفتر الخزنة الرئيسية: صف لكل طريقة بمبلغ (بنفس تاريخ التقفيل لو اتبعت).
+    // نُدرجه أولاً ونفحص الخطأ — عشان لو فشل الإدراج (مثلاً عمود group_id غير موجود)
+    // ما نسجّلش مصروف خزنة المحل ونسيب الحسابات مختلّة (كان الإدراج بدون فحص قبل كده).
+    const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
+      .filter((m) => s[m] > 0)
+      .map((m) => ({ direction, amount: s[m], method: m, source: source || 'manual', note: note || null, group_id: groupId, ...(dateISO ? { created_at: dateISO } : {}) }));
+    if (rows.length) {
+      const { error } = await supabase.from('savings_transactions').insert(rows);
+      if (error) { console.error('savingsTransfer savings insert error:', error); alert('تعذّر تسجيل حركة الخزنة الرئيسية' + (String(error.message || '').includes('group_id') ? ' — شغّلي db/39_savings_group_id.sql أولاً.' : '')); return false; }
+    }
 
     // انعكاس على خزنة المحل — نثبّت التاريخ (created_at) على اليوم المحاسبي المُقفَل لو اتبعت،
     // عشان تقفيل يوم 8 (لو اتعمل فعلياً في يوم 9) يتحسب على يوم 8 مش يوم 9.
     await get().addExpense({
       category: direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية',
       amount: direction === 'in' ? total : -total,
-      note: note || (direction === 'in' ? 'تحويل من المحل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية للمحل'),
+      note: markSavingsGroupNote(note || (direction === 'in' ? 'تحويل من المحل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية للمحل'), groupId),
       payment_method: primary,
       paid_cash: s.cash, paid_visa: s.visa, paid_wallet: s.wallet, paid_instapay: s.instapay, paid_method5: s.method5 || 0, paid_method6: s.method6 || 0,
       ...(dateISO ? { created_at: dateISO } : {}),
     } as Omit<Expense, 'id' | 'date'>);
-
-    // دفتر الخزنة الرئيسية: صف لكل طريقة بمبلغ (بنفس تاريخ التقفيل لو اتبعت)
-    const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
-      .filter((m) => s[m] > 0)
-      .map((m) => ({ direction, amount: s[m], method: m, source: source || 'manual', note: note || null, ...(dateISO ? { created_at: dateISO } : {}) }));
-    if (rows.length) await supabase.from('savings_transactions').insert(rows);
 
     sendTelegramAlert({
       type: direction === 'in' ? 'savings_in' : 'savings_out',
@@ -4150,9 +4163,10 @@ setupRealtime: () => {
     const fromLabel = payLabelOf(get().storeSettings as any, from);
     const toLabel = payLabelOf(get().storeSettings as any, to);
     const convNote = `تحويل ${fromLabel} ➜ ${toLabel}${note ? ` — ${note}` : ''}`;
+    const groupId = newGroupId();
     const rows = [
-      { direction: 'out', amount: amt, method: from, source: 'convert', note: convNote, ...(createdAt ? { created_at: createdAt } : {}) },
-      { direction: 'in', amount: amt, method: to, source: 'convert', note: convNote, ...(createdAt ? { created_at: createdAt } : {}) },
+      { direction: 'out', amount: amt, method: from, source: 'convert', note: convNote, group_id: groupId, ...(createdAt ? { created_at: createdAt } : {}) },
+      { direction: 'in', amount: amt, method: to, source: 'convert', note: convNote, group_id: groupId, ...(createdAt ? { created_at: createdAt } : {}) },
     ];
     const { error } = await supabase.from('savings_transactions').insert(rows);
     if (error) {
@@ -4172,14 +4186,14 @@ setupRealtime: () => {
     return true;
   },
 
-  recordMainTreasuryOut: async (split, source, note, createdAt) => {
+  recordMainTreasuryOut: async (split, source, note, createdAt, groupId) => {
     const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
     if (total <= 0) return false;
 
     const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
       .filter((m) => s[m] > 0)
-      .map((m) => ({ direction: 'out', amount: s[m], method: m, source: source || 'main_expense', note: note || null, ...(createdAt ? { created_at: createdAt } : {}) }));
+      .map((m) => ({ direction: 'out', amount: s[m], method: m, source: source || 'main_expense', note: note || null, ...(groupId ? { group_id: groupId } : {}), ...(createdAt ? { created_at: createdAt } : {}) }));
     if (rows.length) {
       const { error } = await supabase.from('savings_transactions').insert(rows);
       if (error) {
@@ -4201,14 +4215,14 @@ setupRealtime: () => {
   },
 
   // إيداع مباشر في الخزنة الرئيسية (إيراد) — مرآة لـ recordMainTreasuryOut بدون OTP.
-  recordMainTreasuryIn: async (split, source, note, createdAt) => {
+  recordMainTreasuryIn: async (split, source, note, createdAt, groupId) => {
     const s = { cash: Number(split?.cash) || 0, visa: Number(split?.visa) || 0, wallet: Number(split?.wallet) || 0, instapay: Number(split?.instapay) || 0, method5: Number(split?.method5) || 0, method6: Number(split?.method6) || 0 };
     const total = s.cash + s.visa + s.wallet + s.instapay + s.method5 + s.method6;
     if (total <= 0) return false;
 
     const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
       .filter((m) => s[m] > 0)
-      .map((m) => ({ direction: 'in', amount: s[m], method: m, source: source || 'main_income', note: note || null, ...(createdAt ? { created_at: createdAt } : {}) }));
+      .map((m) => ({ direction: 'in', amount: s[m], method: m, source: source || 'main_income', note: note || null, ...(groupId ? { group_id: groupId } : {}), ...(createdAt ? { created_at: createdAt } : {}) }));
     if (rows.length) {
       const { error } = await supabase.from('savings_transactions').insert(rows);
       if (error) {
@@ -4224,6 +4238,89 @@ setupRealtime: () => {
       description: `إيداع بالخزنة الرئيسية: ${total.toFixed(2)}${note ? ` — ${note}` : ''}`,
       amount: total,
       paymentMethod: primaryOfSplit(s),
+      date: new Date().toISOString(),
+    });
+    return true;
+  },
+
+  // حذف معاملة كاملة من الخزنة الرئيسية مع عكس أثرها المحاسبي:
+  // يشيل كل صفوف الدفتر التابعة للعملية (لكل طريقة) + صف المصروف المرتبط (لو وُجد).
+  deleteSavingsOperation: async (tx) => {
+    const state = get();
+    // معاملات تقفيل اليوم مرتبطة بمنطق الجرد — لا تُحذف من هنا.
+    if (tx.source === 'day_closing') {
+      alert('دي معاملة «تقفيل يوم» — لا يمكن حذفها من هنا. لازم تعيدي فتح اليوم من شاشة تقفيل اليوم.');
+      return false;
+    }
+    // يوم مقفول؟ لا تعديل ولا حذف.
+    if (!(await ensureAccountingDayOpen(state, tx.created_at))) return false;
+
+    // 1) صفوف العملية: بالـ group_id لو موجود، وإلا (معاملات قديمة) بالتاريخ + المصدر + الملاحظة.
+    let groupRows: any[] = [];
+    if (tx.group_id) {
+      const { data } = await supabase.from('savings_transactions').select('*').eq('group_id', tx.group_id);
+      groupRows = (data as any[]) || [];
+    } else {
+      const { data } = await supabase.from('savings_transactions').select('*')
+        .eq('created_at', tx.created_at).eq('source', tx.source || 'manual');
+      groupRows = ((data as any[]) || []).filter((r) => (r.note || '') === (tx.note || ''));
+    }
+    if (groupRows.length === 0) groupRows = [tx];
+    const ids = groupRows.map((r) => r.id);
+
+    // تقسيمة الإجمالي لكل طريقة (لمطابقة صف المصروف في المعاملات القديمة).
+    const split: Record<string, number> = { cash: 0, visa: 0, wallet: 0, instapay: 0, method5: 0, method6: 0 };
+    groupRows.forEach((r) => { const m = r.method || 'cash'; if (split[m] !== undefined) split[m] += Number(r.amount) || 0; });
+    const total = Object.values(split).reduce((a, b) => a + b, 0);
+    const source = tx.source || groupRows[0]?.source;
+    const day = new Date(tx.created_at).toISOString().slice(0, 10);
+
+    // 2) احذف صفوف الدفتر.
+    const { error: delErr } = await supabase.from('savings_transactions').delete().in('id', ids);
+    if (delErr) { console.error('deleteSavingsOperation error:', delErr); alert('تعذّر حذف المعاملة'); return false; }
+
+    // 3) اعكس صف المصروف المرتبط (التحويلات + الإيراد/المصروف تعمل صف expenses؛ convert لأ).
+    const needsExpense = source === 'shop_transfer' || source === 'to_shop' || source === 'main_income' || source === 'main_expense';
+    if (needsExpense) {
+      const groupId = tx.group_id || null;
+      const expenses = get().expenses || [];
+      let linkedId: string | null = null;
+      // (أ) العملية الحديثة: صف المصروف موسوم بنفس group_id.
+      if (groupId) {
+        const local = expenses.find((e) => savingsGroupIdOf(e.note) === groupId);
+        if (local) linkedId = local.id;
+        else {
+          // احتياطي: لو الصف خارج نطاق الـ 1000 المحمّلة في الحالة، نجيبه من قاعدة البيانات.
+          const { data } = await supabase.from('expenses').select('id').ilike('note', `%[SVG:${groupId}]%`).limit(1);
+          if (data && (data as any[]).length) linkedId = (data as any[])[0].id;
+        }
+      }
+      // (ب) العملية القديمة (بدون group_id): مطابقة بالفئة/التاريخ/الإجمالي/التقسيمة.
+      if (!linkedId) {
+        const isTransfer = source === 'shop_transfer' || source === 'to_shop';
+        const local = expenses.find((e) => {
+          const eDay = new Date(e.date).toISOString().slice(0, 10);
+          if (eDay !== day) return false;
+          if (Math.abs(Math.abs(Number(e.amount) || 0) - total) > 0.01) return false;
+          const splitMatch = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
+            .every((k) => Math.abs(Math.abs(Number((e as any)['paid_' + k]) || 0) - (split[k] || 0)) < 0.01);
+          if (!splitMatch) return false;
+          return isTransfer
+            ? (e.category === 'تحويل للخزنة الرئيسية' || e.category === 'تحويل من الخزنة الرئيسية')
+            : isMainTreasuryExpense(e);
+        });
+        if (local) linkedId = local.id;
+      }
+      if (linkedId) await get().deleteExpense(linkedId);
+    }
+
+    sendTelegramAlert({
+      type: 'savings_out',
+      actor: getActorName(get()),
+      currency: get().storeSettings.currency,
+      description: `🗑️ حذف معاملة من الخزنة الرئيسية (${source || 'يدوي'}): ${total.toFixed(2)}${tx.note ? ` — ${tx.note}` : ''}`,
+      amount: total,
+      paymentMethod: primaryOfSplit(split),
       date: new Date().toISOString(),
     });
     return true;
