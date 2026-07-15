@@ -9,7 +9,7 @@ const TREASURIES = [
 ];
 
 export default function Partners() {
-  const { storeSettings, recordPartnerTransaction } = useStore();
+  const { storeSettings, recordPartnerTransaction, deletePartnerTransaction } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
@@ -31,6 +31,7 @@ export default function Partners() {
   const [txMethod, setTxMethod] = useState('cash');
   const [txNote, setTxNote] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingTx, setEditingTx] = useState<any | null>(null); // معاملة قيد التعديل (استبدال)
 
   const load = async () => {
     setLoading(true);
@@ -81,15 +82,35 @@ export default function Partners() {
     setPartners((arr) => arr.filter((x) => x.id !== p.id));
   };
 
+  const resetTxForm = () => { setTxAmount(''); setTxNote(''); setEditingTx(null); };
+
   const submitTx = async () => {
     const partner = partners.find((p) => p.id === txPartner);
     if (!partner) { alert('اختر الشريك'); return; }
     const amt = Number(txAmount) || 0;
     if (amt <= 0) { alert('أدخل مبلغاً صحيحاً'); return; }
     setSaving(true);
+    // نسجّل الجديد الأول، وبعدين نحذف القديم (لو تعديل) — عشان ما يحصلش فقدان بيانات لو فشل أي خطوة.
     const ok = await recordPartnerTransaction({ partner_id: partner.id, partner_name: partner.name, type: txType, amount: amt, treasury: 'main', method: txMethod, note: txNote.trim() });
+    if (ok && editingTx) await deletePartnerTransaction(editingTx);
     setSaving(false);
-    if (ok) { alert('تم تسجيل المعاملة ✅'); setTxAmount(''); setTxNote(''); load(); }
+    if (ok) { alert(editingTx ? 'تم تعديل المعاملة ✅' : 'تم تسجيل المعاملة ✅'); resetTxForm(); load(); }
+  };
+
+  const startEditTx = (t: any) => {
+    setEditingTx(t);
+    setTxPartner(t.partner_id);
+    setTxType(t.type);
+    setTxAmount(String(t.amount ?? ''));
+    setTxMethod(t.method || 'cash');
+    setTxNote(t.note || '');
+    if (typeof window !== 'undefined') window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const removeTx = async (t: any) => {
+    if (!confirm(`حذف ${t.type === 'withdraw' ? 'سحب' : 'إيداع'} الشريك ${t.partner_name} بمبلغ ${Number(t.amount).toFixed(2)} ${cur}؟\nسيتم عكسه من الخزنة الرئيسية.`)) return;
+    const ok = await deletePartnerTransaction(t);
+    if (ok) { alert('تم الحذف وعكس الأثر ✅'); load(); }
   };
 
   return (
@@ -108,7 +129,10 @@ export default function Partners() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
         {/* New transaction */}
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-5 space-y-3">
-          <h2 className="text-base font-black text-slate-800 dark:text-white">إيداع / سحب</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-base font-black text-slate-800 dark:text-white">{editingTx ? 'تعديل معاملة' : 'إيداع / سحب'}</h2>
+            {editingTx && <button onClick={resetTxForm} className="text-[11px] font-black text-red-500 hover:underline">إلغاء التعديل</button>}
+          </div>
           <select className={input} value={txPartner} onChange={(e) => setTxPartner(e.target.value)}>
             <option value="">اختر الشريك</option>
             {partners.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.share_percent || 0}%)</option>)}
@@ -123,7 +147,7 @@ export default function Partners() {
             <div><label className="text-[11px] font-bold text-slate-500">ملاحظة</label><input className={input} value={txNote} onChange={(e) => setTxNote(e.target.value)} placeholder="اختياري" /></div>
           </div>
           <p className="text-[11px] text-slate-400">كل معاملات الشركاء (إيداع/سحب) تتم على <span className="font-black text-indigo-600">الخزنة الرئيسية</span> فقط — لا تؤثر على خزنة الكاشير. السحب يخصم من رصيد الرئيسية والإيداع يضيف له.</p>
-          <button onClick={submitTx} disabled={saving} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black py-3 rounded-xl">{saving ? 'جاري...' : 'تسجيل المعاملة'}</button>
+          <button onClick={submitTx} disabled={saving} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black py-3 rounded-xl">{saving ? 'جاري...' : editingTx ? 'حفظ التعديل' : 'تسجيل المعاملة'}</button>
         </div>
 
         {/* Add partner */}
@@ -189,9 +213,9 @@ export default function Partners() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-right text-sm">
-                <thead><tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">المبلغ</th><th className="p-2">الخزنة</th><th className="p-2">الطريقة</th><th className="p-2">ملاحظة</th></tr></thead>
+                <thead><tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700"><th className="p-2">التاريخ</th><th className="p-2">النوع</th><th className="p-2">المبلغ</th><th className="p-2">الخزنة</th><th className="p-2">الطريقة</th><th className="p-2">ملاحظة</th><th className="p-2"></th></tr></thead>
                 <tbody>
-                  {s.rows.length === 0 ? <tr><td colSpan={6} className="text-center text-slate-400 py-6">لا توجد معاملات</td></tr>
+                  {s.rows.length === 0 ? <tr><td colSpan={7} className="text-center text-slate-400 py-6">لا توجد معاملات</td></tr>
                     : s.rows.map((t) => (
                       <tr key={t.id} className="border-b border-slate-100 dark:border-slate-700/50">
                         <td className="p-2">{new Date(t.created_at).toLocaleString('ar-EG')}</td>
@@ -200,6 +224,10 @@ export default function Partners() {
                         <td className="p-2">{TREASURIES.find((x) => x.key === t.treasury)?.label || t.treasury}</td>
                         <td className="p-2">{METHODS.find((x) => x.key === t.method)?.label || t.method}</td>
                         <td className="p-2 text-slate-600 dark:text-slate-300">{t.note || '-'}</td>
+                        <td className="p-2 whitespace-nowrap">
+                          <button onClick={() => startEditTx(t)} className="text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-700 p-1.5 rounded-lg" title="تعديل"><Edit2 size={15} /></button>
+                          <button onClick={() => removeTx(t)} className="text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg" title="حذف"><Trash2 size={15} /></button>
+                        </td>
                       </tr>
                     ))}
                 </tbody>

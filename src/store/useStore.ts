@@ -572,6 +572,7 @@ interface CashierStore {
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<boolean>;
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury?: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
+  deletePartnerTransaction: (tx: { id: string; group_id?: string | null; treasury?: string; partner_name?: string; type?: 'deposit' | 'withdraw'; amount?: number }) => Promise<boolean>;
   savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, direction: 'in' | 'out', source: string, note?: string, dateISO?: string) => Promise<boolean>;
   savingsConvert: (from: string, to: string, amount: number, note?: string, createdAt?: string) => Promise<boolean>;
   recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string, groupId?: string) => Promise<boolean>;
@@ -4079,8 +4080,8 @@ setupRealtime: () => {
       return false;
     }
 
-    // 2) دفتر الشركاء (treasury دايماً 'main')
-    const { data, error } = await supabase.from('partner_transactions').insert({
+    // 2) دفتر الشركاء (treasury دايماً 'main') — نخزّن group_id للربط بصف الدفتر (للحذف/التعديل).
+    const partnerRow: Record<string, unknown> = {
       partner_id: tx.partner_id,
       partner_name: tx.partner_name,
       type: tx.type,
@@ -4088,7 +4089,14 @@ setupRealtime: () => {
       treasury: 'main',
       method,
       note: tx.note || null,
-    }).select().single();
+      group_id: groupId,
+    };
+    let { data, error } = await supabase.from('partner_transactions').insert(partnerRow).select().single();
+    if (error && String(error.message || '').includes('group_id')) {
+      // عمود group_id لسه مش موجود (ما اتشغّلش db/41) — احفظ من غيره (الحذف بالربط مش متاح للصف ده).
+      const { group_id: _omit, ...withoutGroup } = partnerRow;
+      ({ data, error } = await supabase.from('partner_transactions').insert(withoutGroup).select().single());
+    }
     if (error) {
       // تراجع: شيل صف الخزنة الرئيسية عشان ما يفضلش يتيم ويضخّم الرصيد بالغلط.
       await supabase.from('savings_transactions').delete().eq('group_id', groupId);
@@ -4106,6 +4114,30 @@ setupRealtime: () => {
       date: new Date().toISOString(),
     });
     return data ? true : true;
+  },
+
+  // حذف معاملة شريك مع عكس أثرها على الخزنة الرئيسية (يرجّع/يخصم المبلغ تلقائياً).
+  //   المعاملات الجديدة مربوطة بـ group_id → نشيل صف الدفتر المقابل فيرجع الرصيد صح.
+  //   المعاملات القديمة بدون group_id: على 'main' ماكانتش بتترحّل أصلاً (نحذف الصف فقط)،
+  //   وعلى 'shop' القديمة اتعملها مصروف في خزنة الكاشير — منبّه المستخدم يشيله يدوياً.
+  deletePartnerTransaction: async (tx) => {
+    if (tx.group_id) {
+      const { error: sErr } = await supabase.from('savings_transactions').delete().eq('group_id', tx.group_id);
+      if (sErr) { alert('تعذّر عكس حركة الخزنة الرئيسية: ' + sErr.message); return false; }
+    } else if (tx.treasury === 'shop') {
+      alert('⚠️ معاملة قديمة كانت على خزنة الكاشير — تم حذف صف الشريك، لكن راجع مصروف الكاشير المرتبط بها يدوياً من صفحة المالية إن لزم.');
+    }
+    const { error } = await supabase.from('partner_transactions').delete().eq('id', tx.id);
+    if (error) { alert('تعذّر حذف معاملة الشريك: ' + error.message); return false; }
+
+    sendTelegramAlert({
+      type: 'custom_note',
+      actor: getActorName(get()),
+      currency: get().storeSettings.currency,
+      noteText: `حذف معاملة شريك (${tx.type === 'withdraw' ? 'سحب' : 'إيداع'}) — ${tx.partner_name}: ${Number(tx.amount || 0).toFixed(2)} ${get().storeSettings.currency} — تم عكسها من الخزنة الرئيسية`,
+      date: new Date().toISOString(),
+    });
+    return true;
   },
 
   // تحويل بين خزنة المحل والخزنة الرئيسية (كل طريقة بطريقتها). ينعكس على خزنة المحل
