@@ -197,7 +197,7 @@ export default function StockAlerts() {
                     <div key={suggestion.id} className="p-4 rounded-2xl bg-white dark:bg-slate-800 border border-indigo-100 dark:border-indigo-900/30 shadow-sm relative group transition-all hover:border-indigo-300">
                       <div className="flex justify-between items-start mb-2">
                         <h4 className="font-bold text-slate-800 dark:text-white">{suggestion.name}</h4>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex items-center gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                           <button
                             onClick={() => markSuggestionAsPurchased(suggestion.id)}
                             title="تم الشراء"
@@ -260,7 +260,7 @@ export default function StockAlerts() {
                       </div>
                       <button
                         onClick={() => markCashierNoteAsRead(note.id)}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-xs font-bold flex items-center gap-1"
+                        className="opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity p-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-xs font-bold flex items-center gap-1"
                       >
                         <Check size={14} /> مقروء
                       </button>

@@ -1307,7 +1307,7 @@ export default function Finance() {
                       {t.isTransfer ? '↔' : t.isOut ? '-' : '+'}{t.amount.toLocaleString()}
                     </td>
                     <td className="p-6 text-left">
-                       <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                       <div className="flex justify-end gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                           {t.original && <button onClick={() => printTransaction(t)} className="p-2 text-slate-400 hover:text-emerald-600 transition" title="طباعة"><Printer size={16} /></button>}
                           
                           {/* Edit Buttons */}

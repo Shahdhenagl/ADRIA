@@ -32,6 +32,7 @@ import PaymentAccounts from './pages/admin/PaymentAccounts';
 import Reports from './pages/admin/Reports';
 import AdminUsers from './pages/admin/AdminUsers';
 import PublicInvoice from './pages/PublicInvoice';
+import Attendance from './pages/Attendance';
 import { useStore } from './store/useStore';
 
 function ThemeInjector() {
@@ -111,9 +112,12 @@ function ProtectedRoutePOS({ children }: { children: React.ReactNode }) {
 function App() {
   const { loadAll, loadSettingsOnly, loadProductsOnly, isLoading, dbError } = useStore();
   const isPublicInvoiceRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/view-invoice/');
+  // صفحة الحضور عامة ومستقلة (كل الموظفين يستخدمونها بدون تسجيل دخول للنظام).
+  const isAttendanceRoute = typeof window !== 'undefined' && window.location.pathname.startsWith('/attendance');
+  const isStandaloneRoute = isPublicInvoiceRoute || isAttendanceRoute;
 
   useEffect(() => {
-    if (isPublicInvoiceRoute) return;
+    if (isStandaloneRoute) return;
 
     loadAll();
 
@@ -127,9 +131,9 @@ function App() {
     };
     return () => channel.close();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isPublicInvoiceRoute]);
+  }, [isStandaloneRoute]);
 
-  if (isLoading && !isPublicInvoiceRoute) {
+  if (isLoading && !isStandaloneRoute) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-4">
         <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
@@ -138,7 +142,7 @@ function App() {
     );
   }
 
-  if (dbError && !isPublicInvoiceRoute) {
+  if (dbError && !isStandaloneRoute) {
     return (
       <div className="h-screen flex flex-col items-center justify-center bg-red-50 gap-4 p-8 text-center">
         <div className="text-5xl">⚠️</div>
@@ -204,6 +208,7 @@ function App() {
             <Route path="users" element={<AdminUsers />} />
           </Route>
           <Route path="/view-invoice/:id" element={<PublicInvoice />} />
+          <Route path="/attendance" element={<Attendance />} />
         </Routes>
       </Router>
     </>

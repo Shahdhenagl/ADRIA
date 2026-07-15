@@ -780,7 +780,7 @@ export default function Suppliers() {
                     <div className="w-14 h-14 rounded-2xl bg-slate-50 flex items-center justify-center border border-slate-100 shadow-inner">
                       <Users size={28} style={{ color: tc }} />
                     </div>
-                    <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                       <button
                         onClick={() => { setSelectedSupplierProfile(supplier); setShowSupplierProfile(true); }}
                         className="p-2 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 transition"
@@ -891,14 +891,14 @@ export default function Suppliers() {
                           setAutoOpenRow(null);
                           setShowInvoiceModal(true);
                         }}
-                        className="p-3 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-100 transition shadow-sm opacity-0 group-hover:opacity-100"
+                        className="p-3 bg-blue-50 text-blue-600 rounded-2xl hover:bg-blue-100 transition shadow-sm opacity-100 md:opacity-0 md:group-hover:opacity-100"
                         title="تعديل الفاتورة"
                       >
                         <Edit2 size={20} />
                       </button>
                       <button
                         onClick={() => printPurchaseInvoice(inv)}
-                        className="p-3 bg-slate-50 text-slate-600 rounded-2xl hover:bg-slate-100 transition shadow-sm opacity-0 group-hover:opacity-100"
+                        className="p-3 bg-slate-50 text-slate-600 rounded-2xl hover:bg-slate-100 transition shadow-sm opacity-100 md:opacity-0 md:group-hover:opacity-100"
                         title="طباعة الفاتورة"
                       >
                         <Printer size={20} />

@@ -369,6 +369,7 @@ export interface Employee {
   created_at: string;
   cashier_id?: string; // ربط الموظف بحساب الكاشير
   commission_rate?: number; // نسبة عمولة المبيعات % (للمحاسبين)
+  attendance_pin?: string | null; // الرقم السري لتسجيل الحضور الذاتي من صفحة /attendance
 }
 
 export interface EmployeeTransaction {
@@ -407,6 +408,7 @@ export interface EmployeeAttendance {
   employee_id: string;
   date: string; // YYYY-MM-DD
   check_in: string; // ISO timestamp للحضور الفعلي
+  check_out?: string | null; // ISO timestamp للانصراف (تسجيل ذاتي)
   shift_start?: string; // 'HH:MM' المتوقع وقت التسجيل
   late_minutes: number; // دقائق التأخير (بعد خصم السماح)
   deduction_amount: number; // خصم التأخير من الراتب

@@ -2988,7 +2988,7 @@ export default function POS() {
         <div className="relative group bg-slate-50/50 dark:bg-slate-800/20 border-b border-gray-100 dark:border-slate-800">
           <button 
             onClick={() => scrollCategories('right')}
-            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 dark:bg-slate-800/90 shadow-md p-2 rounded-l-xl border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 dark:bg-slate-800/90 shadow-md p-2 rounded-l-xl border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
           >
             <ChevronRight size={20} className="text-gray-600 dark:text-gray-300" />
           </button>
@@ -3021,7 +3021,7 @@ export default function POS() {
 
           <button 
             onClick={() => scrollCategories('left')}
-            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 dark:bg-slate-800/90 shadow-md p-2 rounded-r-xl border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="absolute left-0 top-1/2 -translate-y-1/2 z-10 bg-white/90 dark:bg-slate-800/90 shadow-md p-2 rounded-r-xl border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-700 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity"
           >
             <ChevronLeft size={20} className="text-gray-600 dark:text-gray-300" />
           </button>

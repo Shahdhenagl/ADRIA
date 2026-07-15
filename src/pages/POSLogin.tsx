@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ShieldCheck, ArrowRight } from 'lucide-react';
+import { ShieldCheck, ArrowRight, Clock } from 'lucide-react';
 import { useStore } from '../store/useStore';
 
 export default function POSLogin() {
@@ -94,7 +94,17 @@ export default function POSLogin() {
             </button>
           </form>
 
-          <div className="mt-10 pt-8 border-t border-slate-50 dark:border-slate-800 text-center">
+          <div className="mt-8 text-center">
+             <button
+               onClick={() => navigate('/attendance')}
+               className="w-full flex items-center justify-center gap-2 bg-slate-50 dark:bg-slate-800/50 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-300 font-black py-3.5 px-6 rounded-2xl border-2 border-slate-100 dark:border-slate-800 transition-all"
+             >
+               <Clock size={18} />
+               <span>تسجيل الحضور والانصراف</span>
+             </button>
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-slate-50 dark:border-slate-800 text-center">
              <button onClick={() => navigate('/login')} className="text-slate-400 hover:text-indigo-600 text-xs font-black transition-colors">
                الدخول لوحة التحكم (للمديرين فقط)
              </button>

@@ -4,7 +4,7 @@ import { useStore, type Employee, type EmployeeTransaction, type EmployeeLeave }
 import {
   Users, Plus, Trash2, Edit3, Search, X,
   Wallet, Landmark, CreditCard, Zap, Phone,
-  DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn
+  DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn, ShieldCheck
 } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 import { markMainTreasuryNote } from '../../utils/treasury';
@@ -93,7 +93,8 @@ export default function Employees() {
     shift_end: '',
     late_grace_minutes: '0',
     hire_date: new Date().toISOString().slice(0, 10),
-    is_active: true
+    is_active: true,
+    attendance_pin: ''
   });
 
   const [transFormData, setTransFormData] = useState<Record<string, string>>({
@@ -365,35 +366,73 @@ export default function Employees() {
     return leaves.sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime());
   }, [profileEmployee, employeeLeaves, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
+  // سجل الحضور يوماً بيوم: كل يوم إمّا «حاضر» (بسجل حضور/انصراف وتأخير) أو «إجازة»
+  // (يوم مُجاز) أو «غائب» (لا يوجد تسجيل). الأيام قبل التعيين أو بعد اليوم تُستبعَد.
   const profileAttendance = useMemo(() => {
-    if (!profileEmployee) return [];
-    let att = employeeAttendance.filter(a => a.employee_id === profileEmployee.id);
-    if (profileTimeFilter === 'month') {
-      const currentMonth = new Date().toISOString().slice(0, 7);
-      att = att.filter(a => a.month === currentMonth || a.date.startsWith(currentMonth));
-    } else if (profileTimeFilter === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      att = att.filter(a => new Date(a.date) >= sevenDaysAgo);
+    const empty = { days: [] as any[], records: [] as any[], present: 0, absent: 0, leave: 0, lateDays: 0, lateMinutes: 0, attDeductions: 0 };
+    if (!profileEmployee) return empty;
+    const todayStr = formatDateInput(new Date());
+    const hireStr = profileEmployee.hire_date || profileEmployee.created_at?.slice(0, 10) || '2000-01-01';
+
+    let start: string, end: string;
+    if (profileTimeFilter === 'week') {
+      const s = new Date(); s.setDate(s.getDate() - 6);
+      start = formatDateInput(s); end = todayStr;
+    } else if (profileTimeFilter === 'month') {
+      start = `${todayStr.slice(0, 7)}-01`; end = todayStr;
     } else if (profileTimeFilter === 'custom_month') {
-      att = att.filter(a => a.month === profileCustomMonth || a.date.startsWith(profileCustomMonth));
+      const [y, m] = profileCustomMonth.split('-').map(Number);
+      const last = new Date(y, m, 0).getDate();
+      start = `${profileCustomMonth}-01`;
+      end = `${profileCustomMonth}-${String(last).padStart(2, '0')}`;
     } else if (profileTimeFilter === 'custom_year') {
-      att = att.filter(a => (a.month || '').startsWith(profileCustomYear) || a.date.startsWith(profileCustomYear));
+      start = `${profileCustomYear}-01-01`; end = `${profileCustomYear}-12-31`;
+    } else {
+      start = hireStr; end = todayStr;
     }
-    return att.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [profileEmployee, employeeAttendance, profileTimeFilter, profileCustomMonth, profileCustomYear]);
+    if (start < hireStr) start = hireStr;
+    if (end > todayStr) end = todayStr;
+
+    const rows = employeeAttendance.filter(a => a.employee_id === profileEmployee.id);
+    const rowByDate = new Map(rows.map(r => [r.date, r]));
+    const leaves = employeeLeaves.filter(l => l.employee_id === profileEmployee.id);
+    const isLeaveDay = (d: string) => leaves.some(l => d >= l.start_date && d <= l.end_date);
+
+    const days: any[] = [];
+    let present = 0, absent = 0, leave = 0, lateDays = 0, lateMinutes = 0, attDeductions = 0;
+    let cursor = new Date(`${start}T00:00:00`);
+    const endDate = new Date(`${end}T00:00:00`);
+    let guard = 0;
+    while (cursor <= endDate && guard < 400) {
+      guard++;
+      const d = formatDateInput(cursor);
+      const record = rowByDate.get(d);
+      let status: 'present' | 'absent' | 'leave';
+      if (record) {
+        status = 'present'; present++;
+        lateMinutes += Number(record.late_minutes || 0);
+        if (Number(record.late_minutes || 0) > 0) lateDays++;
+        attDeductions += Number(record.deduction_amount || 0);
+      } else if (isLeaveDay(d)) { status = 'leave'; leave++; }
+      else { status = 'absent'; absent++; }
+      days.push({ date: d, record: record || null, status });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    days.reverse();
+    return { days, records: rows, present, absent, leave, lateDays, lateMinutes, attDeductions };
+  }, [profileEmployee, employeeAttendance, employeeLeaves, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
   const profileStats = useMemo(() => {
     if (!profileEmployee) return { advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDays: 0, lateDays: 0, lateMinutes: 0 };
-    const attDeductions = profileAttendance.reduce((s, a) => s + (a.deduction_amount || 0), 0);
+    const attDeductions = profileAttendance.attDeductions;
     return {
       advances: profileTransactions.filter(t => t.type === 'advance').reduce((s, t: any) => s + t.amount, 0),
       paidSalary: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + t.amount, 0),
       deductions: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + (t.deductions || 0), 0) + profileLeaves.filter(l => l.leave_type === 'unpaid').reduce((s, l) => s + (l.deduction_amount || 0), 0) + attDeductions,
       incentives: profileTransactions.filter(t => t.type === 'incentive').reduce((s, t: any) => s + t.amount, 0),
       leaveDays: profileLeaves.reduce((s, l) => s + (l.days_count || 0), 0),
-      lateDays: profileAttendance.filter(a => (a.late_minutes || 0) > 0).length,
-      lateMinutes: profileAttendance.reduce((s, a) => s + (a.late_minutes || 0), 0)
+      lateDays: profileAttendance.lateDays,
+      lateMinutes: profileAttendance.lateMinutes
     };
   }, [profileTransactions, profileLeaves, profileAttendance, profileEmployee]);
 
@@ -414,11 +453,12 @@ export default function Employees() {
         shift_end: (emp.shift_end || '').slice(0, 5),
         late_grace_minutes: String(Number(emp.late_grace_minutes ?? 0)),
         hire_date: emp.hire_date || emp.created_at?.slice(0, 10) || today,
-        is_active: emp.is_active ?? true
+        is_active: emp.is_active ?? true,
+        attendance_pin: emp.attendance_pin || ''
       });
     } else {
       setEditingEmployee(null);
-      setEmpFormData({ name: '', phone: '', job_title: '', working_hours: '', monthly_salary: '', monthly_leave_days: String(DEFAULT_MONTHLY_LEAVE), shift_start: '', shift_end: '', late_grace_minutes: '0', hire_date: today, is_active: true });
+      setEmpFormData({ name: '', phone: '', job_title: '', working_hours: '', monthly_salary: '', monthly_leave_days: String(DEFAULT_MONTHLY_LEAVE), shift_start: '', shift_end: '', late_grace_minutes: '0', hire_date: today, is_active: true, attendance_pin: '' });
     }
     setShowEmpModal(true);
   };
@@ -438,7 +478,8 @@ export default function Employees() {
       shift_end: empFormData.shift_end || null,
       late_grace_minutes: parseFloat(empFormData.late_grace_minutes) || 0,
       hire_date: empFormData.hire_date || today,
-      is_active: empFormData.is_active
+      is_active: empFormData.is_active,
+      attendance_pin: empFormData.attendance_pin.trim() || null
     };
 
     if (editingEmployee) {
@@ -988,47 +1029,72 @@ export default function Employees() {
                 <Clock size={20} className="text-indigo-500" />
                 سجل الحضور والتأخير
               </h3>
-              <div className="flex items-center gap-4 text-xs font-bold">
-                <span className="text-slate-400">أيام تأخير: <span className="text-red-500">{profileStats.lateDays}</span></span>
-                <span className="text-slate-400">إجمالي التأخير: <span className="text-red-500">{profileStats.lateMinutes} دقيقة</span></span>
+              <div className="flex items-center gap-2 text-[11px] font-black flex-wrap">
+                <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">حضور: {profileAttendance.present}</span>
+                <span className="px-3 py-1.5 rounded-lg bg-sky-50 text-sky-600 border border-sky-100">إجازة: {profileAttendance.leave}</span>
+                <span className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 border border-red-100">غياب: {profileAttendance.absent}</span>
+                <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-600 border border-amber-100">تأخير: {profileStats.lateDays} يوم / {profileStats.lateMinutes} د</span>
               </div>
             </div>
-            <div className="overflow-x-auto">
+            <div className="overflow-x-auto max-h-[440px] overflow-y-auto">
               <table className="w-full text-right">
-                <thead>
+                <thead className="sticky top-0 bg-white z-10">
                   <tr className="bg-white text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-slate-100">
-                    <th className="p-6">التاريخ</th>
-                    <th className="p-6">وقت الحضور</th>
-                    <th className="p-6">بداية الدوام</th>
-                    <th className="p-6">التأخير</th>
-                    <th className="p-6">الخصم</th>
-                    <th className="p-6 text-left">إجراءات</th>
+                    <th className="p-5">اليوم</th>
+                    <th className="p-5">التاريخ</th>
+                    <th className="p-5">الحضور</th>
+                    <th className="p-5">الانصراف</th>
+                    <th className="p-5">التأخير</th>
+                    <th className="p-5">الخصم</th>
+                    <th className="p-5">الحالة</th>
+                    <th className="p-5 text-left">إجراءات</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-50">
-                  {profileAttendance.map((a) => (
-                    <tr key={a.id} className="hover:bg-slate-50/50 transition-colors">
-                      <td className="p-6 text-slate-500 font-bold">{a.date}</td>
-                      <td className="p-6 text-slate-800 font-black">{new Date(a.check_in).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</td>
-                      <td className="p-6 text-slate-500 font-bold">{(a.shift_start || '-').slice(0, 5)}</td>
-                      <td className="p-6">
-                        {a.late_minutes > 0
-                          ? <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-red-50 text-red-600 border border-red-100">{a.late_minutes} دقيقة</span>
-                          : <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-100">في الميعاد</span>}
-                      </td>
-                      <td className="p-6 font-black text-red-600">{a.deduction_amount > 0 ? `${a.deduction_amount.toLocaleString()} ${storeSettings.currency}` : '-'}</td>
-                      <td className="p-6">
-                        <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => handleDeleteAttendance(a.id)} className="p-2 text-slate-400 hover:text-red-500 transition" title="حذف">
-                            <Trash2 size={16} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                  {profileAttendance.length === 0 && (
+                  {profileAttendance.days.map((d) => {
+                    const rec = d.record;
+                    const dayName = new Date(`${d.date}T00:00:00`).toLocaleDateString('ar-EG', { weekday: 'long' });
+                    const fmt = (v: string | null) => v
+                      ? new Date(v).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })
+                      : '—';
+                    return (
+                      <tr key={d.date} className="hover:bg-slate-50/50 transition-colors">
+                        <td className="p-5 text-slate-500 font-bold">{dayName}</td>
+                        <td className="p-5 text-slate-400 text-xs font-bold tabular-nums">{d.date}</td>
+                        <td className="p-5 text-emerald-600 font-black tabular-nums">{rec ? fmt(rec.check_in) : '—'}</td>
+                        <td className="p-5 text-rose-600 font-black tabular-nums">{rec ? fmt(rec.check_out || null) : '—'}</td>
+                        <td className="p-5">
+                          {rec && rec.late_minutes > 0
+                            ? <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-red-50 text-red-600 border border-red-100">{rec.late_minutes} دقيقة</span>
+                            : rec
+                              ? <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-100">في الميعاد</span>
+                              : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="p-5 font-black text-red-600">{rec && rec.deduction_amount > 0 ? `${rec.deduction_amount.toLocaleString()} ${storeSettings.currency}` : '-'}</td>
+                        <td className="p-5">
+                          <span className={`px-2.5 py-1 rounded-lg font-black text-[10px] border ${
+                            d.status === 'present' ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
+                            : d.status === 'leave' ? 'bg-sky-50 text-sky-600 border-sky-100'
+                            : 'bg-red-50 text-red-600 border-red-100'
+                          }`}>
+                            {d.status === 'present' ? 'حاضر' : d.status === 'leave' ? 'إجازة' : 'غائب'}
+                          </span>
+                        </td>
+                        <td className="p-5">
+                          <div className="flex items-center justify-end gap-2">
+                            {rec && (
+                              <button onClick={() => handleDeleteAttendance(rec.id)} className="p-2 text-slate-400 hover:text-red-500 transition" title="حذف">
+                                <Trash2 size={16} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {profileAttendance.days.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-12 text-center text-slate-400 font-bold">لا يوجد تسجيل حضور في هذه الفترة</td>
+                      <td colSpan={8} className="py-12 text-center text-slate-400 font-bold">لا توجد أيام في هذه الفترة</td>
                     </tr>
                   )}
                 </tbody>
@@ -1073,7 +1139,7 @@ export default function Employees() {
                       {isActive ? 'نشط' : 'غير نشط'}
                     </span>
                   </div>
-                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition-opacity">
                     <button onClick={() => handleOpenEmpModal(emp)} className="p-2 text-slate-400 hover:text-indigo-600 transition"><Edit3 size={18} /></button>
                     <button
                       onClick={() => handleToggleEmployeeActive(emp)}
@@ -1364,8 +1430,23 @@ export default function Employees() {
                     />
                   </div>
                 </div>
-                <p className="text-[10px] text-slate-400">التأخير = وقت الحضور − بداية الدوام − دقائق السماح، ويُخصم من الراتب بالتناسب مع طول يوم العمل.</p>
+                <p className="text-[10px] text-slate-400">التأخير = وقت الحضور − بداية الدوام − دقائق السماح, ويُخصم من الراتب بالتناسب مع طول يوم العمل.</p>
               </div>
+
+              <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4 space-y-2">
+                <label className="text-sm font-black text-indigo-700 flex items-center gap-2"><ShieldCheck size={16} /> الرقم السري لتسجيل الحضور الذاتي</label>
+                <input
+                  type="text"
+                  dir="ltr"
+                  inputMode="numeric"
+                  className="w-full bg-white border border-slate-200 rounded-xl p-3.5 outline-none font-black text-center text-xl tracking-widest"
+                  value={empFormData.attendance_pin}
+                  onChange={e => setEmpFormData({...empFormData, attendance_pin: e.target.value})}
+                  placeholder="مثال: 1234"
+                />
+                <p className="text-[10px] text-slate-500">يستخدمه الموظف في صفحة تسجيل الحضور <span className="font-mono text-indigo-500">/attendance</span> — اتركه فارغاً لتعطيل التسجيل الذاتي له.</p>
+              </div>
+
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">حالة الموظف</label>
                 <div className="grid grid-cols-2 gap-3">
