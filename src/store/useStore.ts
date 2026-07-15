@@ -571,7 +571,7 @@ interface CashierStore {
   // Expenses
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<boolean>;
-  recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
+  recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury?: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
   savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, direction: 'in' | 'out', source: string, note?: string, dateISO?: string) => Promise<boolean>;
   savingsConvert: (from: string, to: string, amount: number, note?: string, createdAt?: string) => Promise<boolean>;
   recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string, groupId?: string) => Promise<boolean>;
@@ -4056,51 +4056,51 @@ setupRealtime: () => {
 
   // معاملة شريك (إيداع/سحب). على خزنة المحل تنعكس في الخزنة كمصروف/إيراد؛ على الخزنة
   // الأساسية تُسجَّل في دفتر الشركاء فقط. لا تُحذف.
+  // معاملات الشركاء (إيداع/سحب) تتم على «الخزنة الرئيسية» فقط — لا تمسّ خزنة الكاشير إطلاقاً.
+  //   سحب شريك  → خروج من الخزنة الرئيسية (direction 'out')
+  //   إيداع شريك → دخول للخزنة الرئيسية (direction 'in')
+  // تُسجَّل في دفتر الخزنة الرئيسية (savings_transactions) عشان الرصيد يتحرّك صح،
+  // ويتربط صف الشريك بصف الدفتر بـ group_id للحذف/التراجع المتّسق.
   recordPartnerTransaction: async (tx) => {
-    if (tx.treasury === 'shop' && !(await ensureAccountingDayOpen(get(), new Date()))) return false;
     const amount = Math.abs(Number(tx.amount) || 0);
     if (amount <= 0) return false;
     const method = tx.method || 'cash';
-    const split = {
-      cash: method === 'cash' ? amount : 0,
-      visa: method === 'visa' ? amount : 0,
-      wallet: method === 'wallet' ? amount : 0,
-      instapay: method === 'instapay' ? amount : 0,
-      method5: method === 'method5' ? amount : 0,
-      method6: method === 'method6' ? amount : 0,
-    };
+    const groupId = newGroupId();
+
+    // 1) دفتر الخزنة الرئيسية أولاً — لو فشل الإدراج ما نسجّلش معاملة الشريك (نتفادى اختلال الحسابات).
+    const direction = tx.type === 'withdraw' ? 'out' : 'in';
+    const savingsNote = `${tx.type === 'withdraw' ? 'سحب شريك' : 'إيداع شريك'}: ${tx.partner_name}${tx.note ? ` — ${tx.note}` : ''}`;
+    const { error: sErr } = await supabase.from('savings_transactions').insert([{
+      direction, amount, method, source: 'partner', note: savingsNote, group_id: groupId,
+    }]);
+    if (sErr) {
+      console.error('recordPartnerTransaction savings insert error:', sErr);
+      alert('تعذّر تسجيل الحركة في الخزنة الرئيسية' + (String(sErr.message || '').includes('group_id') ? ' — شغّلي db/39_savings_group_id.sql أولاً.' : ': ' + sErr.message));
+      return false;
+    }
+
+    // 2) دفتر الشركاء (treasury دايماً 'main')
     const { data, error } = await supabase.from('partner_transactions').insert({
       partner_id: tx.partner_id,
       partner_name: tx.partner_name,
       type: tx.type,
       amount,
-      treasury: tx.treasury,
+      treasury: 'main',
       method,
       note: tx.note || null,
     }).select().single();
-    if (error) { alert('فشل حفظ معاملة الشريك: ' + error.message); return false; }
-
-    // انعكاس على خزنة المحل فقط
-    if (tx.treasury === 'shop') {
-      if (tx.type === 'withdraw') {
-        await get().addExpense({
-          category: 'سحب شريك', amount, note: `سحب الشريك: ${tx.partner_name}`,
-          payment_method: method, paid_cash: split.cash, paid_visa: split.visa, paid_wallet: split.wallet, paid_instapay: split.instapay, paid_method5: split.method5 || 0, paid_method6: split.method6 || 0,
-        } as Omit<Expense, 'id' | 'date'>);
-      } else {
-        // إيداع = إيراد للخزنة (مبلغ سالب في المصروفات)
-        await get().addExpense({
-          category: 'إيداع شريك', amount: -amount, note: `إيداع الشريك: ${tx.partner_name}`,
-          payment_method: method, paid_cash: split.cash, paid_visa: split.visa, paid_wallet: split.wallet, paid_instapay: split.instapay, paid_method5: split.method5 || 0, paid_method6: split.method6 || 0,
-        } as Omit<Expense, 'id' | 'date'>);
-      }
+    if (error) {
+      // تراجع: شيل صف الخزنة الرئيسية عشان ما يفضلش يتيم ويضخّم الرصيد بالغلط.
+      await supabase.from('savings_transactions').delete().eq('group_id', groupId);
+      alert('فشل حفظ معاملة الشريك: ' + error.message);
+      return false;
     }
 
     sendTelegramAlert({
       type: tx.type === 'withdraw' ? 'partner_withdraw' : 'partner_deposit',
       actor: getActorName(get()),
       currency: get().storeSettings.currency,
-      description: `${tx.type === 'withdraw' ? 'سحب' : 'إيداع'} للشريك ${tx.partner_name} — ${tx.treasury === 'shop' ? 'خزنة المحل' : 'الخزنة الأساسية'}`,
+      description: `${tx.type === 'withdraw' ? 'سحب' : 'إيداع'} للشريك ${tx.partner_name} — الخزنة الرئيسية`,
       amount,
       paymentMethod: method,
       date: new Date().toISOString(),

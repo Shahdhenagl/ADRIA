@@ -28,7 +28,6 @@ export default function Partners() {
   const [txPartner, setTxPartner] = useState('');
   const [txType, setTxType] = useState<'deposit' | 'withdraw'>('deposit');
   const [txAmount, setTxAmount] = useState('');
-  const [txTreasury, setTxTreasury] = useState('shop');
   const [txMethod, setTxMethod] = useState('cash');
   const [txNote, setTxNote] = useState('');
   const [saving, setSaving] = useState(false);
@@ -88,7 +87,7 @@ export default function Partners() {
     const amt = Number(txAmount) || 0;
     if (amt <= 0) { alert('أدخل مبلغاً صحيحاً'); return; }
     setSaving(true);
-    const ok = await recordPartnerTransaction({ partner_id: partner.id, partner_name: partner.name, type: txType, amount: amt, treasury: txTreasury as any, method: txMethod, note: txNote.trim() });
+    const ok = await recordPartnerTransaction({ partner_id: partner.id, partner_name: partner.name, type: txType, amount: amt, treasury: 'main', method: txMethod, note: txNote.trim() });
     setSaving(false);
     if (ok) { alert('تم تسجيل المعاملة ✅'); setTxAmount(''); setTxNote(''); load(); }
   };
@@ -118,13 +117,12 @@ export default function Partners() {
             <button onClick={() => setTxType('deposit')} className={`py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1 ${txType === 'deposit' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}><ArrowDownCircle size={16} /> إيداع</button>
             <button onClick={() => setTxType('withdraw')} className={`py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1 ${txType === 'withdraw' ? 'bg-red-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}><ArrowUpCircle size={16} /> سحب</button>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div><label className="text-[11px] font-bold text-slate-500">المبلغ</label><input className={input} type="number" placeholder="0" value={txAmount} onChange={(e) => setTxAmount(e.target.value)} /></div>
-            <div><label className="text-[11px] font-bold text-slate-500">الخزنة</label><select className={input} value={txTreasury} onChange={(e) => setTxTreasury(e.target.value)}>{TREASURIES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}</select></div>
             <div><label className="text-[11px] font-bold text-slate-500">الطريقة</label><select className={input} value={txMethod} onChange={(e) => setTxMethod(e.target.value)}>{METHODS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}</select></div>
             <div><label className="text-[11px] font-bold text-slate-500">ملاحظة</label><input className={input} value={txNote} onChange={(e) => setTxNote(e.target.value)} placeholder="اختياري" /></div>
           </div>
-          <p className="text-[11px] text-slate-400">على «خزنة المحل» تتأثر خزنة النظام (إيراد/مصروف)؛ على «الخزنة الأساسية» تُسجَّل في دفتر الشركاء فقط.</p>
+          <p className="text-[11px] text-slate-400">كل معاملات الشركاء (إيداع/سحب) تتم على <span className="font-black text-indigo-600">الخزنة الرئيسية</span> فقط — لا تؤثر على خزنة الكاشير. السحب يخصم من رصيد الرئيسية والإيداع يضيف له.</p>
           <button onClick={submitTx} disabled={saving} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black py-3 rounded-xl">{saving ? 'جاري...' : 'تسجيل المعاملة'}</button>
         </div>
 

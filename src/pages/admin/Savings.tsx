@@ -451,10 +451,10 @@ export default function Savings() {
                   return (
                     <tr key={t.id} className="border-b border-slate-100 dark:border-slate-700/50">
                       <td className="p-2">{new Date(t.created_at).toLocaleString('ar-EG')}</td>
-                      <td className="p-2 font-bold"><span className={directionColor}>{t.source === 'convert' ? (t.direction === 'in' ? 'دخول (تحويل بين الطرق)' : 'خروج (تحويل بين الطرق)') : t.source === 'main_income' ? 'إيراد للرئيسية' : t.source === 'main_expense' ? 'مصروف من الرئيسية' : t.direction === 'in' ? 'إيداع للرئيسية' : 'سحب للمحل'}</span></td>
+                      <td className="p-2 font-bold"><span className={directionColor}>{t.source === 'convert' ? (t.direction === 'in' ? 'دخول (تحويل بين الطرق)' : 'خروج (تحويل بين الطرق)') : t.source === 'partner' ? (t.direction === 'in' ? 'إيداع شريك' : 'سحب شريك') : t.source === 'main_income' ? 'إيراد للرئيسية' : t.source === 'main_expense' ? 'مصروف من الرئيسية' : t.direction === 'in' ? 'إيداع للرئيسية' : 'سحب للمحل'}</span></td>
                       <td className={`p-2 font-black ${directionColor}`}>{t.direction === 'in' ? '+' : '−'}{Number(t.amount).toFixed(2)} {cur}</td>
                       <td className="p-2">{METHODS.find((m) => m.key === t.method)?.label || t.method}</td>
-                      <td className="p-2 text-xs text-slate-500">{t.source === 'day_closing' ? 'تقفيل اليوم' : t.source === 'shop_transfer' ? 'تحويل من المحل' : t.source === 'to_shop' ? 'تحويل للمحل' : t.source === 'convert' ? 'تحويل بين الطرق' : (t.source === 'main_income' || t.source === 'main_expense') ? 'معاملة مالية' : 'يدوي'}</td>
+                      <td className="p-2 text-xs text-slate-500">{t.source === 'day_closing' ? 'تقفيل اليوم' : t.source === 'shop_transfer' ? 'تحويل من المحل' : t.source === 'to_shop' ? 'تحويل للمحل' : t.source === 'convert' ? 'تحويل بين الطرق' : t.source === 'partner' ? 'شركاء' : (t.source === 'main_income' || t.source === 'main_expense') ? 'معاملة مالية' : 'يدوي'}</td>
                       <td className="p-2 text-slate-600 dark:text-slate-300">{t.note || '-'}</td>
                       <td className="p-2 text-center">
                         {t.source === 'day_closing' ? (
