@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useStore, type Product } from '../store/useStore';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
 import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, Clock, PauseCircle, Undo2 } from 'lucide-react';
-import { Html5Qrcode } from 'html5-qrcode';
+import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { printBarcodeLabels, generateBarcode } from '../utils/printBarcodeLabels';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, totalOpeningBalance } from '../utils/paymentMethods';
@@ -335,6 +335,8 @@ export default function POS() {
   const [scannedProduct, setScannedProduct] = useState<any>(null);
   const [scanQty, setScanQty] = useState(1);
   const [html5QrCode, setHtml5QrCode] = useState<Html5Qrcode | null>(null);
+  const [torchOn, setTorchOn] = useState(false);
+  const [torchSupported, setTorchSupported] = useState(false);
 
   const playSuccessSound = () => {
     try {
@@ -982,11 +984,57 @@ export default function POS() {
     let scanner: Html5Qrcode | null = null;
     
     if (showCameraScanner && !html5QrCode) {
-      scanner = new Html5Qrcode("reader");
+      // المكتبة بتجرّب كل الـ 17 فورمات في كل فريم لو مش محددين — منهم فورمات
+      // تقيلة (PDF417 / Aztec / DataMatrix / MaxiCode) عمرها ما هتتحط على منتج.
+      // بنحصرها في باركود المنتجات + QR بس، فكل فريم بيخلص أسرع بكتير.
+      scanner = new Html5Qrcode("reader", {
+        formatsToSupport: [
+          Html5QrcodeSupportedFormats.EAN_13,
+          Html5QrcodeSupportedFormats.EAN_8,
+          Html5QrcodeSupportedFormats.UPC_A,
+          Html5QrcodeSupportedFormats.UPC_E,
+          Html5QrcodeSupportedFormats.CODE_128,
+          Html5QrcodeSupportedFormats.CODE_39,
+          Html5QrcodeSupportedFormats.ITF,
+          Html5QrcodeSupportedFormats.QR_CODE,
+        ],
+        useBarCodeDetectorIfSupported: true,
+        verbose: false,
+      });
       setHtml5QrCode(scanner);
       scanner.start(
         { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
+        {
+          fps: 15,
+          // مقاس qrbox هو نفسه مقاس الكانفس اللي الديكودر بيشوفه (المكتبة
+          // بتصغّر عليه في drawImage)، يعني العرض هنا = عدد البكسلات اللي
+          // بتقع على خطوط الباركود. الشباك المربع 250×250 القديم كان بيضيّع
+          // العرض ويحجز طول مش محتاجينه (الباركود مستطيل عريض). العريض بيدي
+          // بكسلات أفقية أكتر على الخطوط، ومساحة أقل تتفك في كل فريم.
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => ({
+            width: Math.floor(viewfinderWidth * 0.9),
+            height: Math.floor(Math.min(viewfinderHeight * 0.45, Math.max(viewfinderHeight * 0.3, 140))),
+          }),
+          // الباركود مش بيتقرا معكوس، فتجربة الصورة المقلوبة شغل ضايع.
+          disableFlip: true,
+          // مهم: لما videoConstraints تتحدد، المكتبة بتتجاهل الـ facingMode
+          // اللي فوق خالص وتستخدم دي بدالها — فلازم تشيل facingMode بنفسها.
+          videoConstraints: {
+            facingMode: "environment",
+            // المكتبة بتصغّر المنطقة المقصوصة لحد مقاس qrbox قبل ما تفكّها
+            // (drawImage في foreverScan)، فالدقة الأعلى من 720p بتترمي تقريباً
+            // وبتتعب الموبايلات الرخيصة على الفاضي. 720p بتدي صورة أنضف من
+            // الـ 640×480 الافتراضية من غير التكلفة دي. ideal مش exact عشان
+            // الكاميرا تنزل لأقل دقة متاحة بدل ما تفشل.
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+            // التركيز المستمر — من غيره الكاميرا بتفضل سايبة الباركود مش واضح،
+            // ودي غالباً السبب الأكبر في إن المسح بياخد وقت.
+            // focusMode مدعوم في المتصفحات لكنه مش موجود في تعريفات TypeScript،
+            // والمتصفح بيتجاهل اللي مش فاهمه جوه advanced من غير ما يفشل.
+            advanced: [{ focusMode: "continuous" }],
+          } as unknown as MediaTrackConstraints,
+        },
         (decodedText: string) => {
           if (scanner && scanner.getState() === 2) { // 2 = SCANNING
             scanner.pause();
@@ -1007,7 +1055,15 @@ export default function POS() {
         (_error: any) => {
           // ignore continuous scan errors
         }
-      ).catch((err: any) => {
+      ).then(() => {
+        // الكشّاف مش موجود على كل الأجهزة (ولا على أي كاميرا أمامية) —
+        // بنسأل بعد ما الكاميرا تشتغل وبنظهر الزرار لو متاح بس.
+        try {
+          setTorchSupported(scanner?.getRunningTrackCameraCapabilities().torchFeature().isSupported() ?? false);
+        } catch {
+          setTorchSupported(false);
+        }
+      }).catch((err: any) => {
         console.error(err);
         alert('حدث خطأ في تشغيل الكاميرا، تأكد من إعطاء الصلاحيات.');
         setShowCameraScanner(false);
@@ -1019,6 +1075,19 @@ export default function POS() {
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showCameraScanner]);
+
+  const handleToggleTorch = async () => {
+    if (!html5QrCode) return;
+    try {
+      const torch = html5QrCode.getRunningTrackCameraCapabilities().torchFeature();
+      if (!torch.isSupported()) return;
+      await torch.apply(!torchOn);
+      setTorchOn(!torchOn);
+    } catch (err) {
+      console.error('Torch toggle failed:', err);
+      setTorchSupported(false);
+    }
+  };
 
   const handleConfirmScanAdd = () => {
     if (scannedProduct) {
@@ -1040,6 +1109,10 @@ export default function POS() {
   };
 
   const handleCloseCamera = () => {
+    // الكشّاف بيتقفل مع الكاميرا، فلازم الحالة ترجع صفر عشان لما يفتح تاني
+    // الزرار ما يبقاش مولّع وهو مطفي.
+    setTorchOn(false);
+    setTorchSupported(false);
     if (html5QrCode) {
       if (html5QrCode.getState() === 2 || html5QrCode.getState() === 3) {
         html5QrCode.stop().then(() => {
@@ -3656,10 +3729,26 @@ export default function POS() {
         <div className="fixed inset-0 bg-black z-[200] flex flex-col">
           <div className="flex justify-between items-center p-4 bg-black text-white">
             <h3 className="font-bold flex items-center gap-2"><Camera size={20} /> مسح الباركود بالكاميرا</h3>
-            <button onClick={handleCloseCamera} className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition-colors"><X size={20} /></button>
+            <div className="flex items-center gap-2">
+              {torchSupported && (
+                <button
+                  onClick={handleToggleTorch}
+                  title={torchOn ? 'إطفاء الكشّاف' : 'تشغيل الكشّاف'}
+                  className={`p-2 rounded-full transition-colors ${torchOn ? 'bg-amber-400 text-black' : 'bg-white/20 hover:bg-white/30'}`}
+                >
+                  <Zap size={20} fill={torchOn ? 'currentColor' : 'none'} />
+                </button>
+              )}
+              <button onClick={handleCloseCamera} className="bg-white/20 p-2 rounded-full hover:bg-white/30 transition-colors"><X size={20} /></button>
+            </div>
           </div>
           <div className="flex-1 relative flex flex-col items-center justify-center bg-black p-4">
             <div id="reader" className="w-full max-w-md mx-auto rounded-2xl overflow-hidden shadow-2xl bg-white/5"></div>
+            {!scannedProduct && (
+              <p className="text-white/60 text-xs font-bold mt-4 text-center max-w-md">
+                قرّب الموبايل لحد ما الباركود يملا عرض الشباك — مش لازم يدخل جواه بالظبط
+              </p>
+            )}
             
             {/* Scanned Product Popup */}
             {scannedProduct && (
