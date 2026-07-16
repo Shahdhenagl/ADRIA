@@ -14,14 +14,36 @@ import { escapeHtml } from './escapeHtml';
 type SettingsLike = {
   pagesQrUrl?: string;
   pagesQrLabel?: string;
+  pagesQrImage?: string;
 };
 
 export function pagesQrLinkOf(settings: SettingsLike): string {
   return (settings.pagesQrUrl || '').trim();
 }
 
+export function pagesQrImageOf(settings: SettingsLike): string {
+  return (settings.pagesQrImage || '').trim();
+}
+
 /**
- * HTML for the follow-us QR, or '' when no link is configured — an empty string
+ * The image printed for the follow-us QR, or '' when the store configured
+ * neither.
+ *
+ * An uploaded image wins over the link: a store that designed its own QR
+ * (branded, with a logo in the middle) wants that exact artwork printed, not a
+ * plain generated one. The link stays the fallback so setting just a URL still
+ * works with no upload.
+ */
+function pagesQrImgSrc(settings: SettingsLike): string {
+  const uploaded = pagesQrImageOf(settings);
+  if (uploaded) return uploaded;
+  const link = pagesQrLinkOf(settings);
+  if (!link) return '';
+  return `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(link)}`;
+}
+
+/**
+ * HTML for the follow-us QR, or '' when nothing is configured — an empty string
  * keeps the invoice exactly as it was for stores that never set one up.
  *
  * The returned markup reuses the `.qr-code-container` / `.qr-code-img` /
@@ -29,12 +51,11 @@ export function pagesQrLinkOf(settings: SettingsLike): string {
  * always match in size.
  */
 export function buildPagesQrBlock(settings: SettingsLike): string {
-  const link = pagesQrLinkOf(settings);
-  if (!link) return '';
+  const src = pagesQrImgSrc(settings);
+  if (!src) return '';
   const label = (settings.pagesQrLabel || '').trim() || 'تابعنا';
-  const img = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(link)}`;
   return `<div class="qr-code-container">
-    <img class="qr-code-img" src="${escapeHtml(img)}" alt="Pages QR" />
+    <img class="qr-code-img" src="${escapeHtml(src)}" alt="Pages QR" />
     <div class="qr-label">${escapeHtml(label)}</div>
   </div>`;
 }

@@ -56,6 +56,41 @@ export default function Settings() {
     }
   };
 
+  // رفع صورة QR الصفحات. بنصغّرها ونسطّحها على خلفية بيضا قبل الحفظ لسببين:
+  // (1) صورة QR بتتطبع في ~90px، فصورة 2048×2048 كانت هتتخزّن كاملة في صف
+  //     الإعدادات اللي بيتحمّل مع كل فتح للتطبيق من غير أي فايدة.
+  // (2) الـQR بخلفية شفافة بيبقى موديولاته سودا على "لا شيء" — لو اتطبع أو
+  //     اترندر على خلفية غامقة مبيتقراش. الخلفية البيضا بتضمن التباين.
+  const handlePagesQrUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      alert('حجم الصورة كبير جداً، يرجى اختيار صورة أقل من 5 ميجابايت.');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 512; // أكبر من احتياج الطباعة بكتير، وبيفضل صغير في التخزين
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { setFormData({ ...formData, pagesQrImage: reader.result as string }); return; }
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        setFormData({ ...formData, pagesQrImage: canvas.toDataURL('image/png') });
+      };
+      img.onerror = () => alert('تعذّر قراءة الصورة.');
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className="p-4 md:p-8 max-w-3xl">
       <div className="mb-8">
@@ -200,6 +235,38 @@ export default function Settings() {
             <p className="text-[11px] text-slate-400 mt-1 text-right">
               QR ثابت يظهر في كل فاتورة مطبوعة جنب QR الفاتورة نفسها. سيبه فاضي لو مش عايزاه.
             </p>
+
+            <div className="mt-3 flex items-center gap-4 flex-wrap">
+              {formData.pagesQrImage ? (
+                <img
+                  src={formData.pagesQrImage}
+                  alt="QR الصفحات"
+                  className="w-20 h-20 rounded-xl border-2 border-slate-200 object-contain bg-white p-1"
+                />
+              ) : (
+                <div className="w-20 h-20 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center text-[10px] font-bold text-slate-400 text-center px-1 bg-slate-50">
+                  هيتولّد من الرابط
+                </div>
+              )}
+              <div className="flex flex-col gap-2">
+                <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 transition text-slate-700 font-bold text-xs py-2 px-4 rounded-xl w-fit">
+                  رفع صورة QR جاهزة
+                  <input type="file" accept="image/*" onChange={handlePagesQrUpload} className="hidden" />
+                </label>
+                {formData.pagesQrImage && (
+                  <button
+                    type="button"
+                    onClick={() => setFormData({...formData, pagesQrImage: ''})}
+                    className="text-red-500 hover:text-red-600 font-bold text-xs text-right"
+                  >
+                    حذف الصورة (ارجع للتوليد من الرابط)
+                  </button>
+                )}
+                <p className="text-[11px] text-slate-400">
+                  لو رفعتي صورة QR بتاعتك، هتتطبع هي بالظبط بدل الكود المولّد.
+                </p>
+              </div>
+            </div>
           </div>
 
           <div>

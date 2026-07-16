@@ -354,6 +354,7 @@ export interface StoreSettings {
   incomeCategories?: string[]; // فئات إيراد أضافها المستخدم — بتتزاد على القائمة الثابتة
   pagesQrUrl?: string; // رابط صفحات المحل — QR ثابت على كل فاتورة مطبوعة
   pagesQrLabel?: string; // العنوان تحت QR الصفحات؛ افتراضي «تابعنا»
+  pagesQrImage?: string; // صورة QR مرفوعة (data URL) — لها الأولوية على التوليد من الرابط
 }
 
 export interface Employee {
@@ -778,6 +779,7 @@ function mapSettings(row: Record<string, unknown>): StoreSettings {
     incomeCategories: Array.isArray(row.income_categories) ? (row.income_categories as string[]) : undefined,
     pagesQrUrl: (row.pages_qr_url as string) ?? '',
     pagesQrLabel: (row.pages_qr_label as string) ?? '',
+    pagesQrImage: (row.pages_qr_image as string) ?? '',
   };
 }
 
@@ -3298,6 +3300,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.incomeCategories !== undefined) mapped.income_categories = newSettings.incomeCategories;
     if (newSettings.pagesQrUrl !== undefined) mapped.pages_qr_url = newSettings.pagesQrUrl;
     if (newSettings.pagesQrLabel !== undefined) mapped.pages_qr_label = newSettings.pagesQrLabel;
+    if (newSettings.pagesQrImage !== undefined) mapped.pages_qr_image = newSettings.pagesQrImage;
 
     const { data: existing } = await supabase.from('store_settings').select('id').limit(1).maybeSingle();
 
