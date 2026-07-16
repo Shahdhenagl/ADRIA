@@ -1,7 +1,7 @@
 // ── منطق توزيع مبالغ المعاملات على وسائل الدفع (الخزنة) ──────────────────
 // مشترك بين: تقفيل اليوم (POS)، الخزنة الرئيسية (Savings)، التقارير (Reports).
 // كان متكرّر في 3 أماكن، فأي خطأ كان بيظهر 3 مرات — التوحيد هنا يمنع ذلك.
-import { ALL_PAYMENT_KEYS } from './paymentMethods';
+import { ALL_PAYMENT_KEYS, openingBalanceOf } from './paymentMethods';
 
 type Bucket = Record<string, number>;
 
@@ -83,4 +83,53 @@ export function savingsGroupIdOf(note: any): string | null {
 
 export function isMainTreasuryPurchase(row: any): boolean {
   return String(row?.notes || '').includes(MAIN_TREASURY_MARKER);
+}
+
+// ── رصيد خزنة المحل المتاح لكل وسيلة ────────────────────────────────────────
+// كان متكرّر في Savings (بالفلاتر الصح) وفي Managers (من غيرها)، فالصفحتين كانوا
+// بيدّوا أرقام مختلفة لنفس الخزنة. أي صفحة بتعرض «المتاح بالخزنة» لازم تنادي دي.
+//
+// المستبعَد عن قصد:
+// - مصاريف/مشتريات الخزنة الرئيسية: اتدفعت من الرئيسية مش من درج المحل، فطرحها
+//   من المحل بيوقّع رصيده بالسالب من غير سبب.
+// - التحويل الداخلي (كاش↔فيزا): مجموعه صفر، بيحرّك بين الوسائل بس. تقسيمة
+//   paid_* بتحمل الإشارة، فبتتطبّق زي ما هي بدل ما تتطرح كمصروف.
+
+export interface ShopTreasuryRows {
+  /** الفواتير — كل واحدة معاها items (order_items) عشان المرتجعات. */
+  orders: any[];
+  expenses: any[];
+  purchases: any[];
+  salaries: any[];
+}
+
+export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Bucket {
+  const net: Bucket = {};
+  ALL_PAYMENT_KEYS.forEach((k) => { net[k] = 0; });
+  const add = (sign: number, rec: any, field: string) => applySplit(net, rec, field, { sign });
+
+  (rows.orders || []).filter((o: any) => !o.is_deleted).forEach((o: any) => {
+    if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
+    const refunded = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
+    if (refunded > 0) add(-1, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+  });
+
+  (rows.expenses || []).forEach((e: any) => {
+    const amount = Number(e.amount) || 0;
+    if (isMainTreasuryExpense(e)) return;
+    if (isInternalTransfer(e.category)) { applyInternalTransferNet(net, e); return; }
+    if (amount < 0) {
+      // مصروف بمبلغ سالب = إيراد مسجّل يدوياً (داخل للخزنة) مش خارج منها
+      const absRec: any = { ...e, amount: Math.abs(amount) };
+      ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); });
+      add(1, absRec, 'amount');
+    } else {
+      add(-1, e, 'amount');
+    }
+  });
+
+  (rows.purchases || []).filter((p: any) => !isMainTreasuryPurchase(p)).forEach((p: any) => add(-1, p, 'paid_amount'));
+  (rows.salaries || []).forEach((s: any) => add(-1, s, 'amount'));
+  ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
+  return net;
 }

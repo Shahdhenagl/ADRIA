@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { Briefcase, Plus, Banknote, Trash2 } from 'lucide-react';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
+import { computeShopAvailable } from '../../utils/treasury';
 
 export default function Managers() {
-  const { orders, storeSettings, managerWithdraw, deleteExpense } = useStore();
+  // الفواتير بتتجاب من الداتابيز في load() مش من الستور — الستور بيحمّل جزء منها بس.
+  const { storeSettings, managerWithdraw, deleteExpense } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
 
@@ -21,46 +23,30 @@ export default function Managers() {
   const load = async () => {
     setLoading(true);
     try {
-      const { supabase } = await import('../../lib/supabase');
-      const [mRes, expRes, purRes, salRes] = await Promise.all([
+      const { supabase, fetchAllRows } = await import('../../lib/supabase');
+      // fetchAllRows بتتخطّى حد الـ 1000 صف بتاع Supabase — الـ select العادي كان
+      // بيسيب حركات بره الحساب فالرصيد يطلع غلط أول ما الحركات تكتر.
+      const [mRes, expData, purData, salData, ordData] = await Promise.all([
         supabase.from('managers').select('*').order('created_at', { ascending: true }),
-        supabase.from('expenses').select('*'),
-        supabase.from('purchase_invoices').select('*'),
-        supabase.from('employee_transactions').select('*'),
+        fetchAllRows('expenses'),
+        fetchAllRows('purchase_invoices'),
+        fetchAllRows('employee_transactions'),
+        fetchAllRows('orders', '*, order_items(refunded_amount)'),
       ]);
       setManagers((mRes.data as any[]) || []);
-      const expenses = (expRes.data as any[]) || [];
+      const expenses = (expData as any[]) || [];
       setWithdrawals(expenses.filter((e) => e.category === 'سحب مدير').sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
 
-      // الرصيد المتاح في كل وسيلة دفع (كل الفترات).
-      const net: Record<string, number> = {};
-      ALL_PAYMENT_KEYS.forEach((k) => { net[k] = 0; });
-      const add = (sign: number, rec: any, field: string, mOverride?: string) => {
-        const vals = ALL_PAYMENT_KEYS.map((k) => +rec['paid_' + k] || 0);
-        const sum = vals.reduce((a, b) => a + b, 0);
-        if (sum > 0) { ALL_PAYMENT_KEYS.forEach((k, idx) => { net[k] += sign * vals[idx]; }); return; }
-        const a = Math.abs(+rec[field] || 0);
-        const m = mOverride || rec.payment_method || 'cash';
-        if (net[m] !== undefined) net[m] += sign * a;
-      };
-      orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
-        if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
-        const refunded = (o.items || []).reduce((s: number, it: any) => s + (+it.refunded_amount || 0), 0);
-        if (refunded > 0) add(-1, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
-      });
-      expenses.forEach((e) => {
-        const amt = Number(e.amount) || 0;
-        if (amt < 0) {
-          // مصروف بمبلغ سالب = إيراد مسجّل يدوياً (داخل للخزنة) مش خارج منها
-          { const absRec: any = { ...e, amount: Math.abs(amt) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(1, absRec, 'amount'); }
-        } else {
-          add(-1, e, 'amount');
-        }
-      });
-      purRes.data?.forEach((p: any) => add(-1, p, 'paid_amount'));
-      salRes.data?.forEach((s: any) => add(-1, s, 'amount'));
-      ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(storeSettings as any, k); });
-      setAvail(net);
+      // نفس حساب «بالمحل» اللي في الخزنة الرئيسية بالحرف — مشترك في utils/treasury.
+      setAvail(computeShopAvailable(
+        {
+          orders: (ordData as any[]).map((o) => ({ ...o, items: o.order_items || [] })),
+          expenses,
+          purchases: (purData as any[]) || [],
+          salaries: (salData as any[]) || [],
+        },
+        storeSettings,
+      ));
     } catch (e) { console.error(e); }
     setLoading(false);
   };

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { PiggyBank, ArrowLeftRight, Banknote, Save, Trash2 } from 'lucide-react';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
-import { applySplit, applyInternalTransferNet, isInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote } from '../../utils/treasury';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
+import { computeShopAvailable, markMainTreasuryNote, markSavingsGroupNote } from '../../utils/treasury';
 
 type Split = Record<string, number>;
 const zero = (): Split => { const z: Split = {}; ALL_PAYMENT_KEYS.forEach((k) => { z[k] = 0; }); return z; };
@@ -79,25 +79,12 @@ export default function Savings() {
       ]);
       const savRes = { data: savRows };
       const allOrders = (ordData as any[]).map((o) => ({ ...o, items: o.order_items || [] }));
-      // خزنة المحل المتاح لكل وسيلة (كل الفترات) — منطق التوزيع مشترك في utils/treasury.
-      const net = zero();
-      const add = (sign: number, rec: any, field: string) => applySplit(net, rec, field, { sign });
-      allOrders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
-        if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
-        const ref = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
-        if (ref > 0) add(-1, { paid_amount: ref, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
-      });
-      (expData || []).forEach((e: any) => {
-        const amount = Number(e.amount) || 0;
-        if (isMainTreasuryExpense(e)) return;
-        if (isInternalTransfer(e.category)) { applyInternalTransferNet(net, e); return; }
-        if (amount < 0) { const absRec: any = { ...e, amount: Math.abs(amount) }; ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+e['paid_' + k] || 0); }); add(1, absRec, 'amount'); }
-        else add(-1, e, 'amount');
-      });
-      (purData || []).filter((p: any) => !isMainTreasuryPurchase(p)).forEach((p: any) => add(-1, p, 'paid_amount'));
-      (salData || []).forEach((s: any) => add(-1, s, 'amount'));
-      ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(storeSettings as any, k); });
-      setShopAvail(net);
+      // خزنة المحل المتاح لكل وسيلة (كل الفترات) — الحساب مشترك في utils/treasury
+      // عشان صفحة المدراء تدّي نفس الرقم بالظبط.
+      setShopAvail(computeShopAvailable(
+        { orders: allOrders, expenses: expData || [], purchases: purData || [], salaries: salData || [] },
+        storeSettings,
+      ));
 
       // رصيد الخزنة الرئيسية لكل وسيلة = رصيد افتتاحي + (داخل − خارج)
       const sav = zero();
