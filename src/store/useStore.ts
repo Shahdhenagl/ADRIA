@@ -557,6 +557,7 @@ interface CashierStore {
   deleteOrder: (orderId: string, reason?: string) => Promise<boolean>;
   editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string) => Promise<boolean>;
   markOrderExchanged: (orderId: string, exchangeData: any) => Promise<boolean>;
+  updateOrderRefundedAt: (orderId: string, refundedAt: string) => Promise<boolean>;
 
   // Held / reserved invoices (فواتير معلقة)
   heldInvoices: HeldInvoice[];
@@ -2763,6 +2764,30 @@ export const useStore = create<CashierStore>((set, get) => ({
     const { error } = await supabase.from('orders').update({ exchange_data: exchangeData }).eq('id', orderId);
     if (error) { console.error('markOrderExchanged:', error); return false; }
     set((state) => ({ orders: state.orders.map((o) => (o.id === orderId ? { ...o, exchange_data: exchangeData } : o)) }));
+    return true;
+  },
+
+  // تعديل تاريخ الاسترجاع. المرتجع مالوش صف مصروف مستقل — أثره على الدرج
+  // بيتحسب من refunded_at + refunded_amount على الفاتورة نفسها (شوف
+  // computeDayBudget في POS)، فتغيير التاريخ لوحده بينقل حركة المرتجع كلها
+  // لليوم الجديد من غير أي قيد تاني.
+  // اليومين لازم يكونوا مفتوحين: اليوم القديم عشان سحب المرتجع منه بيغيّر
+  // تقفيله، والجديد عشان إضافته ليه بتغيّر تقفيله هو كمان.
+  updateOrderRefundedAt: async (orderId, refundedAt) => {
+    const state = get();
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order || order.is_deleted || order.isOffline) return false;
+    if (!order.refunded_at) return false;
+    if (!(await ensureAccountingDayOpen(state, order.refunded_at))) return false;
+    if (!(await ensureAccountingDayOpen(state, refundedAt))) return false;
+
+    const { error } = await supabase.from('orders').update({ refunded_at: refundedAt }).eq('id', orderId);
+    if (error) {
+      console.error('updateOrderRefundedAt:', error);
+      alert('تعذّر تعديل تاريخ الاسترجاع: ' + error.message);
+      return false;
+    }
+    set((s) => ({ orders: s.orders.map((o) => (o.id === orderId ? { ...o, refunded_at: refundedAt } : o)) }));
     return true;
   },
 

@@ -15,7 +15,7 @@ interface EditInvoiceModalProps {
 }
 
 export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }: EditInvoiceModalProps) {
-  const { products, editOrder, storeSettings, activeCashier, addExpense, markOrderExchanged } = useStore();
+  const { products, editOrder, storeSettings, activeCashier, addExpense, markOrderExchanged, updateOrderRefundedAt } = useStore();
 
   // لقطة من أصناف الفاتورة قبل الاستبدال (للطباعة قبل/بعد)
   const [originalItems] = useState<OrderItem[]>(invoice.items.map(i => ({ ...i })));
@@ -48,6 +48,25 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
   const [orderDate, setOrderDate] = useState<string>(() => toDateInput(invoice.date));
+
+  // تاريخ الاسترجاع — بيتحفظ لوحده (updateOrderRefundedAt) مش مع «حفظ التعديلات»،
+  // عشان تعديله متعلّقش على سبب تعديل مطلوب ولا على إعادة حساب المخزون.
+  const invoiceRefundedAt = (invoice as any).refunded_at as string | null | undefined;
+  const [refundDate, setRefundDate] = useState<string>(() => invoiceRefundedAt ? toDateInput(invoiceRefundedAt) : '');
+  const [savingRefundDate, setSavingRefundDate] = useState(false);
+  const refundDateDirty = !!invoiceRefundedAt && refundDate !== toDateInput(invoiceRefundedAt);
+
+  const handleSaveRefundDate = async () => {
+    if (!refundDateDirty) return;
+    const d = new Date(refundDate);
+    if (isNaN(d.getTime())) { alert('تاريخ غير صحيح'); return; }
+    setSavingRefundDate(true);
+    // updateOrderRefundedAt بيتأكد إن اليوم القديم واليوم الجديد الاتنين مش
+    // مقفولين، وبيعرض السبب بنفسه لو مقفول.
+    const ok = await updateOrderRefundedAt(invoice.id, d.toISOString());
+    setSavingRefundDate(false);
+    if (ok) alert('تم تعديل تاريخ الاسترجاع — حركة المرتجع اتنقلت لليوم الجديد ✅');
+  };
 
   const total = cart.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
   const exchangeableQty = (item: OrderItem) => Math.max(0, (item.quantity || 0) - ((item as any).returned_quantity || 0));
@@ -542,38 +561,53 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                   والاستبدال جوه exchange_data.date، والاتنين بيتحطوا وقت العملية
                   نفسها. بيتعرضوا هنا عشان اللي بيعدّل يعرف إن الفاتورة اتحرّك
                   فيها حاجة في يوم تاني قبل ما يغيّر تاريخها. */}
+              {!exchangeMode && invoiceRefundedAt && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">تاريخ الاسترجاع</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="datetime-local"
+                      value={refundDate}
+                      onChange={(e) => setRefundDate(e.target.value)}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-rose-500 outline-none transition-all font-bold"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleSaveRefundDate}
+                      disabled={!refundDateDirty || savingRefundDate}
+                      className="shrink-0 px-4 rounded-xl bg-rose-600 text-white font-black hover:bg-rose-700 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {savingRefundDate ? '...' : 'حفظ'}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1 font-bold">
+                    بيتحفظ لوحده. تغييره بينقل حركة المرتجع لتقفيل اليوم الجديد — واليومين القديم والجديد لازم يكونوا مش مقفولين.
+                  </p>
+                </div>
+              )}
+
+              {/* تاريخ الاستبدال — للعرض بس. تعديله مش زي المرتجع: فرق الاستبدال
+                  متسجّل كصف مصروف/إيراد مستقل بتاريخه، فتغيير exchange_data.date
+                  لوحده كان هيسيب الفرق في اليوم القديم والحركة تتقسم على يومين. */}
               {(() => {
-                const refundedAt = (invoice as any).refunded_at as string | null | undefined;
                 const exchangedAt = (invoice as any).exchange_data?.date as string | null | undefined;
-                if (!refundedAt && !exchangedAt) return null;
-                const fmt = (v: string) => new Date(v).toLocaleString('ar-EG', {
-                  calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
-                });
-                const invoiceDay = new Date(invoice.date).toDateString();
-                const rows: { label: string; value: string; sameDay: boolean; tone: string }[] = [];
-                if (refundedAt) rows.push({
-                  label: 'تاريخ الاسترجاع', value: fmt(refundedAt),
-                  sameDay: new Date(refundedAt).toDateString() === invoiceDay, tone: 'text-rose-600',
-                });
-                if (exchangedAt) rows.push({
-                  label: 'تاريخ الاستبدال', value: fmt(exchangedAt),
-                  sameDay: new Date(exchangedAt).toDateString() === invoiceDay, tone: 'text-amber-600',
-                });
+                if (!exchangedAt) return null;
+                const sameDay = new Date(exchangedAt).toDateString() === new Date(invoice.date).toDateString();
                 return (
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
-                    {rows.map((r) => (
-                      <div key={r.label} className="flex items-center justify-between gap-2 flex-wrap">
-                        <span className="text-xs font-bold text-slate-500">{r.label}</span>
-                        <div className="flex items-center gap-2">
-                          {!r.sameDay && (
-                            <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
-                              يوم مختلف عن الفاتورة
-                            </span>
-                          )}
-                          <span className={`text-xs font-black ${r.tone}`}>{r.value}</span>
-                        </div>
-                      </div>
-                    ))}
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-center justify-between gap-2 flex-wrap">
+                    <span className="text-xs font-bold text-slate-500">تاريخ الاستبدال</span>
+                    <div className="flex items-center gap-2">
+                      {!sameDay && (
+                        <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
+                          يوم مختلف عن الفاتورة
+                        </span>
+                      )}
+                      <span className="text-xs font-black text-amber-600">
+                        {new Date(exchangedAt).toLocaleString('ar-EG', {
+                          calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                        })}
+                      </span>
+                    </div>
                   </div>
                 );
               })()}
