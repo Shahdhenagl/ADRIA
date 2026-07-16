@@ -22,6 +22,13 @@ export default function Invoices() {
   const [showDeferredOnly, setShowDeferredOnly] = useState(false);
   const [viewMode, setViewMode] = useState<'active' | 'deleted'>('active');
   const [selectedDay, setSelectedDay] = useState<string>('');
+  // أساس فلترة اليوم/الشهر/السنة: تاريخ الفاتورة (الافتراضي) أو تاريخ المرتجع.
+  // المرتجع بيتسجّل على refunded_at (db/36)، فاسترجاع فاتورة قديمة النهاردة كان
+  // بيفضل مختفي من فلتر النهاردة لأن الفلتر كان على o.date بس.
+  // مقصود إنه أساس منفصل مش شرط إضافي: لو فاتورة قديمة دخلت في فلتر النهاردة،
+  // قيمتها وربحها كانوا هيتحسبوا في إجمالي أرباح اليوم وكشف عمولة مسؤول
+  // المبيعات كأنها مبيعات النهاردة.
+  const [dateBasis, setDateBasis] = useState<'invoice' | 'refund'>('invoice');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
   const [selectedCashier, setSelectedCashier] = useState<string>('all');
@@ -305,11 +312,12 @@ export default function Invoices() {
       ['تقرير الفواتير', '', '', '', '', '', '', ''],
       ['التاريخ', new Date().toLocaleDateString(), '', '', '', '', '', ''],
       [''],
-      ['رقم الفاتورة', 'العميل', 'التاريخ', 'الإجمالي', 'المدفوع', 'كاش', 'فيزا', 'محفظة', 'انستا', ...extraCols.map((k) => payLabelOf(storeSettings as any, k)), 'الباقي', 'النوع'],
+      ['رقم الفاتورة', 'العميل', 'التاريخ', 'تاريخ المرتجع', 'الإجمالي', 'المدفوع', 'كاش', 'فيزا', 'محفظة', 'انستا', ...extraCols.map((k) => payLabelOf(storeSettings as any, k)), 'الباقي', 'النوع'],
       ...filteredOrders.map(o => [
         o.id,
         o.customer?.name || 'عميل نقدي',
         new Date(o.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
+        (o as any).refunded_at ? new Date((o as any).refunded_at).toLocaleString('ar-EG', { calendar: 'gregory' }) : '',
         o.total,
         o.paid_amount,
         o.paid_cash,
@@ -382,7 +390,10 @@ export default function Invoices() {
 
   const filteredOrders = useMemo(() => {
     return visibleOrders.filter(o => {
-      const orderDate = new Date(o.date);
+      const refundedAt = (o as any).refunded_at as string | null | undefined;
+      // على أساس المرتجع: الفواتير اللي مالهاش تاريخ استرجاع مالهاش مكان في العرض.
+      if (dateBasis === 'refund' && !refundedAt) return false;
+      const orderDate = new Date(dateBasis === 'refund' ? refundedAt! : o.date);
       const orderDay = [
         orderDate.getFullYear(),
         String(orderDate.getMonth() + 1).padStart(2, '0'),
@@ -406,7 +417,7 @@ export default function Invoices() {
 
       return matchesDay && matchesMonth && matchesYear && matchesReturns && matchesExchange && matchesDeferred && matchesSearch && matchesCashier && matchesSalesperson;
     });
-  }, [visibleOrders, searchQuery, showReturnsOnly, showExchangeOnly, showDeferredOnly, selectedDay, selectedMonth, selectedYear, selectedCashier, selectedSalesperson]);
+  }, [visibleOrders, searchQuery, showReturnsOnly, showExchangeOnly, showDeferredOnly, selectedDay, selectedMonth, selectedYear, selectedCashier, selectedSalesperson, dateBasis]);
 
   const exchangeInvoicesCount = useMemo(() => visibleOrders.filter(o => (o as any).exchange_data).length, [visibleOrders]);
 
@@ -477,6 +488,27 @@ export default function Invoices() {
           </div>
           
           <div className="flex flex-wrap gap-3 xl:col-span-3 justify-end items-center">
+            {/* أساس التاريخ — بيحدد الفلاتر اللي جنبه (يوم/شهر/سنة) تتطبّق على إيه */}
+            <div className="flex items-center bg-slate-100 rounded-xl p-1 gap-1">
+              <button
+                onClick={() => setDateBasis('invoice')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${
+                  dateBasis === 'invoice' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="فلترة اليوم/الشهر/السنة على تاريخ الفاتورة"
+              >
+                تاريخ الفاتورة
+              </button>
+              <button
+                onClick={() => setDateBasis('refund')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${
+                  dateBasis === 'refund' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="عرض الفواتير المُرتجعة فقط، مفلترة بيوم الاسترجاع نفسه"
+              >
+                تاريخ المرتجع
+              </button>
+            </div>
             <div className="relative">
               <Calendar className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
               <input
@@ -672,6 +704,7 @@ export default function Invoices() {
                 <th className="p-4">رقم الفاتورة</th>
                 <th className="p-4">بيانات العميل</th>
                 <th className="p-4">التاريخ والوقت</th>
+                <th className="p-4">تاريخ المرتجع</th>
                 <th className="p-4 text-center">المسؤول</th>
                 <th className="p-4 text-center">مسؤول المبيعات</th>
                 <th className="p-4">تفاصيل المنتجات</th>
@@ -687,7 +720,7 @@ export default function Invoices() {
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="p-12 text-center text-slate-400 text-lg font-bold">
+                  <td colSpan={14} className="p-12 text-center text-slate-400 text-lg font-bold">
                     لا يوجد فواتير تطابق بحثك حالياً.
                   </td>
                 </tr>
@@ -727,6 +760,31 @@ export default function Invoices() {
                         )}
                       </td>
                       <td className="p-4 text-slate-500">{new Date(order.date).toLocaleString('ar-EG', { calendar: 'gregory' })}</td>
+                      <td className="p-4">
+                        {(() => {
+                          const refundedAt = (order as any).refunded_at as string | null | undefined;
+                          // فاتورة فيها مرتجع من غير refunded_at = استرجاع اتعمل قبل db/36،
+                          // فمفيش تاريخ متسجّل ليه أصلاً.
+                          if (!refundedAt) {
+                            return hasReturns
+                              ? <span className="text-[10px] font-bold text-slate-400">غير مسجّل</span>
+                              : <span className="text-slate-300">—</span>;
+                          }
+                          const sameDay = new Date(refundedAt).toDateString() === new Date(order.date).toDateString();
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs font-black text-rose-600">
+                                {new Date(refundedAt).toLocaleString('ar-EG', { calendar: 'gregory' })}
+                              </span>
+                              {!sameDay && (
+                                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 w-fit">
+                                  يوم مختلف عن الفاتورة
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
                       <td className="p-4 text-center font-bold text-indigo-600">{order.cashier_name || 'غير معروف'}</td>
                       <td className="p-4 text-center font-bold text-purple-600">
                         {(order as any).salesperson_name || '—'}

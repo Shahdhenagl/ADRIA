@@ -16,7 +16,12 @@
 create table if not exists employee_deductions (
   id uuid primary key default gen_random_uuid(),
   employee_id uuid not null references employees(id) on delete cascade,
+  -- المبلغ النهائي بالجنيه — لو الخصم اتسجّل بالأيام بيتحسب هنا وقت الحفظ
+  -- (أيام × الراتب/30) عشان باقي الحسابات تقرا رقم واحد بس.
   amount numeric not null default 0,
+  -- عدد الأيام لو الخصم اتسجّل بالأيام (بيقبل كسور: 0.5 = نص يوم).
+  -- بيتخزّن للعرض في السجل بس — القيمة الفعلية دايماً في amount.
+  days numeric not null default 0,
   -- سبب الخصم (اختياري) — بيتعرض في سجل حركات الموظف
   reason text,
   -- الشهر اللي الخصم بيتخصم منه: YYYY-MM
@@ -25,6 +30,10 @@ create table if not exists employee_deductions (
   date date not null default (now() at time zone 'Africa/Cairo')::date,
   created_at timestamptz default now()
 );
+
+-- لو الجدول كان اتعمل قبل ما عمود days يتضاف، create table if not exists فوق
+-- بيعدّي من غير ما يضيفه — فبنضيفه هنا صراحةً.
+alter table employee_deductions add column if not exists days numeric not null default 0;
 
 -- شاشة الموظف بتجيب خصومات موظف واحد لشهر واحد.
 create index if not exists employee_deductions_emp_month_idx

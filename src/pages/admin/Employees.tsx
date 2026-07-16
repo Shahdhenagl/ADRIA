@@ -209,10 +209,20 @@ export default function Employees() {
 
   const [deductionFormData, setDeductionFormData] = useState({
     amount: '',
+    days: '',
     reason: '',
     date: todayBusiness
   });
   const [savingDeduction, setSavingDeduction] = useState(false);
+
+  // سعر اليوم = الراتب الشهري ÷ 30 — نفس الأساس المستخدم في خصومات الإجازة
+  // وخصومات صرف الراتب، عشان اليوم يساوي نفس القيمة في كل الشاشة.
+  const dailyRateOf = (emp: Employee) => emp.monthly_salary / 30;
+
+  // إجمالي الخصم اليدوي = (أيام × سعر اليوم) + مبلغ محدد. الاتنين اختياريين
+  // وبيتجمعوا، فينفع خصم يوم ونص + 50 جنيه في نفس الحركة.
+  const deductionTotalOf = (emp: Employee) =>
+    Math.round(((parseFloat(deductionFormData.days) || 0) * dailyRateOf(emp) + (parseFloat(deductionFormData.amount) || 0)) * 100) / 100;
 
   // --- Calculations ---
   const tc = storeSettings.themeColor;
@@ -716,22 +726,27 @@ export default function Employees() {
 
   const handleOpenDeductionModal = (emp: Employee) => {
     setSelectedEmployee(emp);
-    setDeductionFormData({ amount: '', reason: '', date: todayBusiness });
+    setDeductionFormData({ amount: '', days: '', reason: '', date: todayBusiness });
     setShowDeductionModal(true);
   };
 
   const handleDeductionSubmit = async () => {
     const emp = selectedEmployee;
     if (!emp) return;
-    const amount = parseFloat(deductionFormData.amount) || 0;
-    if (amount <= 0) return alert('يرجى إدخال مبلغ صحيح');
+    const days = parseFloat(deductionFormData.days) || 0;
+    const amount = deductionTotalOf(emp);
+    if (amount <= 0) return alert('يرجى إدخال عدد أيام أو مبلغ صحيح');
 
     // الشهر بيتاخد من تاريخ الخصم عشان الخصم يقع على راتب الشهر الصح حتى لو
     // اتسجّل متأخر.
     const month = deductionFormData.date.slice(0, 7);
     const stats = getEmployeeMonthStats(emp.id, month);
+    const daysText = days > 0
+      ? `${days} يوم × ${dailyRateOf(emp).toLocaleString(undefined, { maximumFractionDigits: 2 })} = ${(days * dailyRateOf(emp)).toLocaleString(undefined, { maximumFractionDigits: 2 })}\n`
+      : '';
     const ok = window.confirm(
       `خصم ${amount.toLocaleString()} ${storeSettings.currency} من ${emp.name} عن شهر ${month}.\n` +
+      daysText +
       `المتبقي حالياً: ${stats.remaining.toLocaleString()} → بعد الخصم: ${Math.max(0, stats.remaining - amount).toLocaleString()}\n\n` +
       `الخصم مش بيطلّع فلوس من الخزنة — بس بيقلّل المستحق للموظف وقت صرف الراتب.\n\nتأكيد؟`
     );
@@ -742,6 +757,7 @@ export default function Employees() {
       await addEmployeeDeduction({
         employee_id: emp.id,
         amount,
+        days,
         reason: deductionFormData.reason.trim(),
         month,
         date: deductionFormData.date,
@@ -1302,6 +1318,7 @@ export default function Employees() {
                   <tr className="bg-white text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-slate-100">
                     <th className="p-6">التاريخ</th>
                     <th className="p-6">الشهر</th>
+                    <th className="p-6">الأيام</th>
                     <th className="p-6">السبب</th>
                     <th className="p-6">المبلغ</th>
                     <th className="p-6 text-left">إجراءات</th>
@@ -1312,6 +1329,11 @@ export default function Employees() {
                     <tr key={d.id} className="hover:bg-slate-50/50 transition-colors">
                       <td className="p-6 text-slate-500 font-bold">{d.date}</td>
                       <td className="p-6 text-slate-500 font-bold">{d.month}</td>
+                      <td className="p-6">
+                        {Number(d.days) > 0
+                          ? <span className="px-2.5 py-1 rounded-lg font-black text-[10px] bg-rose-50 text-rose-600 border border-rose-100">{Number(d.days)} يوم</span>
+                          : <span className="text-slate-300">—</span>}
+                      </td>
                       <td className="p-6 text-slate-600 font-medium">{d.reason || '-'}</td>
                       <td className="p-6 font-black text-rose-600">{Number(d.amount).toLocaleString()} {storeSettings.currency}</td>
                       <td className="p-6">
@@ -1329,7 +1351,7 @@ export default function Employees() {
                   ))}
                   {profileDeductions.length === 0 && (
                     <tr>
-                      <td colSpan={5} className="py-12 text-center text-slate-400 font-bold">لا توجد خصومات يدوية في هذه الفترة</td>
+                      <td colSpan={6} className="py-12 text-center text-slate-400 font-bold">لا توجد خصومات يدوية في هذه الفترة</td>
                     </tr>
                   )}
                 </tbody>
@@ -2145,14 +2167,15 @@ export default function Employees() {
               {(() => {
                 const month = deductionFormData.date.slice(0, 7);
                 const stats = getEmployeeMonthStats(selectedEmployee.id, month);
-                const amount = parseFloat(deductionFormData.amount) || 0;
+                const amount = deductionTotalOf(selectedEmployee);
                 const after = Math.max(0, stats.remaining - amount);
                 const clamped = amount > stats.remaining;
                 return (
                   <div className="bg-rose-50 rounded-2xl p-4 border border-rose-100 grid grid-cols-3 gap-3">
                     <div>
-                      <p className="text-[10px] font-bold text-slate-500">خصومات شهر {month}</p>
-                      <p className="text-lg font-black text-slate-800">{stats.deductions.toLocaleString()}</p>
+                      <p className="text-[10px] font-bold text-slate-500">إجمالي الخصم</p>
+                      <p className="text-lg font-black text-rose-600">{amount.toLocaleString()}</p>
+                      <p className="text-[10px] font-bold text-slate-400 mt-0.5">سعر اليوم {dailyRateOf(selectedEmployee).toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
                     </div>
                     <div>
                       <p className="text-[10px] font-bold text-slate-500">المتبقي حالياً</p>
@@ -2171,16 +2194,31 @@ export default function Employees() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">المبلغ <span className="text-red-500">*</span></label>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">بعدد الأيام</label>
+                  <input
+                    type="number" min="0" step="0.5"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-bold focus:ring-2 focus:ring-rose-500"
+                    value={deductionFormData.days}
+                    onChange={e => setDeductionFormData({ ...deductionFormData, days: e.target.value })}
+                    placeholder="0"
+                    autoFocus
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">بيقبل نص يوم (0.5) — بيتحوّل لمبلغ بسعر اليوم</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">بمبلغ محدد</label>
                   <input
                     type="number" min="0" step="0.01"
                     className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-bold focus:ring-2 focus:ring-rose-500"
                     value={deductionFormData.amount}
                     onChange={e => setDeductionFormData({ ...deductionFormData, amount: e.target.value })}
                     placeholder="0"
-                    autoFocus
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">تقدري تستخدمي الاتنين مع بعض</p>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4">
                 <div>
                   <label className="block text-sm font-bold text-slate-700 mb-2">تاريخ الخصم</label>
                   <input
@@ -2211,7 +2249,7 @@ export default function Employees() {
 
               <button
                 onClick={handleDeductionSubmit}
-                disabled={savingDeduction || !(parseFloat(deductionFormData.amount) > 0)}
+                disabled={savingDeduction || !(deductionTotalOf(selectedEmployee) > 0)}
                 className="w-full text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:opacity-90 transition-all bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {savingDeduction ? 'جاري الحفظ...' : 'تسجيل الخصم'}

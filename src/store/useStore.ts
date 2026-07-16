@@ -412,6 +412,9 @@ export interface EmployeeDeduction {
   id: string;
   employee_id: string;
   amount: number;
+  // عدد الأيام لو الخصم اتسجّل بالأيام (بيقبل كسور: 0.5 = نص يوم). للعرض بس —
+  // القيمة الفعلية دايماً في amount.
+  days: number;
   reason: string;
   month: string;
   date: string;
