@@ -664,6 +664,7 @@ interface CashierStore {
   addEmployeeDeduction: (deduction: Omit<EmployeeDeduction, 'id' | 'created_at'>) => Promise<void>;
   deleteEmployeeDeduction: (id: string) => Promise<void>;
   addEmployeeAttendance: (att: Omit<EmployeeAttendance, 'id' | 'created_at'>) => Promise<void>;
+  updateEmployeeAttendance: (id: string, att: Partial<Omit<EmployeeAttendance, 'id' | 'created_at'>>) => Promise<void>;
   deleteEmployeeAttendance: (id: string) => Promise<void>;
 
   // Suggestions & Notes
@@ -5457,6 +5458,21 @@ setupRealtime: () => {
     }
     if (data) {
       set((state) => ({ employeeAttendance: [data as EmployeeAttendance, ...state.employeeAttendance] }));
+    }
+  },
+
+  // تعديل غرامة التأخير يدوياً — الخصم بيتحسب تلقائياً وقت تسجيل الحضور، لكن
+  // المدير لازم يقدر يعدّله (يسامح، أو يزوّد) قبل صرف الراتب.
+  updateEmployeeAttendance: async (id, att) => {
+    const { data, error } = await supabase.from('employee_attendance').update(att).eq('id', id).select().single();
+    if (error) {
+      console.error("Update Employee Attendance Error:", error);
+      throw error;
+    }
+    if (data) {
+      set((state) => ({
+        employeeAttendance: state.employeeAttendance.map(a => (a.id === id ? data as EmployeeAttendance : a)),
+      }));
     }
   },
 

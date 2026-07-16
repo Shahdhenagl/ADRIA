@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { useStore, type Employee, type EmployeeTransaction, type EmployeeLeave } from '../../store/useStore';
+import { useStore, type Employee, type EmployeeTransaction, type EmployeeLeave, type EmployeeAttendance } from '../../store/useStore';
 import {
   Users, Plus, Trash2, Edit3, Search, X,
   Wallet, Landmark, CreditCard, Zap, Phone,
@@ -38,8 +38,18 @@ export default function Employees() {
     updateEmployeeTransaction, deleteEmployeeTransaction,
     addEmployeeLeave, deleteEmployeeLeave,
     addEmployeeDeduction, deleteEmployeeDeduction,
-    addEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut
+    addEmployeeAttendance, updateEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut
   } = useStore();
+
+  // ── أساس واحد لـ«النهاردة» و«الشهر الحالي» في كل الصفحة ──────────────────
+  // كان فيه أساسين مختلفين: toISOString() (UTC) في المعاملات والإجازات والمبيعات،
+  // و formatDateInput (محلي) في سجل الحضور. القاهرة UTC+2/+3، فأول 2-3 ساعات من
+  // كل شهر الاتنين كانوا بيدّوا شهر مختلف → البروفايل كان بيعرض حضور شهر
+  // ومرتبات/مبيعات شهر تاني في نفس الشاشة.
+  // businessDateStr هو الأساس الصح: محلي + بيحترم ساعة بداية اليوم المحاسبي،
+  // وهو نفسه اللي تسجيل الحضور وصرف الراتب بيستخدموه أصلاً.
+  const todayBusiness = businessDateStr(storeSettings as any);
+  const currentBusinessMonth = todayBusiness.slice(0, 7);
 
   // مصدر صرف معاملة الموظف: خزنة المحل (الكاشير) أو الخزنة الرئيسية.
   const [transTreasury, setTransTreasury] = useState<'shop' | 'main'>('shop');
@@ -155,9 +165,9 @@ export default function Employees() {
   const [transType, setTransType] = useState<'salary' | 'advance' | 'incentive'>('advance');
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [profileTimeFilter, setProfileTimeFilter] = useState<'month' | 'week' | 'all' | 'custom_month' | 'custom_year'>('month');
-  const [profileCustomMonth, setProfileCustomMonth] = useState<string>(new Date().toISOString().slice(0, 7));
+  const [profileCustomMonth, setProfileCustomMonth] = useState<string>(currentBusinessMonth);
   const [profileCustomYear, setProfileCustomYear] = useState<string>(new Date().getFullYear().toString());
-  const [payrollMonth, setPayrollMonth] = useState<string>(new Date().toISOString().slice(0, 7));
+  const [payrollMonth, setPayrollMonth] = useState<string>(currentBusinessMonth);
 
   const [empFormData, setEmpFormData] = useState({
     name: '',
@@ -169,7 +179,7 @@ export default function Employees() {
     shift_start: '',
     shift_end: '',
     late_grace_minutes: '0',
-    hire_date: new Date().toISOString().slice(0, 10),
+    hire_date: todayBusiness,
     is_active: true,
     attendance_pin: ''
   });
@@ -182,8 +192,8 @@ export default function Employees() {
     paid_instapay: '',
     paid_method5: '',
     paid_method6: '',
-    month: new Date().toISOString().slice(0, 7),
-    date: new Date().toISOString().slice(0, 10),
+    month: currentBusinessMonth,
+    date: todayBusiness,
     dedDays: '',
     dedAmount: '',
     commissionRate: '',
@@ -191,8 +201,8 @@ export default function Employees() {
   });
 
   const [leaveFormData, setLeaveFormData] = useState({
-    start_date: new Date().toISOString().slice(0, 10),
-    end_date: new Date().toISOString().slice(0, 10),
+    start_date: todayBusiness,
+    end_date: todayBusiness,
     leave_type: 'paid' as 'paid' | 'unpaid',
     note: ''
   });
@@ -200,13 +210,13 @@ export default function Employees() {
   const [deductionFormData, setDeductionFormData] = useState({
     amount: '',
     reason: '',
-    date: new Date().toISOString().slice(0, 10)
+    date: todayBusiness
   });
   const [savingDeduction, setSavingDeduction] = useState(false);
 
   // --- Calculations ---
   const tc = storeSettings.themeColor;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayBusiness;
 
   const getDaysBetween = (start: string, end: string) => {
     const startDate = new Date(`${start}T00:00:00`);
@@ -252,7 +262,7 @@ export default function Employees() {
 
   // رصيد الإجازة الشهري: يتجدد أول كل شهر بدون ترحيل.
   const getLeaveBalanceStats = (emp: Employee, month?: string, excludeLeaveId?: string) => {
-    const targetMonth = month || new Date().toISOString().slice(0, 7);
+    const targetMonth = month || currentBusinessMonth;
     const monthlyBalance = monthlyLeaveDaysOf(emp);
     const paidLeaves = employeeLeaves.filter(l =>
       l.employee_id === emp.id &&
@@ -425,7 +435,7 @@ export default function Employees() {
     let txs = employeeTransactions.filter(t => t.employee_id === profileEmployee.id);
     
     if (profileTimeFilter === 'month') {
-      const currentMonth = new Date().toISOString().slice(0, 7);
+      const currentMonth = currentBusinessMonth;
       txs = txs.filter(t => t.month === currentMonth || t.created_at.startsWith(currentMonth));
     } else if (profileTimeFilter === 'week') {
       const sevenDaysAgo = new Date();
@@ -443,7 +453,7 @@ export default function Employees() {
     if (!profileEmployee) return [];
     let leaves = employeeLeaves.filter(l => l.employee_id === profileEmployee.id);
     if (profileTimeFilter === 'month') {
-      const currentMonth = new Date().toISOString().slice(0, 7);
+      const currentMonth = currentBusinessMonth;
       leaves = leaves.filter(l => l.month === currentMonth || l.start_date.startsWith(currentMonth));
     } else if (profileTimeFilter === 'week') {
       const sevenDaysAgo = new Date();
@@ -462,7 +472,7 @@ export default function Employees() {
   const profileAttendance = useMemo(() => {
     const empty = { days: [] as any[], records: [] as any[], present: 0, absent: 0, leave: 0, lateDays: 0, lateMinutes: 0, attDeductions: 0 };
     if (!profileEmployee) return empty;
-    const todayStr = formatDateInput(new Date());
+    const todayStr = todayBusiness;
     const hireStr = profileEmployee.hire_date || profileEmployee.created_at?.slice(0, 10) || '2000-01-01';
 
     let start: string, end: string;
@@ -518,7 +528,7 @@ export default function Employees() {
     if (!profileEmployee) return [];
     let rows = employeeDeductions.filter(d => d.employee_id === profileEmployee.id);
     if (profileTimeFilter === 'month') {
-      const currentMonth = new Date().toISOString().slice(0, 7);
+      const currentMonth = currentBusinessMonth;
       rows = rows.filter(d => d.month === currentMonth || String(d.date || '').startsWith(currentMonth));
     } else if (profileTimeFilter === 'week') {
       const sevenDaysAgo = new Date();
@@ -538,7 +548,7 @@ export default function Employees() {
   const profileSales = useMemo(() => {
     const empty = { sales: 0, profit: 0, count: 0, periodLabel: '', month: '' };
     if (!profileEmployee) return empty;
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const currentMonth = currentBusinessMonth;
     let inPeriod: (o: any) => boolean;
     let periodLabel: string;
     let month = '';
@@ -661,7 +671,7 @@ export default function Employees() {
         paid_method5: ((transaction as any).paid_method5 || 0).toString(),
         paid_method6: ((transaction as any).paid_method6 || 0).toString(),
         month: transaction.month,
-        date: transaction.created_at ? new Date(transaction.created_at).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+        date: transaction.created_at ? new Date(transaction.created_at).toISOString().slice(0, 10) : todayBusiness,
         dedDays: '',
         dedAmount: (transaction.deductions || 0).toString(),
         commissionRate: '',
@@ -706,7 +716,7 @@ export default function Employees() {
 
   const handleOpenDeductionModal = (emp: Employee) => {
     setSelectedEmployee(emp);
-    setDeductionFormData({ amount: '', reason: '', date: new Date().toISOString().slice(0, 10) });
+    setDeductionFormData({ amount: '', reason: '', date: todayBusiness });
     setShowDeductionModal(true);
   };
 
@@ -876,6 +886,39 @@ export default function Employees() {
   const handleDeleteAttendance = async (attId: string) => {
     if (!confirm('هل تريد حذف سجل الحضور؟ سيُلغى خصم التأخير المرتبط به.')) return;
     await deleteEmployeeAttendance(attId);
+  };
+
+  // تعديل غرامة التأخير: الخصم بيتحسب تلقائياً وقت تسجيل الحضور، لكن المدير
+  // لازم يقدر يسامح أو يزوّد قبل صرف الراتب. التعديل بينزل على المتبقي على طول
+  // لأن getEmployeeMonthStats بتجمع خصومات الحضور من نفس الصفوف دي.
+  const handleEditAttendanceFine = async (rec: EmployeeAttendance) => {
+    const emp = employees.find((e) => e.id === rec.employee_id);
+    const cur = storeSettings.currency;
+    const entered = window.prompt(
+      `غرامة تأخير ${emp?.name || ''} يوم ${rec.date}\n` +
+      `التأخير: ${rec.late_minutes || 0} دقيقة — الغرامة المحسوبة تلقائياً: ${Number(rec.deduction_amount || 0).toLocaleString()} ${cur}\n\n` +
+      `اكتب المبلغ الجديد (0 = مسامحة):`,
+      String(rec.deduction_amount ?? 0),
+    );
+    if (entered === null) return;
+    const amount = parseFloat(entered);
+    if (!Number.isFinite(amount) || amount < 0) { alert('مبلغ غير صحيح'); return; }
+    if (amount === Number(rec.deduction_amount || 0)) return;
+
+    const month = rec.month || rec.date.slice(0, 7);
+    const before = getEmployeeMonthStats(rec.employee_id, month);
+    // فرق الغرامة بيتحرّك عكس المتبقي: غرامة أقل = متبقي أكتر.
+    const after = Math.max(0, before.remaining + Number(rec.deduction_amount || 0) - amount);
+    if (!window.confirm(
+      `تعديل الغرامة من ${Number(rec.deduction_amount || 0).toLocaleString()} إلى ${amount.toLocaleString()} ${cur}.\n` +
+      `المتبقي في راتب شهر ${month}: ${before.remaining.toLocaleString()} → ${after.toLocaleString()} ${cur}\n\nتأكيد؟`
+    )) return;
+
+    try {
+      await updateEmployeeAttendance(rec.id, { deduction_amount: amount });
+    } catch (e) {
+      alert('فشل تعديل الغرامة: ' + (e instanceof Error ? e.message : String(e)));
+    }
   };
 
   const handleDeleteLeave = async (leaveId: string) => {
@@ -1342,7 +1385,24 @@ export default function Employees() {
                               ? <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-100">في الميعاد</span>
                               : <span className="text-slate-300">—</span>}
                         </td>
-                        <td className="p-5 font-black text-red-600">{rec && rec.deduction_amount > 0 ? `${rec.deduction_amount.toLocaleString()} ${storeSettings.currency}` : '-'}</td>
+                        <td className="p-5">
+                          {rec ? (
+                            <button
+                              onClick={() => handleEditAttendanceFine(rec)}
+                              className={`flex items-center gap-2 font-black px-3 py-1.5 rounded-lg transition group ${
+                                rec.deduction_amount > 0
+                                  ? 'text-red-600 bg-red-50 hover:bg-red-100'
+                                  : 'text-slate-400 hover:bg-slate-100'
+                              }`}
+                              title="تعديل غرامة التأخير"
+                            >
+                              {rec.deduction_amount > 0 ? `${rec.deduction_amount.toLocaleString()} ${storeSettings.currency}` : '—'}
+                              <Edit3 size={13} className="opacity-100 md:opacity-0 md:group-hover:opacity-100" />
+                            </button>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
                         <td className="p-5">
                           <span className={`px-2.5 py-1 rounded-lg font-black text-[10px] border ${
                             d.status === 'present' ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
@@ -1395,7 +1455,7 @@ export default function Employees() {
       {activeTab === 'employees' ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredEmployees.map(emp => {
-            const currentMonth = new Date().toISOString().slice(0, 7);
+            const currentMonth = currentBusinessMonth;
             const stats = getEmployeeMonthStats(emp.id, currentMonth);
             const leaveStats = getLeaveBalanceStats(emp);
             const isActive = emp.is_active ?? true;
