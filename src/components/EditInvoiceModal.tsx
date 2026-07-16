@@ -537,6 +537,47 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                 </div>
               )}
 
+              {/* تاريخ الاسترجاع/الاستبدال — للعرض بس. مالهومش علاقة بحقل تاريخ
+                  الفاتورة فوق: الاسترجاع بيتسجّل على refunded_at (db/36)
+                  والاستبدال جوه exchange_data.date، والاتنين بيتحطوا وقت العملية
+                  نفسها. بيتعرضوا هنا عشان اللي بيعدّل يعرف إن الفاتورة اتحرّك
+                  فيها حاجة في يوم تاني قبل ما يغيّر تاريخها. */}
+              {(() => {
+                const refundedAt = (invoice as any).refunded_at as string | null | undefined;
+                const exchangedAt = (invoice as any).exchange_data?.date as string | null | undefined;
+                if (!refundedAt && !exchangedAt) return null;
+                const fmt = (v: string) => new Date(v).toLocaleString('ar-EG', {
+                  calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit',
+                });
+                const invoiceDay = new Date(invoice.date).toDateString();
+                const rows: { label: string; value: string; sameDay: boolean; tone: string }[] = [];
+                if (refundedAt) rows.push({
+                  label: 'تاريخ الاسترجاع', value: fmt(refundedAt),
+                  sameDay: new Date(refundedAt).toDateString() === invoiceDay, tone: 'text-rose-600',
+                });
+                if (exchangedAt) rows.push({
+                  label: 'تاريخ الاستبدال', value: fmt(exchangedAt),
+                  sameDay: new Date(exchangedAt).toDateString() === invoiceDay, tone: 'text-amber-600',
+                });
+                return (
+                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3 space-y-2">
+                    {rows.map((r) => (
+                      <div key={r.label} className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="text-xs font-bold text-slate-500">{r.label}</span>
+                        <div className="flex items-center gap-2">
+                          {!r.sameDay && (
+                            <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100">
+                              يوم مختلف عن الفاتورة
+                            </span>
+                          )}
+                          <span className={`text-xs font-black ${r.tone}`}>{r.value}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-2">{exchangeMode ? 'سبب الاستبدال (مطلوب)' : 'سبب التعديل (مطلوب)'}</label>
                 <textarea
