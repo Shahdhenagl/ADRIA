@@ -1,21 +1,43 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { useStore, type Employee, type EmployeeTransaction, type EmployeeLeave } from '../../store/useStore';
 import {
   Users, Plus, Trash2, Edit3, Search, X,
   Wallet, Landmark, CreditCard, Zap, Phone,
-  DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn, ShieldCheck
+  DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn, ShieldCheck, MinusCircle
 } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 import { markMainTreasuryNote } from '../../utils/treasury';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 
+// شكل مبسّط للفاتورة/الصنف لحساب مبيعات الموظف وعمولته. متساهل عن قصد عشان
+// يستوعب الشكلين: فواتير الستور (الأصناف متسطّحة) وصفوف الداتابيز الخام
+// (products متداخلة) — شوف itemCost.
+type SaleItem = {
+  quantity?: number;
+  returned_quantity?: number;
+  sale_price?: number;
+  purchase_price?: number | null;
+  average_purchase_price?: number | null;
+  products?: { average_purchase_price?: number | null; purchase_price?: number | null } | null;
+};
+type SaleRow = {
+  total?: number;
+  date?: string;
+  is_deleted?: boolean;
+  type?: string;
+  salesperson_id?: string;
+  cashier_name?: string;
+  items?: SaleItem[];
+};
+
 export default function Employees() {
   const {
-    employees, employeeTransactions, employeeLeaves, employeeAttendance, storeSettings, orders, cashiers,
+    employees, employeeTransactions, employeeLeaves, employeeAttendance, employeeDeductions, storeSettings, orders, cashiers,
     addEmployee, updateEmployee, addEmployeeTransaction,
     updateEmployeeTransaction, deleteEmployeeTransaction,
     addEmployeeLeave, deleteEmployeeLeave,
+    addEmployeeDeduction, deleteEmployeeDeduction,
     addEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut
   } = useStore();
 
@@ -46,24 +68,78 @@ export default function Employees() {
   const monthlyLeaveDaysOf = (emp: Employee) => Number(emp.monthly_leave_days ?? DEFAULT_MONTHLY_LEAVE);
   const payKeys = activePaymentKeys(storeSettings as any);
 
-  // إجمالي مبيعات محاسب (المرتبط بموظف) في شهر معيّن (YYYY-MM).
-  // مبيعات الموظف كبائع (salesperson) لهذا الشهر + الأرباح المحققة — لحساب العمولة.
+  // المبيعات بتتجاب من الداتابيز مش من الستور: الستور بيحمّل آخر 1000 فاتورة بس،
+  // وده ممكن يقصّ شهر كامل في محل مزدحم — أو يوريّ صفر لشهر قديم. الرقم ده بتتحسب
+  // عليه العمولة اللي بتتصرف فلوس، فلازم يكون كامل.
+  const [salesOrders, setSalesOrders] = useState<SaleRow[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { supabase } = await import('../../lib/supabase');
+        // بنصفّي فواتير البيع غير المحذوفة على السيرفر (مش بعد الجلب) عشان ما نجيبش
+        // التحصيلات والمحذوفات على الفاضي. الترقيم يدوي لأن fetchAllRows مابتاخدش فلاتر.
+        const PAGE = 1000;
+        const rows: (SaleRow & { created_at?: string; order_items?: SaleItem[] })[] = [];
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await supabase
+            .from('orders')
+            .select('id, total, created_at, is_deleted, type, salesperson_id, cashier_name, order_items(quantity, returned_quantity, sale_price, purchase_price, products(average_purchase_price, purchase_price))')
+            .eq('type', 'sale')
+            .eq('is_deleted', false)
+            .order('created_at', { ascending: false })
+            .range(from, from + PAGE - 1);
+          if (error) throw error;
+          const batch = (data || []) as any[];
+          rows.push(...batch);
+          if (batch.length < PAGE || cancelled) break;
+        }
+        if (cancelled) return;
+        // نوحّد الشكل مع فواتير الستور (date + items) عشان نفس الحساب يشتغل على الاتنين.
+        setSalesOrders(rows.map((o) => ({ ...o, date: o.created_at, items: o.order_items || [] })));
+      } catch (e) {
+        console.warn('Sales fetch failed, falling back to store orders:', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // لحد ما الجلب يخلص بنستخدم فواتير الستور (ناقصة بس أحسن من فاضي).
+  const salesSource: SaleRow[] = salesOrders ?? (orders as unknown as SaleRow[]);
+
+  // فواتير الموظف كبائع خلال مدة معيّنة.
   // يشمل الفواتير اللي اتسجّل عليها كبائع، + (لو محاسب) فواتيره اللي ملهاش بائع محدد.
-  const employeeMonthStats = (emp: any, month: string) => {
-    const cashier = emp?.cashier_id ? cashiers.find((c: any) => c.id === emp.cashier_id) : null;
-    const cname = cashier?.name || emp?.name;
-    const rows = orders.filter((o: any) => !o.is_deleted && o.type === 'sale' && String(o.date || '').slice(0, 7) === month && (
-      (emp?.id && o.salesperson_id === emp.id) ||
-      (emp?.cashier_id && !o.salesperson_id && o.cashier_name === cname)
+  // الـ predicate اتفصل عشان البروفايل يقدر يستخدم نفس منطق «الفاتورة دي بتاعة مين»
+  // بمدة مختلفة (شهر / أسبوع / سنة / الكل) بدل ما يتكرّر ويفرق.
+  const employeeSalesRows = (emp: Employee | null, inPeriod: (o: SaleRow) => boolean): SaleRow[] => {
+    if (!emp) return [];
+    const cashier = emp.cashier_id ? cashiers.find((c) => c.id === emp.cashier_id) : null;
+    const cname = cashier?.name || emp.name;
+    return salesSource.filter((o) => !o.is_deleted && o.type === 'sale' && inPeriod(o) && (
+      (!!emp.id && o.salesperson_id === emp.id) ||
+      (!!emp.cashier_id && !o.salesperson_id && o.cashier_name === cname)
     ));
-    const sales = rows.reduce((s: number, o: any) => s + (Number(o.total) || 0), 0);
-    const profit = rows.reduce((s: number, o: any) => s + (o.items || []).reduce((ps: number, it: any) => {
-      const qty = (Number(it.quantity) || 0) - (Number(it.returned_quantity) || 0);
-      const cost = Number(it.average_purchase_price ?? it.purchase_price) || 0;
-      return ps + ((Number(it.sale_price) || 0) - cost) * qty;
-    }, 0), 0);
-    return { sales, profit };
   };
+
+  // تكلفة الصنف — بتتعامل مع الشكلين: صفوف الستور (average_purchase_price متسطّحة)
+  // وصفوف الداتابيز الخام (products متداخلة). نفس ترتيب الأفضلية في الستور و_report-utils.
+  const itemCost = (it: SaleItem) => Number(
+    it.average_purchase_price ?? it.purchase_price ?? it.products?.average_purchase_price ?? it.products?.purchase_price
+  ) || 0;
+
+  // إجمالي المبيعات + الأرباح المحققة للشركة من فواتير الموظف — لحساب العمولة.
+  const salesStatsOf = (rows: SaleRow[]) => {
+    const sales = rows.reduce((s, o) => s + (Number(o.total) || 0), 0);
+    const profit = rows.reduce((s, o) => s + (o.items || []).reduce((ps, it) => {
+      const qty = (Number(it.quantity) || 0) - (Number(it.returned_quantity) || 0);
+      return ps + ((Number(it.sale_price) || 0) - itemCost(it)) * qty;
+    }, 0), 0);
+    return { sales, profit, count: rows.length };
+  };
+
+  // مبيعات الموظف في شهر معيّن (YYYY-MM) — من أول الشهر لآخره.
+  const employeeMonthStats = (emp: Employee | null, month: string) =>
+    salesStatsOf(employeeSalesRows(emp, (o) => String(o.date || '').slice(0, 7) === month));
 
   const [activeTab, setActiveTab] = useState<'employees' | 'transactions'>('employees');
   const [searchTerm, setSearchTerm] = useState('');
@@ -71,6 +147,7 @@ export default function Employees() {
   const [showEmpModal, setShowEmpModal] = useState(false);
   const [showTransModal, setShowTransModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
+  const [showDeductionModal, setShowDeductionModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [editingTransaction, setEditingTransaction] = useState<EmployeeTransaction | null>(null);
   const [editingLeave, setEditingLeave] = useState<EmployeeLeave | null>(null);
@@ -119,6 +196,13 @@ export default function Employees() {
     leave_type: 'paid' as 'paid' | 'unpaid',
     note: ''
   });
+
+  const [deductionFormData, setDeductionFormData] = useState({
+    amount: '',
+    reason: '',
+    date: new Date().toISOString().slice(0, 10)
+  });
+  const [savingDeduction, setSavingDeduction] = useState(false);
 
   // --- Calculations ---
   const tc = storeSettings.themeColor;
@@ -261,6 +345,12 @@ export default function Employees() {
       .filter(l => l.employee_id === empId && l.month === month && l.leave_type === 'unpaid' && l.id !== excludeLeaveId)
       .reduce((sum, l) => sum + Number(l.deduction_amount || 0), 0);
 
+  // الخصومات اليدوية المسجّلة خلال الشهر — بتتجمّع وبتتخصم وقت صرف الراتب.
+  const getManualMonthDeductions = (empId: string, month: string) =>
+    employeeDeductions
+      .filter(d => d.employee_id === empId && d.month === month)
+      .reduce((sum, d) => sum + Number(d.amount || 0), 0);
+
   const filteredEmployees = employees
     .filter(e => {
       const isActive = e.is_active ?? true;
@@ -285,7 +375,7 @@ export default function Employees() {
 
   const getEmployeeMonthStats = (empId: string, month: string, excludeTransactionId?: string) => {
     const emp = employees.find(e => e.id === empId);
-    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, remaining: 0 };
+    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, remaining: 0 };
 
     const monthTrans = employeeTransactions.filter(t => t.employee_id === empId && t.month === month && t.id !== excludeTransactionId);
 
@@ -295,10 +385,11 @@ export default function Employees() {
     const incentives = monthTrans.filter(t => t.type === 'incentive').reduce((sum, t) => sum + t.amount, 0);
     const leaveDeductions = getLeaveMonthDeductions(empId, month);
     const attendanceDeductions = getAttendanceMonthDeductions(empId, month);
+    const manualDeductions = getManualMonthDeductions(empId, month);
 
-    const remaining = Math.max(0, emp.monthly_salary - advances - paidSalary - deductions - leaveDeductions - attendanceDeductions);
+    const remaining = Math.max(0, emp.monthly_salary - advances - paidSalary - deductions - leaveDeductions - attendanceDeductions - manualDeductions);
 
-    return { salary: emp.monthly_salary, advances, paidSalary, deductions: deductions + leaveDeductions + attendanceDeductions, incentives, leaveDeductions, attendanceDeductions, remaining };
+    return { salary: emp.monthly_salary, advances, paidSalary, deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions, incentives, leaveDeductions, attendanceDeductions, manualDeductions, remaining };
   };
 
   // تصدير كشف الرواتب للشهر المحدد (Excel)
@@ -422,19 +513,74 @@ export default function Employees() {
     return { days, records: rows, present, absent, leave, lateDays, lateMinutes, attDeductions };
   }, [profileEmployee, employeeAttendance, employeeLeaves, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
+  // الخصومات اليدوية للموظف في الفترة المختارة — نفس فلترة الإجازات.
+  const profileDeductions = useMemo(() => {
+    if (!profileEmployee) return [];
+    let rows = employeeDeductions.filter(d => d.employee_id === profileEmployee.id);
+    if (profileTimeFilter === 'month') {
+      const currentMonth = new Date().toISOString().slice(0, 7);
+      rows = rows.filter(d => d.month === currentMonth || String(d.date || '').startsWith(currentMonth));
+    } else if (profileTimeFilter === 'week') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      rows = rows.filter(d => new Date(d.date) >= sevenDaysAgo);
+    } else if (profileTimeFilter === 'custom_month') {
+      rows = rows.filter(d => d.month === profileCustomMonth || String(d.date || '').startsWith(profileCustomMonth));
+    } else if (profileTimeFilter === 'custom_year') {
+      rows = rows.filter(d => d.month.startsWith(profileCustomYear) || String(d.date || '').startsWith(profileCustomYear));
+    }
+    return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [profileEmployee, employeeDeductions, profileTimeFilter, profileCustomMonth, profileCustomYear]);
+
+  // مبيعات الموظف في الفترة المختارة — نفس فلتر باقي البروفايل، فـ«الشهر الحالي»
+  // (الافتراضي) = من أول الشهر لآخره. periodLabel بيتكتب على الكارت عشان الرقم
+  // ما يتقريش غلط على إنه شهري وهو ممكن يكون للكل.
+  const profileSales = useMemo(() => {
+    const empty = { sales: 0, profit: 0, count: 0, periodLabel: '', month: '' };
+    if (!profileEmployee) return empty;
+    const currentMonth = new Date().toISOString().slice(0, 7);
+    let inPeriod: (o: any) => boolean;
+    let periodLabel: string;
+    let month = '';
+    if (profileTimeFilter === 'month') {
+      inPeriod = (o) => String(o.date || '').slice(0, 7) === currentMonth;
+      periodLabel = `شهر ${currentMonth}`;
+      month = currentMonth;
+    } else if (profileTimeFilter === 'custom_month') {
+      inPeriod = (o) => String(o.date || '').slice(0, 7) === profileCustomMonth;
+      periodLabel = `شهر ${profileCustomMonth}`;
+      month = profileCustomMonth;
+    } else if (profileTimeFilter === 'custom_year') {
+      inPeriod = (o) => String(o.date || '').startsWith(profileCustomYear);
+      periodLabel = `سنة ${profileCustomYear}`;
+    } else if (profileTimeFilter === 'week') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      inPeriod = (o) => new Date(o.date) >= sevenDaysAgo;
+      periodLabel = 'آخر 7 أيام';
+    } else {
+      inPeriod = () => true;
+      periodLabel = 'كل الفترات';
+    }
+    return { ...salesStatsOf(employeeSalesRows(profileEmployee, inPeriod)), periodLabel, month };
+    // salesOrders لازمة هنا: أول ما الجلب الكامل يوصل الكارت يتحدّث من الرقم
+    // الناقص بتاع الستور للرقم الكامل.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profileEmployee, salesOrders, orders, cashiers, profileTimeFilter, profileCustomMonth, profileCustomYear]);
+
   const profileStats = useMemo(() => {
     if (!profileEmployee) return { advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDays: 0, lateDays: 0, lateMinutes: 0 };
     const attDeductions = profileAttendance.attDeductions;
     return {
       advances: profileTransactions.filter(t => t.type === 'advance').reduce((s, t: any) => s + t.amount, 0),
       paidSalary: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + t.amount, 0),
-      deductions: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + (t.deductions || 0), 0) + profileLeaves.filter(l => l.leave_type === 'unpaid').reduce((s, l) => s + (l.deduction_amount || 0), 0) + attDeductions,
+      deductions: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + (t.deductions || 0), 0) + profileLeaves.filter(l => l.leave_type === 'unpaid').reduce((s, l) => s + (l.deduction_amount || 0), 0) + attDeductions + profileDeductions.reduce((s, d) => s + Number(d.amount || 0), 0),
       incentives: profileTransactions.filter(t => t.type === 'incentive').reduce((s, t: any) => s + t.amount, 0),
       leaveDays: profileLeaves.reduce((s, l) => s + (l.days_count || 0), 0),
       lateDays: profileAttendance.lateDays,
       lateMinutes: profileAttendance.lateMinutes
     };
-  }, [profileTransactions, profileLeaves, profileAttendance, profileEmployee]);
+  }, [profileTransactions, profileLeaves, profileAttendance, profileDeductions, profileEmployee]);
 
   const profileLeaveBalance = profileEmployee ? getLeaveBalanceStats(profileEmployee) : null;
 
@@ -556,6 +702,46 @@ export default function Employees() {
       note: leave?.note || ''
     });
     setShowLeaveModal(true);
+  };
+
+  const handleOpenDeductionModal = (emp: Employee) => {
+    setSelectedEmployee(emp);
+    setDeductionFormData({ amount: '', reason: '', date: new Date().toISOString().slice(0, 10) });
+    setShowDeductionModal(true);
+  };
+
+  const handleDeductionSubmit = async () => {
+    const emp = selectedEmployee;
+    if (!emp) return;
+    const amount = parseFloat(deductionFormData.amount) || 0;
+    if (amount <= 0) return alert('يرجى إدخال مبلغ صحيح');
+
+    // الشهر بيتاخد من تاريخ الخصم عشان الخصم يقع على راتب الشهر الصح حتى لو
+    // اتسجّل متأخر.
+    const month = deductionFormData.date.slice(0, 7);
+    const stats = getEmployeeMonthStats(emp.id, month);
+    const ok = window.confirm(
+      `خصم ${amount.toLocaleString()} ${storeSettings.currency} من ${emp.name} عن شهر ${month}.\n` +
+      `المتبقي حالياً: ${stats.remaining.toLocaleString()} → بعد الخصم: ${Math.max(0, stats.remaining - amount).toLocaleString()}\n\n` +
+      `الخصم مش بيطلّع فلوس من الخزنة — بس بيقلّل المستحق للموظف وقت صرف الراتب.\n\nتأكيد؟`
+    );
+    if (!ok) return;
+
+    setSavingDeduction(true);
+    try {
+      await addEmployeeDeduction({
+        employee_id: emp.id,
+        amount,
+        reason: deductionFormData.reason.trim(),
+        month,
+        date: deductionFormData.date,
+      });
+      setShowDeductionModal(false);
+    } catch (e) {
+      // أشيع سبب: جدول db/42 لسه ماتعملش على الداتابيز.
+      alert('فشل حفظ الخصم: ' + (e instanceof Error ? e.message : String(e)));
+    }
+    setSavingDeduction(false);
   };
 
   const handleTransSubmit = async () => {
@@ -806,12 +992,19 @@ export default function Employees() {
               >
                 <CalendarDays size={20} /> إضافة إجازة
               </button>
-              <button 
+              <button
                 onClick={() => handleOpenTransModal(profileEmployee, 'incentive')}
                 disabled={!(profileEmployee.is_active ?? true)}
                 className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-emerald-50 text-emerald-600 font-bold hover:bg-emerald-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Gift size={20} /> إضافة حافز
+              </button>
+              <button
+                onClick={() => handleOpenDeductionModal(profileEmployee)}
+                disabled={!(profileEmployee.is_active ?? true)}
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-rose-50 text-rose-600 font-bold hover:bg-rose-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <MinusCircle size={20} /> إضافة خصم
               </button>
               <button 
                 onClick={() => handleOpenTransModal(profileEmployee, 'advance')}
@@ -832,10 +1025,37 @@ export default function Employees() {
           </div>
 
           {/* Profile Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
               <span className="text-slate-400 font-bold text-sm mb-1">الراتب الأساسي</span>
               <span className="text-2xl font-black text-slate-800">{profileEmployee.monthly_salary.toLocaleString()} <span className="text-sm font-medium text-slate-400">{storeSettings.currency}</span></span>
+            </div>
+
+            {/* مبيعاته — الأساس اللي بتتحسب عليه العمولة وقت صرف الراتب */}
+            <div className="bg-white p-6 rounded-3xl border-2 border-indigo-100 shadow-sm flex flex-col justify-center">
+              <span className="text-indigo-500 font-bold text-sm mb-1">مبيعاته — {profileSales.periodLabel}</span>
+              <span className="text-2xl font-black text-indigo-600">{profileSales.sales.toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-sm font-medium text-indigo-400">{storeSettings.currency}</span></span>
+              <span className="text-[11px] font-bold text-slate-400 mt-1">
+                {profileSales.count} فاتورة • ربح للشركة: {profileSales.profit.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+              </span>
+            </div>
+
+            {/* العمولة بالنسبة المحفوظة — تقدير سريع قبل ما تفتح نافذة الصرف */}
+            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
+              <span className="text-teal-500 font-bold text-sm mb-1">عمولة متوقعة</span>
+              {Number(profileEmployee.commission_rate) > 0 ? (
+                <>
+                  <span className="text-2xl font-black text-teal-600">
+                    {(profileSales.sales * Number(profileEmployee.commission_rate) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })} <span className="text-sm font-medium text-teal-400">{storeSettings.currency}</span>
+                  </span>
+                  <span className="text-[11px] font-bold text-slate-400 mt-1">{profileEmployee.commission_rate}% من مبيعاته</span>
+                </>
+              ) : (
+                <>
+                  <span className="text-2xl font-black text-slate-300">—</span>
+                  <span className="text-[11px] font-bold text-slate-400 mt-1">محددّش نسبة — حددها وقت صرف الراتب</span>
+                </>
+              )}
             </div>
             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
               <span className="text-sky-500 font-bold text-sm mb-1">رصيد الإجازات المتبقي</span>
@@ -1015,6 +1235,58 @@ export default function Employees() {
                   {profileLeaves.length === 0 && (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-slate-400 font-bold">لا توجد إجازات أو غيابات في هذه الفترة</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Manual Deductions */}
+          <div className="bg-white rounded-[32px] shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                <MinusCircle size={20} className="text-rose-500" />
+                سجل الخصومات اليدوية
+              </h3>
+              <div className="text-xs font-bold text-slate-400">
+                إجمالي الفترة: {profileDeductions.reduce((s, d) => s + Number(d.amount || 0), 0).toLocaleString()} {storeSettings.currency}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right">
+                <thead>
+                  <tr className="bg-white text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-slate-100">
+                    <th className="p-6">التاريخ</th>
+                    <th className="p-6">الشهر</th>
+                    <th className="p-6">السبب</th>
+                    <th className="p-6">المبلغ</th>
+                    <th className="p-6 text-left">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {profileDeductions.map((d) => (
+                    <tr key={d.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-6 text-slate-500 font-bold">{d.date}</td>
+                      <td className="p-6 text-slate-500 font-bold">{d.month}</td>
+                      <td className="p-6 text-slate-600 font-medium">{d.reason || '-'}</td>
+                      <td className="p-6 font-black text-rose-600">{Number(d.amount).toLocaleString()} {storeSettings.currency}</td>
+                      <td className="p-6">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => { if (window.confirm(`حذف خصم ${Number(d.amount).toLocaleString()} ${storeSettings.currency}؟\nهيرجع للمتبقي في راتب شهر ${d.month}.`)) deleteEmployeeDeduction(d.id); }}
+                            className="p-2 text-slate-400 hover:text-red-500 transition"
+                            title="حذف"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {profileDeductions.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-slate-400 font-bold">لا توجد خصومات يدوية في هذه الفترة</td>
                     </tr>
                   )}
                 </tbody>
@@ -1792,6 +2064,97 @@ export default function Employees() {
 
               <button onClick={handleLeaveSubmit} className="w-full text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:opacity-90 transition-all bg-sky-600">
                 {editingLeave ? 'حفظ التعديلات' : 'تسجيل الإجازة'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Deduction Modal */}
+      {showDeductionModal && selectedEmployee && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <div className="p-8 text-white flex justify-between items-center shrink-0 bg-rose-600">
+              <div>
+                <h2 className="text-2xl font-black">إضافة خصم</h2>
+                <p className="text-white/70 text-sm mt-1">{selectedEmployee.name}</p>
+              </div>
+              <button onClick={() => setShowDeductionModal(false)} className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition text-white"><X size={24} /></button>
+            </div>
+            <div className="p-8 space-y-6 overflow-y-auto">
+              {(() => {
+                const month = deductionFormData.date.slice(0, 7);
+                const stats = getEmployeeMonthStats(selectedEmployee.id, month);
+                const amount = parseFloat(deductionFormData.amount) || 0;
+                const after = Math.max(0, stats.remaining - amount);
+                const clamped = amount > stats.remaining;
+                return (
+                  <div className="bg-rose-50 rounded-2xl p-4 border border-rose-100 grid grid-cols-3 gap-3">
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500">خصومات شهر {month}</p>
+                      <p className="text-lg font-black text-slate-800">{stats.deductions.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500">المتبقي حالياً</p>
+                      <p className="text-lg font-black text-slate-800">{stats.remaining.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-rose-500">المتبقي بعد الخصم</p>
+                      <p className="text-lg font-black text-rose-600">{after.toLocaleString()} <span className="text-xs">{storeSettings.currency}</span></p>
+                      {clamped && amount > 0 && (
+                        <p className="text-[10px] font-bold text-amber-600 mt-1">الخصم أكبر من المتبقي — الزيادة مش هتترحّل</p>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">المبلغ <span className="text-red-500">*</span></label>
+                  <input
+                    type="number" min="0" step="0.01"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-bold focus:ring-2 focus:ring-rose-500"
+                    value={deductionFormData.amount}
+                    onChange={e => setDeductionFormData({ ...deductionFormData, amount: e.target.value })}
+                    placeholder="0"
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">تاريخ الخصم</label>
+                  <input
+                    type="date"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-bold focus:ring-2 focus:ring-rose-500"
+                    value={deductionFormData.date}
+                    onChange={e => setDeductionFormData({ ...deductionFormData, date: e.target.value })}
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">الخصم بيقع على راتب شهر {deductionFormData.date.slice(0, 7)}</p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">السبب</label>
+                <textarea
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 h-24 outline-none font-medium resize-none"
+                  value={deductionFormData.reason}
+                  onChange={e => setDeductionFormData({ ...deductionFormData, reason: e.target.value })}
+                  placeholder="سبب الخصم — هيظهر في سجل حركات الموظف"
+                />
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                <p className="text-xs font-bold text-slate-500 leading-relaxed">
+                  ℹ️ الخصم مش بيطلّع فلوس من الخزنة — بيتجمّع على الموظف وبيتخصم تلقائياً من المتبقي وقت صرف الراتب.
+                </p>
+              </div>
+
+              <button
+                onClick={handleDeductionSubmit}
+                disabled={savingDeduction || !(parseFloat(deductionFormData.amount) > 0)}
+                className="w-full text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:opacity-90 transition-all bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {savingDeduction ? 'جاري الحفظ...' : 'تسجيل الخصم'}
               </button>
             </div>
           </div>

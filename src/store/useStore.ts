@@ -403,6 +403,21 @@ export interface EmployeeLeave {
   created_at: string;
 }
 
+/**
+ * خصم يدوي على الموظف — بيتجمّع خلال الشهر وبيتخصم من المتبقي وقت صرف الراتب.
+ * جدول منفصل عن employee_transactions عن قصد: الحركات هناك بتتطرح من خزنة
+ * المحل لأنها فلوس خارجة، والخصم مش فلوس خارجة من الدرج (شوف db/42).
+ */
+export interface EmployeeDeduction {
+  id: string;
+  employee_id: string;
+  amount: number;
+  reason: string;
+  month: string;
+  date: string;
+  created_at: string;
+}
+
 export interface EmployeeAttendance {
   id: string;
   employee_id: string;
@@ -484,6 +499,7 @@ interface CashierStore {
   employees: Employee[];
   employeeTransactions: EmployeeTransaction[];
   employeeLeaves: EmployeeLeave[];
+  employeeDeductions: EmployeeDeduction[];
   employeeAttendance: EmployeeAttendance[];
   productSuggestions: ProductSuggestion[];
   cashierNotes: CashierNote[];
@@ -645,6 +661,8 @@ interface CashierStore {
   addEmployeeLeave: (leave: Omit<EmployeeLeave, 'id' | 'created_at'>) => Promise<void>;
   updateEmployeeLeave: (id: string, leave: Partial<Omit<EmployeeLeave, 'id' | 'created_at'>>) => Promise<void>;
   deleteEmployeeLeave: (id: string) => Promise<void>;
+  addEmployeeDeduction: (deduction: Omit<EmployeeDeduction, 'id' | 'created_at'>) => Promise<void>;
+  deleteEmployeeDeduction: (id: string) => Promise<void>;
   addEmployeeAttendance: (att: Omit<EmployeeAttendance, 'id' | 'created_at'>) => Promise<void>;
   deleteEmployeeAttendance: (id: string) => Promise<void>;
 
@@ -992,6 +1010,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   employees: [],
   employeeTransactions: [],
   employeeLeaves: [],
+  employeeDeductions: [],
   employeeAttendance: [],
   productSuggestions: [],
   cashierNotes: [],
@@ -1250,6 +1269,15 @@ export const useStore = create<CashierStore>((set, get) => ({
         employeeLeaves: (employeeLeavesRes.data ?? []) as EmployeeLeave[],
         employeeAttendance: (employeeAttendanceRes.data ?? []) as EmployeeAttendance[],
       });
+
+      // خصومات الموظفين تُجلب منفصلة عشان لو الجدول لسه ماتعملش (db/42) الشاشة
+      // كلها ما تقعش — نفس أسلوب المصاريف تحت.
+      try {
+        const { data: dedData } = await supabase.from('employee_deductions').select('*').order('created_at', { ascending: false });
+        if (dedData) set({ employeeDeductions: dedData as EmployeeDeduction[] });
+      } catch (e) {
+        console.warn('employee_deductions not available:', e);
+      }
 
       // Fetch expenses separately to avoid breaking the whole loadAll if the table is missing
       try {
@@ -2250,12 +2278,15 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       // Handle paid_amount adjustments based on cash refunded
       const offlineRefundAmount = returns.reduce((sum, ret) => sum + (ret.refundAmount || 0), 0);
-      const offlinePaidAmount = offlineRefundAmount > 0 
+      const offlinePaidAmount = offlineRefundAmount > 0
         ? (order.paid_amount || 0) - offlineRefundAmount
         : order.paid_amount;
+      // نفس تاريخ الاسترجاع اللي بيتحفظ في الطابور، عشان القائمة تعرضه صح على طول
+      // من غير استنّي المزامنة.
+      const offlineRefundedAt = new Date().toISOString();
 
       const updatedOrders = state.orders.map((o, idx) =>
-        idx === orderIndex ? { ...o, items: updatedItems, paid_amount: offlinePaidAmount } : o
+        idx === orderIndex ? { ...o, items: updatedItems, paid_amount: offlinePaidAmount, refunded_at: offlineRefundedAt } : o
       );
 
       if (orderId.startsWith('OFF-')) {
@@ -2284,7 +2315,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         const newOfflineReturn = {
           orderId,
           returns,
-          date: new Date().toISOString(),
+          // نفس القيمة المعروضة محلياً — عشان بعد المزامنة التاريخ ما يتغيّرش.
+          date: offlineRefundedAt,
         };
         const updatedReturnsQueue = [...state.offlineReturnsQueue, newOfflineReturn];
         localStorage.setItem('cashier_offline_returns_queue', JSON.stringify(updatedReturnsQueue));
@@ -2374,20 +2406,26 @@ export const useStore = create<CashierStore>((set, get) => ({
         if (methodError) {
           console.warn('Could not store refund_method (column may be missing):', methodError.message);
         }
-        // تاريخ الاسترجاع — عشان التقفيل يحسب المرتجع على يومه لا يوم البيع (best-effort:
-        // العمود refunded_at ممكن يكون ناقص في قواعد قديمة → شغّلي db/36).
-        const { error: refundedAtError } = await supabase
-          .from('orders')
-          .update({ refunded_at: refundedAt })
-          .eq('id', orderId);
-        if (refundedAtError) {
-          console.warn('Could not store refunded_at (column may be missing):', refundedAtError.message);
-        }
+      }
+
+      // تاريخ الاسترجاع — لكل مرتجع، حتى اللي مرجّعش كاش (مرتجع فاتورة آجلة بيقلّل
+      // المديونية من غير ما فلوس تخرج من الدرج). كان جوه if (totalRefundAmount > 0)،
+      // فالمرتجع من غير كاش كان بيفضل refunded_at = null وقوائم المرتجعات بتقع على
+      // fallback تاريخ الفاتورة → المرتجع كان بيظهر بتاريخ الشراء.
+      // (best-effort: العمود ممكن يكون ناقص في قواعد قديمة → شغّلي db/36).
+      const { error: refundedAtError } = await supabase
+        .from('orders')
+        .update({ refunded_at: refundedAt })
+        .eq('id', orderId);
+      if (refundedAtError) {
+        console.warn('Could not store refunded_at (column may be missing — run db/36):', refundedAtError.message);
       }
 
       const updatedOrders = state.orders.map((o, idx) =>
         idx === orderIndex
-          ? { ...o, items: updatedItems, paid_amount: finalPaidAmount, refund_method: totalRefundAmount > 0 ? refundMethod : o.refund_method, refunded_at: totalRefundAmount > 0 ? refundedAt : (o as any).refunded_at }
+          // refund_method يفضل شرطي (مالوش معنى من غير كاش)، لكن refunded_at
+          // بيتسجّل لكل مرتجع عشان يظهر بتاريخه الصح في القوائم.
+          ? { ...o, items: updatedItems, paid_amount: finalPaidAmount, refund_method: totalRefundAmount > 0 ? refundMethod : o.refund_method, refunded_at: refundedAt }
           : o
       );
 
@@ -2764,8 +2802,21 @@ export const useStore = create<CashierStore>((set, get) => ({
             .from('products')
             .update({ stock_quantity: currentStock + returnItem.returnQty })
             .eq('id', returnItem.productId);
-          
+
           if (prodError) throw prodError;
+        }
+
+        // تاريخ الاسترجاع = وقت ما المرتجع اتعمل أوفلاين فعلاً (المحفوظ في الطابور)،
+        // مش وقت المزامنة. من غيره المرتجع بيتزامن بـ refunded_at = null فيظهر
+        // بتاريخ الشراء.
+        if (returnBatch.date) {
+          const { error: refundedAtError } = await supabase
+            .from('orders')
+            .update({ refunded_at: returnBatch.date })
+            .eq('id', batchOrderId);
+          if (refundedAtError) {
+            console.warn('Could not store refunded_at on synced return (run db/36):', refundedAtError.message);
+          }
         }
 
       } catch (err) {
@@ -5375,6 +5426,27 @@ setupRealtime: () => {
     }
 
     set((state) => ({ employeeLeaves: state.employeeLeaves.filter(l => l.id !== id) }));
+  },
+
+  // الخصم اليدوي مالوش أي أثر على الخزنة — مجرد صف بيقلّل المتبقي للموظف.
+  addEmployeeDeduction: async (deduction) => {
+    const { data, error } = await supabase.from('employee_deductions').insert(deduction).select().single();
+    if (error) {
+      console.error("Add Employee Deduction Error:", error);
+      throw error;
+    }
+    if (data) {
+      set((state) => ({ employeeDeductions: [data as EmployeeDeduction, ...state.employeeDeductions] }));
+    }
+  },
+
+  deleteEmployeeDeduction: async (id) => {
+    const { error } = await supabase.from('employee_deductions').delete().eq('id', id);
+    if (error) {
+      console.error("Delete Employee Deduction Error:", error);
+      return;
+    }
+    set((state) => ({ employeeDeductions: state.employeeDeductions.filter(d => d.id !== id) }));
   },
 
   addEmployeeAttendance: async (att) => {
