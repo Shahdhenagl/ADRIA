@@ -6,6 +6,7 @@ import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { calculateOrderReturnValue } from '../../utils/returns';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { printDocument } from '../../utils/printWindow';
+import { buildPagesQrBlock } from '../../utils/pagesQr';
 import { EXTRA_PAYMENT_KEYS, isPaymentKeyEnabled, payLabelOf } from '../../utils/paymentMethods';
 import * as XLSX from 'xlsx';
 
@@ -22,13 +23,14 @@ export default function Invoices() {
   const [showDeferredOnly, setShowDeferredOnly] = useState(false);
   const [viewMode, setViewMode] = useState<'active' | 'deleted'>('active');
   const [selectedDay, setSelectedDay] = useState<string>('');
-  // أساس فلترة اليوم/الشهر/السنة: تاريخ الفاتورة (الافتراضي) أو تاريخ المرتجع.
-  // المرتجع بيتسجّل على refunded_at (db/36)، فاسترجاع فاتورة قديمة النهاردة كان
-  // بيفضل مختفي من فلتر النهاردة لأن الفلتر كان على o.date بس.
+  // أساس فلترة اليوم/الشهر/السنة: تاريخ الفاتورة (الافتراضي) أو تاريخ المرتجع
+  // أو تاريخ الاستبدال. المرتجع بيتسجّل على refunded_at (db/36) والاستبدال جوه
+  // exchange_data.date، فاسترجاع/استبدال فاتورة قديمة النهاردة كان بيفضل مختفي
+  // من فلتر النهاردة لأن الفلتر كان على o.date بس.
   // مقصود إنه أساس منفصل مش شرط إضافي: لو فاتورة قديمة دخلت في فلتر النهاردة،
   // قيمتها وربحها كانوا هيتحسبوا في إجمالي أرباح اليوم وكشف عمولة مسؤول
   // المبيعات كأنها مبيعات النهاردة.
-  const [dateBasis, setDateBasis] = useState<'invoice' | 'refund'>('invoice');
+  const [dateBasis, setDateBasis] = useState<'invoice' | 'refund' | 'exchange'>('invoice');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
   const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
   const [selectedCashier, setSelectedCashier] = useState<string>('all');
@@ -84,6 +86,7 @@ export default function Invoices() {
 
     const invoiceUrl = `${window.location.origin}/view-invoice/${order.id}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(invoiceUrl)}`;
+    const pagesQrBlock = buildPagesQrBlock(storeSettings);
 
     const customerBlock = order.customer
       ? `<div class="customer-info-grid">
@@ -140,9 +143,10 @@ export default function Invoices() {
   .status-paid{background:#e8f5e9;color:#1b5e20;border:1px solid #a5d6a7;}
   .status-debt{background:#ffebee;color:#b71c1c;border:1px solid #ef9a9a;}
 
+  .qr-row{display:flex;justify-content:center;align-items:flex-start;gap:14px;}
   .qr-code-container{display:flex;flex-direction:column;align-items:center;gap:2px;margin-top:8px;}
   .qr-code-img{width:90px;height:90px;}
-  .qr-label{font-size:9px;font-weight:900;color:#000;}
+  .qr-label{font-size:9px;font-weight:900;color:#000;text-align:center;}
 
   .footer{text-align:center;margin-top:8px;padding-top:6px;border-top:1px dashed #000;font-size:9px;color:#333;font-weight:bold;}
 
@@ -207,9 +211,12 @@ export default function Invoices() {
     </div>
   </div>
 
-  <div class="qr-code-container">
-    <img class="qr-code-img" src="${qrCodeUrl}" alt="QR Code" />
-    <div class="qr-label">امسح الكود لعرض الفاتورة</div>
+  <div class="qr-row">
+    <div class="qr-code-container">
+      <img class="qr-code-img" src="${qrCodeUrl}" alt="QR Code" />
+      <div class="qr-label">امسح الكود لعرض الفاتورة</div>
+    </div>
+    ${pagesQrBlock}
   </div>
 
   <div class="footer">شكراً لثقتكم بنا - ${escapeHtml(storeSettings.name)} ترحب بكم دائماً</div>
@@ -312,12 +319,13 @@ export default function Invoices() {
       ['تقرير الفواتير', '', '', '', '', '', '', ''],
       ['التاريخ', new Date().toLocaleDateString(), '', '', '', '', '', ''],
       [''],
-      ['رقم الفاتورة', 'العميل', 'التاريخ', 'تاريخ المرتجع', 'الإجمالي', 'المدفوع', 'كاش', 'فيزا', 'محفظة', 'انستا', ...extraCols.map((k) => payLabelOf(storeSettings as any, k)), 'الباقي', 'النوع'],
+      ['رقم الفاتورة', 'العميل', 'التاريخ', 'تاريخ المرتجع', 'تاريخ الاستبدال', 'الإجمالي', 'المدفوع', 'كاش', 'فيزا', 'محفظة', 'انستا', ...extraCols.map((k) => payLabelOf(storeSettings as any, k)), 'الباقي', 'النوع'],
       ...filteredOrders.map(o => [
         o.id,
         o.customer?.name || 'عميل نقدي',
         new Date(o.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
         (o as any).refunded_at ? new Date((o as any).refunded_at).toLocaleString('ar-EG', { calendar: 'gregory' }) : '',
+        (o as any).exchange_data?.date ? new Date((o as any).exchange_data.date).toLocaleString('ar-EG', { calendar: 'gregory' }) : '',
         o.total,
         o.paid_amount,
         o.paid_cash,
@@ -391,9 +399,15 @@ export default function Invoices() {
   const filteredOrders = useMemo(() => {
     return visibleOrders.filter(o => {
       const refundedAt = (o as any).refunded_at as string | null | undefined;
-      // على أساس المرتجع: الفواتير اللي مالهاش تاريخ استرجاع مالهاش مكان في العرض.
+      // الاستبدال بيتسجّل جوه exchange_data.date — نفس المصدر اللي خزينة الكاشير
+      // بتحسب عليه يوم الاستبدال.
+      const exchangedAt = (o as any).exchange_data?.date as string | null | undefined;
+      // على أساس المرتجع/الاستبدال: الفواتير اللي مالهاش التاريخ ده مالهاش مكان في العرض.
       if (dateBasis === 'refund' && !refundedAt) return false;
-      const orderDate = new Date(dateBasis === 'refund' ? refundedAt! : o.date);
+      if (dateBasis === 'exchange' && !exchangedAt) return false;
+      const orderDate = new Date(
+        dateBasis === 'refund' ? refundedAt! : dateBasis === 'exchange' ? exchangedAt! : o.date
+      );
       const orderDay = [
         orderDate.getFullYear(),
         String(orderDate.getMonth() + 1).padStart(2, '0'),
@@ -507,6 +521,15 @@ export default function Invoices() {
                 title="عرض الفواتير المُرتجعة فقط، مفلترة بيوم الاسترجاع نفسه"
               >
                 تاريخ المرتجع
+              </button>
+              <button
+                onClick={() => setDateBasis('exchange')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-black transition ${
+                  dateBasis === 'exchange' ? 'bg-amber-500 text-white shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}
+                title="عرض فواتير الاستبدال فقط، مفلترة بيوم الاستبدال نفسه"
+              >
+                تاريخ الاستبدال
               </button>
             </div>
             <div className="relative">
@@ -705,6 +728,7 @@ export default function Invoices() {
                 <th className="p-4">بيانات العميل</th>
                 <th className="p-4">التاريخ والوقت</th>
                 <th className="p-4">تاريخ المرتجع</th>
+                <th className="p-4">تاريخ الاستبدال</th>
                 <th className="p-4 text-center">المسؤول</th>
                 <th className="p-4 text-center">مسؤول المبيعات</th>
                 <th className="p-4">تفاصيل المنتجات</th>
@@ -720,7 +744,7 @@ export default function Invoices() {
             <tbody className="divide-y divide-slate-100 text-slate-700">
               {filteredOrders.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="p-12 text-center text-slate-400 text-lg font-bold">
+                  <td colSpan={15} className="p-12 text-center text-slate-400 text-lg font-bold">
                     لا يوجد فواتير تطابق بحثك حالياً.
                   </td>
                 </tr>
@@ -775,6 +799,27 @@ export default function Invoices() {
                             <div className="flex flex-col gap-1">
                               <span className="text-xs font-black text-rose-600">
                                 {new Date(refundedAt).toLocaleString('ar-EG', { calendar: 'gregory' })}
+                              </span>
+                              {!sameDay && (
+                                <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 w-fit">
+                                  يوم مختلف عن الفاتورة
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </td>
+                      <td className="p-4">
+                        {(() => {
+                          const xd = (order as any).exchange_data;
+                          if (!xd) return <span className="text-slate-300">—</span>;
+                          // استبدال قديم اتسجّل قبل ما exchange_data تحمل date.
+                          if (!xd.date) return <span className="text-[10px] font-bold text-slate-400">غير مسجّل</span>;
+                          const sameDay = new Date(xd.date).toDateString() === new Date(order.date).toDateString();
+                          return (
+                            <div className="flex flex-col gap-1">
+                              <span className="text-xs font-black text-amber-600">
+                                {new Date(xd.date).toLocaleString('ar-EG', { calendar: 'gregory' })}
                               </span>
                               {!sameDay && (
                                 <span className="text-[10px] font-bold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded border border-amber-100 w-fit">

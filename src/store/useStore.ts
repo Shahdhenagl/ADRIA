@@ -350,6 +350,10 @@ export interface StoreSettings {
   showInvoiceProfit?: boolean; // إظهار ربح الفاتورة في شاشة الكاشير
   allowCashierEmployeeAdvance?: boolean; // السماح للكاشير بصرف سلف للموظفين (افتراضياً مغلق)
   dayStartHour?: number; // ساعة بداية اليوم (0-23) لتقفيل اليومية؛ افتراضي 3 ص — الفواتير قبلها تُحسب لليوم السابق
+  expenseCategories?: string[]; // فئات مصروف أضافها المستخدم — بتتزاد على القائمة الثابتة
+  incomeCategories?: string[]; // فئات إيراد أضافها المستخدم — بتتزاد على القائمة الثابتة
+  pagesQrUrl?: string; // رابط صفحات المحل — QR ثابت على كل فاتورة مطبوعة
+  pagesQrLabel?: string; // العنوان تحت QR الصفحات؛ افتراضي «تابعنا»
 }
 
 export interface Employee {
@@ -767,6 +771,12 @@ function mapSettings(row: Record<string, unknown>): StoreSettings {
     showInvoiceProfit: (row.show_invoice_profit as boolean) ?? true,
     allowCashierEmployeeAdvance: (row.allow_cashier_employee_advance as boolean) ?? false,
     dayStartHour: (row.day_start_hour as number) ?? 3,
+    // db/43 ممكن يكون لسه ماتشغّلش — الأعمدة الناقصة بترجع undefined والواجهة
+    // بتقع على القوائم الثابتة.
+    expenseCategories: Array.isArray(row.expense_categories) ? (row.expense_categories as string[]) : undefined,
+    incomeCategories: Array.isArray(row.income_categories) ? (row.income_categories as string[]) : undefined,
+    pagesQrUrl: (row.pages_qr_url as string) ?? '',
+    pagesQrLabel: (row.pages_qr_label as string) ?? '',
   };
 }
 
@@ -3259,6 +3269,10 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.showInvoiceProfit !== undefined) mapped.show_invoice_profit = newSettings.showInvoiceProfit;
     if (newSettings.allowCashierEmployeeAdvance !== undefined) mapped.allow_cashier_employee_advance = newSettings.allowCashierEmployeeAdvance;
     if (newSettings.dayStartHour !== undefined) mapped.day_start_hour = newSettings.dayStartHour;
+    if (newSettings.expenseCategories !== undefined) mapped.expense_categories = newSettings.expenseCategories;
+    if (newSettings.incomeCategories !== undefined) mapped.income_categories = newSettings.incomeCategories;
+    if (newSettings.pagesQrUrl !== undefined) mapped.pages_qr_url = newSettings.pagesQrUrl;
+    if (newSettings.pagesQrLabel !== undefined) mapped.pages_qr_label = newSettings.pagesQrLabel;
 
     const { data: existing } = await supabase.from('store_settings').select('id').limit(1).maybeSingle();
 

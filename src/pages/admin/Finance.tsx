@@ -14,12 +14,14 @@ import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, opening
 import { allocatePayment } from '../../utils/paymentAllocator';
 import { isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
+import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
 export default function Finance() {
   const { 
     expenses, orders, storeSettings, addExpense, updateExpense, 
     deleteExpense, deletePurchaseInvoice, purchaseInvoices,
-    deleteOrder, editOrder, updatePurchaseInvoice, recordMainTreasuryOut, recordMainTreasuryIn, savingsConvert
+    deleteOrder, editOrder, updatePurchaseInvoice, recordMainTreasuryOut, recordMainTreasuryIn, savingsConvert,
+    updateSettings
   } = useStore();
   const activeOrders = useMemo(() => orders.filter((order) => !order.is_deleted), [orders]);
 
@@ -566,6 +568,26 @@ export default function Finance() {
     } catch {
       alert('تعذّر التحقق من رمز الخزنة الرئيسية');
       return false;
+    }
+  };
+
+  // إضافة نوع مصروف/إيراد من نفس المودال — بيتخزّن في الإعدادات فيظهر في
+  // الخزنة الرئيسية وخزنة الكاشير مع بعض، ويتختار على طول للحركة الحالية.
+  const handleAddCategory = async (type: 'expense' | 'income') => {
+    const name = window.prompt(type === 'expense' ? 'اسم نوع المصروف الجديد:' : 'اسم نوع الإيراد الجديد:');
+    if (name === null) return;
+    const next = withAddedCategory(storeSettings as any, type, name);
+    if (!next) {
+      if (name.trim()) alert('النوع ده موجود بالفعل.');
+      return;
+    }
+    const clean = next[next.length - 1];
+    try {
+      await updateSettings(type === 'expense' ? { expenseCategories: next } : { incomeCategories: next });
+      setFormData((prev) => ({ ...prev, category: clean }));
+    } catch (e) {
+      // أشيع سبب: أعمدة db/43 لسه ماتعملتش على الداتابيز.
+      alert('فشل حفظ النوع الجديد: ' + (e instanceof Error ? e.message : String(e)));
     }
   };
 
@@ -1467,29 +1489,25 @@ export default function Finance() {
                     <>
                       <div>
                         <label className="block text-sm font-bold text-slate-700 mb-2">{formData.transaction_type === 'expense' ? 'فئة المصروف' : 'فئة الإيراد'}</label>
-                        <select 
+                        <div className="flex gap-2">
+                        <select
                           className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 focus:ring-2 focus:ring-indigo-500/20 outline-none font-bold"
                           value={formData.category}
                           onChange={e => setFormData({...formData, category: e.target.value})}
                         >
-                          {formData.transaction_type === 'expense' ? (
-                            <>
-                              <option value="عام">عام</option>
-                              <option value="إيجار">إيجار</option>
-                              <option value="كهرباء/مياه">كهرباء / مياه</option>
-                              <option value="رواتب">رواتب</option>
-                              <option value="نقل/توصيل">نقل / توصيل</option>
-                              <option value="صيانة">صيانة</option>
-                            </>
-                          ) : (
-                            <>
-                              <option value="عام">إيراد عام</option>
-                              <option value="خدمات">خدمات إضافية</option>
-                              <option value="استثمار">عائد استثمار</option>
-                              <option value="أخرى">أخرى</option>
-                            </>
-                          )}
+                          {categoriesFor(storeSettings as any, formData.transaction_type as 'expense' | 'income').map((c) => (
+                            <option key={c.value} value={c.value}>{c.label}</option>
+                          ))}
                         </select>
+                        <button
+                          type="button"
+                          onClick={() => handleAddCategory(formData.transaction_type as 'expense' | 'income')}
+                          className="shrink-0 px-4 rounded-2xl bg-indigo-50 text-indigo-600 font-black hover:bg-indigo-100 transition border border-indigo-100"
+                          title="إضافة نوع جديد"
+                        >
+                          + نوع
+                        </button>
+                        </div>
                       </div>
                     </>
                   )}

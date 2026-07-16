@@ -11,6 +11,8 @@ import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
+import { categoriesFor, withAddedCategory } from '../utils/financeCategories';
+import { buildPagesQrBlock } from '../utils/pagesQr';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../utils/treasury';
 import { calculateOrderReturnValue } from '../utils/returns';
 
@@ -19,7 +21,7 @@ import { calculateOrderReturnValue } from '../utils/returns';
 const RECONCILE_CAT = 'تسوية جرد الخزنة';
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, recordHeldDepositConversion } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, recordHeldDepositConversion, updateSettings } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -675,6 +677,26 @@ export default function POS() {
   const [showFinanceModal, setShowFinanceModal] = useState(false);
   const [financeType, setFinanceType] = useState<'expense' | 'income' | 'transfer'>('expense');
   const [financeCategory, setFinanceCategory] = useState('عام');
+
+  // نفس فكرة الزرار في Finance.tsx — النوع بيتخزّن في إعدادات المحل فيظهر في
+  // خزنة الكاشير والخزنة الرئيسية مع بعض.
+  const handleAddFinanceCategory = async () => {
+    const type = financeType as 'expense' | 'income';
+    const name = window.prompt(type === 'expense' ? 'اسم نوع المصروف الجديد:' : 'اسم نوع الإيراد الجديد:');
+    if (name === null) return;
+    const next = withAddedCategory(storeSettings as any, type, name);
+    if (!next) {
+      if (name.trim()) alert('النوع ده موجود بالفعل.');
+      return;
+    }
+    try {
+      await updateSettings(type === 'expense' ? { expenseCategories: next } : { incomeCategories: next });
+      setFinanceCategory(next[next.length - 1]);
+    } catch (e) {
+      // أشيع سبب: أعمدة db/43 لسه ماتعملتش على الداتابيز.
+      alert('فشل حفظ النوع الجديد: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
   // مبالغ المعاملة المالية لكل طريقة دفع مفعّلة
   const [financePay, setFinancePay] = useState<Record<string, string>>({});
   const financeVal = (k: string) => parseFloat(financePay[k] || '') || 0;
@@ -1257,6 +1279,7 @@ export default function POS() {
 
     const invoiceUrl = `${window.location.origin}/view-invoice/${invId}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(invoiceUrl)}`;
+    const pagesQrBlock = buildPagesQrBlock(storeSettings);
 
     const debtLine = (orderDetails.totalDebt || 0) > 0.5
       ? `<div class="info-item" style="border-top:1px dashed #000;padding-top:3px;margin-top:2px;"><strong>إجمالي المديونية الحالية:</strong> <span style="color:#000;font-weight:900;font-size:14px;">${(orderDetails.totalDebt || 0).toFixed(2)} ${currentSettings.currency}</span></div>`
@@ -1311,9 +1334,10 @@ export default function POS() {
   .status-paid{background:#fff;color:#000;}
   .status-debt{background:#fff;color:#000;}
 
+  .qr-row{display:flex;justify-content:center;align-items:flex-start;gap:10px;}
   .qr-code-container{display:flex;flex-direction:column;align-items:center;gap:1px;margin-top:4px;}
   .qr-code-img{width:68px;height:68px;}
-  .qr-label{font-size:9px;font-weight:900;color:#000;}
+  .qr-label{font-size:9px;font-weight:900;color:#000;text-align:center;}
 
   .footer{text-align:center;margin-top:4px;padding-top:3px;border-top:1px dashed #000;font-size:9px;color:#000;font-weight:bold;}
 
@@ -1383,9 +1407,12 @@ export default function POS() {
     })()}
   </div>
 
-  <div class="qr-code-container">
-    <img class="qr-code-img" src="${qrCodeUrl}" alt="QR Code" />
-    <div class="qr-label">امسح الكود لعرض الفاتورة</div>
+  <div class="qr-row">
+    <div class="qr-code-container">
+      <img class="qr-code-img" src="${qrCodeUrl}" alt="QR Code" />
+      <div class="qr-label">امسح الكود لعرض الفاتورة</div>
+    </div>
+    ${pagesQrBlock}
   </div>
 
   <div class="footer">شكراً لتعاملكم معنا</div>
@@ -2017,29 +2044,25 @@ export default function POS() {
                 <>
                   <div>
                     <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">{financeType === 'expense' ? 'فئة المصروف' : 'فئة الإيراد'}</label>
-                    <select
-                      className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
-                      value={financeCategory}
-                      onChange={e => setFinanceCategory(e.target.value)}
-                    >
-                      {financeType === 'expense' ? (
-                        <>
-                          <option value="عام">عام</option>
-                          <option value="إيجار">إيجار</option>
-                          <option value="كهرباء/مياه">كهرباء / مياه</option>
-                          <option value="رواتب">رواتب</option>
-                          <option value="نقل/توصيل">نقل / توصيل</option>
-                          <option value="صيانة">صيانة</option>
-                        </>
-                      ) : (
-                        <>
-                          <option value="عام">إيراد عام</option>
-                          <option value="خدمات">خدمات إضافية</option>
-                          <option value="استثمار">عائد استثمار</option>
-                          <option value="أخرى">أخرى</option>
-                        </>
-                      )}
-                    </select>
+                    <div className="flex gap-2">
+                      <select
+                        className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-emerald-500 font-bold"
+                        value={financeCategory}
+                        onChange={e => setFinanceCategory(e.target.value)}
+                      >
+                        {categoriesFor(storeSettings as any, financeType as 'expense' | 'income').map((c) => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={handleAddFinanceCategory}
+                        className="shrink-0 px-4 rounded-xl bg-emerald-50 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 font-black hover:bg-emerald-100 dark:hover:bg-emerald-900/50 transition"
+                        title="إضافة نوع جديد"
+                      >
+                        + نوع
+                      </button>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     {activePayKeys.map((k) => (

@@ -4,6 +4,7 @@ import { useStore } from '../store/useStore';
 import type { Order, OrderItem, Product } from '../store/useStore';
 import { printDocument } from '../utils/printWindow';
 import { escapeHtml } from '../utils/escapeHtml';
+import { buildPagesQrBlock } from '../utils/pagesQr';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../utils/paymentMethods';
 
 interface EditInvoiceModalProps {
@@ -153,6 +154,11 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       .tot{display:flex;justify-content:space-between;font-size:13px;font-weight:900;border-top:1px solid #000;padding-top:3px;margin-top:2px;}
       .rem{font-size:14px;font-weight:900;text-align:center;border:1.5px solid #000;border-radius:5px;padding:5px;margin-top:6px;}
       .ft{text-align:center;font-size:10px;font-weight:700;margin-top:6px;border-top:1px dashed #000;padding-top:4px;}
+      /* نفس أسماء كلاسات باقي المطبوعات عشان buildPagesQrBlock يرندر زيها بالظبط */
+      .qr-row{display:flex;justify-content:center;align-items:flex-start;gap:10px;margin-top:6px;}
+      .qr-code-container{display:flex;flex-direction:column;align-items:center;gap:1px;}
+      .qr-code-img{width:68px;height:68px;}
+      .qr-label{font-size:9px;font-weight:900;color:#000;text-align:center;}
       @media print{@page{size:72mm auto;margin:0;}.c{width:72mm;}}
     </style></head><body><div class="c">
       <div class="nm">${escapeHtml(storeSettings.name)}</div>
@@ -168,6 +174,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       <table>${rows(cart)}</table>
       <div class="tot"><span>الإجمالي الجديد:</span><span>${total.toFixed(2)} ${cur}</span></div>
       ${diffBlock}
+      ${(() => { const b = buildPagesQrBlock(storeSettings); return b ? `<div class="qr-row">${b}</div>` : ''; })()}
       <div class="ft">شكراً لتعاملكم معنا</div>
     </div><script>window.onload=()=>{setTimeout(()=>{window.print();},400);}</script></body></html>`;
     void printDocument('invoice', html);

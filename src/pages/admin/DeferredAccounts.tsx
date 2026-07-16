@@ -5,6 +5,7 @@ import { normalizeArabic } from '../../utils/textUtils';
 import { calculateOrderReturnValue } from '../../utils/returns';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { openPrintWindow } from '../../utils/printWindow';
+import { buildPagesQrBlock } from '../../utils/pagesQr';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
@@ -464,6 +465,7 @@ export default function DeferredAccounts() {
   .info-item strong{color:#64748b;white-space:nowrap;}
   .info-item span{color:#1e293b;font-weight:700;}
   
+  .qr-row{display:flex;justify-content:center;align-items:flex-start;gap:14px;}
   .qr-code-container{display:flex;flex-direction:column;align-items:center;gap:3px;}
   .qr-code-img{width:80px;height:80px;padding:3px;background:#fff;border-radius:10px;border:1px solid #e2e8f0;box-shadow: 0 1px 3px rgba(0,0,0,0.1);}
   .qr-label{font-size:10px;font-weight:900;color:#1e293b;text-align:center;margin-top:2px;background:#f1f5f9;padding:2px 8px;border-radius:4px;}
@@ -504,9 +506,12 @@ export default function DeferredAccounts() {
       </div>
     </div>
 
-    <div class="qr-code-container">
-      <img class="qr-code-img" src="${qrCodeUrl}" alt="QR Code" />
-      <div class="qr-label">تفاصيل الفاتورة</div>
+    <div class="qr-row">
+      <div class="qr-code-container">
+        <img class="qr-code-img" src="${qrCodeUrl}" alt="QR Code" />
+        <div class="qr-label">تفاصيل الفاتورة</div>
+      </div>
+      ${buildPagesQrBlock(storeSettings)}
     </div>
   </div>
 

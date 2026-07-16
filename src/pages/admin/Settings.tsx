@@ -178,6 +178,30 @@ export default function Settings() {
             <p className="text-[11px] text-slate-400 mt-1 text-right">سيظهر هذا الرابط كزر (المقر) في الفاتورة الإلكترونية، وفي رسائل الواتساب.</p>
           </div>
 
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-bold text-slate-700 mb-2">رابط صفحات المحل (QR المتابعة)</label>
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-3">
+              <input
+                type="text"
+                dir="ltr"
+                value={formData.pagesQrUrl || ''}
+                onChange={(e) => setFormData({...formData, pagesQrUrl: e.target.value})}
+                className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none transition text-left"
+                placeholder="https://www.facebook.com/..."
+              />
+              <input
+                type="text"
+                value={formData.pagesQrLabel || ''}
+                onChange={(e) => setFormData({...formData, pagesQrLabel: e.target.value})}
+                className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none transition"
+                placeholder="تابعنا"
+              />
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1 text-right">
+              QR ثابت يظهر في كل فاتورة مطبوعة جنب QR الفاتورة نفسها. سيبه فاضي لو مش عايزاه.
+            </p>
+          </div>
+
           <div>
             <label className="block text-sm font-bold text-slate-700 mb-2">نسبة الضريبة المضافة (%)</label>
             <input 
