@@ -559,6 +559,7 @@ interface CashierStore {
   editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string) => Promise<boolean>;
   markOrderExchanged: (orderId: string, exchangeData: any) => Promise<boolean>;
   updateOrderRefundedAt: (orderId: string, refundedAt: string) => Promise<boolean>;
+  ensureDayOpen: (value?: string | Date | null) => Promise<boolean>;
 
   // Held / reserved invoices (فواتير معلقة)
   heldInvoices: HeldInvoice[];
@@ -2758,11 +2759,18 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
   },
 
+  // تحقق عام إن اليوم المحاسبي لتاريخ معيّن لسه مفتوح — عشان الشاشات تقدر
+  // تتأكد من التاريخ اللي اختاره المستخدم *قبل* ما تبدأ أي كتابة.
+  ensureDayOpen: async (value) => ensureAccountingDayOpen(get(), value),
+
   // يسجّل بيانات الاستبدال على الفاتورة (قبل/بعد) لمنع تكراره وعرضه لاحقاً.
   markOrderExchanged: async (orderId, exchangeData) => {
     const state = get();
     const order = state.orders.find((o) => o.id === orderId);
     if (order && !(await ensureAccountingDayOpen(state, order.date))) return false;
+    // حركة الاستبدال بتتحسب على تاريخ الاستبدال المختار (شوف computeDayBudget)،
+    // فاليوم ده لازم يكون مفتوح كمان — مش يوم الفاتورة الأصلية بس.
+    if (exchangeData?.date && !(await ensureAccountingDayOpen(state, exchangeData.date))) return false;
     const { error } = await supabase.from('orders').update({ exchange_data: exchangeData }).eq('id', orderId);
     if (error) { console.error('markOrderExchanged:', error); return false; }
     set((state) => ({ orders: state.orders.map((o) => (o.id === orderId ? { ...o, exchange_data: exchangeData } : o)) }));

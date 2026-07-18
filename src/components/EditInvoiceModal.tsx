@@ -6,6 +6,7 @@ import { printDocument } from '../utils/printWindow';
 import { escapeHtml } from '../utils/escapeHtml';
 import { buildPagesQrBlock } from '../utils/pagesQr';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../utils/paymentMethods';
+import { businessDateStr, timestampForBusinessDate } from '../utils/businessDay';
 
 interface EditInvoiceModalProps {
   invoice: Order;
@@ -15,7 +16,12 @@ interface EditInvoiceModalProps {
 }
 
 export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }: EditInvoiceModalProps) {
-  const { products, editOrder, storeSettings, activeCashier, addExpense, markOrderExchanged, updateOrderRefundedAt } = useStore();
+  const { products, editOrder, storeSettings, activeCashier, addExpense, markOrderExchanged, updateOrderRefundedAt, ensureDayOpen } = useStore();
+
+  // تاريخ الاستبدال: اليوم المحاسبي اللي هتتسجّل عليه حركة الفرق (تحصيل/رد).
+  // بيتحوّل لـ timestamp في نص اليوم المحاسبي عشان فرق UTC/المحلي ميرميهوش لليوم اللي بعده.
+  const todayBusinessDate = businessDateStr(storeSettings);
+  const [exchangeDate, setExchangeDate] = useState<string>(todayBusinessDate);
 
   // لقطة من أصناف الفاتورة قبل الاستبدال (للطباعة قبل/بعد)
   const [originalItems] = useState<OrderItem[]>(invoice.items.map(i => ({ ...i })));
@@ -213,6 +219,16 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       return;
     }
 
+    // تاريخ الاستبدال لازم يتأكد *قبل* أي كتابة: editOrder بيعدّل الفاتورة والمخزون
+    // فوراً، فلو اليوم المختار طلع مقفول بعد كده هنبقى سجّلنا نص العملية وبس.
+    let exchangeAtISO: string | undefined;
+    if (exchangeMode) {
+      if (!exchangeDate) { setError('اختاري تاريخ الاستبدال'); return; }
+      if (exchangeDate > todayBusinessDate) { setError('لا يمكن اختيار تاريخ في المستقبل'); return; }
+      exchangeAtISO = timestampForBusinessDate(exchangeDate, storeSettings);
+      if (!(await ensureDayOpen(exchangeAtISO))) return; // ensureDayOpen بيعرض سبب الرفض بنفسه
+    }
+
     // تأكيد OTP من المدير (للكاشير) قبل الحفظ
     if (requireOtp) {
       try {
@@ -264,13 +280,14 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
             note: `فرق استبدال ${settleAmount > 0 ? '(تحصيل لينا)' : '(مصروف رد للعميل)'} — فاتورة #${invoice.id}`,
             payment_method: m,
             paid_cash: sp.cash || 0, paid_visa: sp.visa || 0, paid_wallet: sp.wallet || 0, paid_instapay: sp.instapay || 0, paid_method5: sp.method5 || 0, paid_method6: sp.method6 || 0,
+            created_at: exchangeAtISO, // نفس تاريخ الاستبدال عشان الخزنة والميزانية يقروه في يومه
           } as any);
         }
         await markOrderExchanged(invoice.id, {
           before: selectedOldItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
           kept: keptOldItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
           after: cart.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
-          originalTotal: oldTotal, oldTotal: selectedOldTotal, keptTotal: keptOldTotal, newTotal: total, finalTotal: finalExchangeTotal, diff: settleAmount, method: settleMethod, date: new Date().toISOString(),
+          originalTotal: oldTotal, oldTotal: selectedOldTotal, keptTotal: keptOldTotal, newTotal: total, finalTotal: finalExchangeTotal, diff: settleAmount, method: settleMethod, date: exchangeAtISO,
         });
         printExchangeReceipt();
       }
@@ -531,6 +548,20 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                       </div>
                     </>
                   )}
+
+                  <div>
+                    <label className="block text-sm font-bold text-slate-600 mb-1">تاريخ الاستبدال</label>
+                    <input
+                      type="date"
+                      value={exchangeDate}
+                      max={todayBusinessDate}
+                      onChange={(e) => setExchangeDate(e.target.value)}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold"
+                    />
+                    <p className="text-xs text-slate-500 mt-1">
+                      حركة الفرق هتتسجّل في تقفيل ومعاملات وميزانية اليوم ده. لازم يكون يوم لسه مش مقفول في الخزنة.
+                    </p>
+                  </div>
                 </div>
               ) : (
               <div className="space-y-3">
@@ -558,8 +589,9 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
 
               {/* تاريخ الاسترجاع/الاستبدال — للعرض بس. مالهومش علاقة بحقل تاريخ
                   الفاتورة فوق: الاسترجاع بيتسجّل على refunded_at (db/36)
-                  والاستبدال جوه exchange_data.date، والاتنين بيتحطوا وقت العملية
-                  نفسها. بيتعرضوا هنا عشان اللي بيعدّل يعرف إن الفاتورة اتحرّك
+                  والاستبدال جوه exchange_data.date — المرتجع بوقت العملية
+                  والاستبدال باليوم اللي اختاره الكاشير في مودال الاستبدال.
+                  بيتعرضوا هنا عشان اللي بيعدّل يعرف إن الفاتورة اتحرّك
                   فيها حاجة في يوم تاني قبل ما يغيّر تاريخها. */}
               {!exchangeMode && invoiceRefundedAt && (
                 <div>
