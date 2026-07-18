@@ -4,7 +4,7 @@ import { useStore, type Employee, type EmployeeTransaction, type EmployeeLeave, 
 import {
   Users, Plus, Trash2, Edit3, Search, X,
   Wallet, Landmark, CreditCard, Zap, Phone,
-  DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn, ShieldCheck, MinusCircle
+  DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn, ShieldCheck, MinusCircle, PlusCircle
 } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 import { markMainTreasuryNote } from '../../utils/treasury';
@@ -33,11 +33,12 @@ type SaleRow = {
 
 export default function Employees() {
   const {
-    employees, employeeTransactions, employeeLeaves, employeeAttendance, employeeDeductions, storeSettings, orders, cashiers,
+    employees, employeeTransactions, employeeLeaves, employeeAttendance, employeeDeductions, employeeBonuses, storeSettings, orders, cashiers,
     addEmployee, updateEmployee, addEmployeeTransaction,
     updateEmployeeTransaction, deleteEmployeeTransaction,
     addEmployeeLeave, deleteEmployeeLeave,
     addEmployeeDeduction, deleteEmployeeDeduction,
+    addEmployeeBonus, deleteEmployeeBonus,
     addEmployeeAttendance, updateEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut
   } = useStore();
 
@@ -158,6 +159,7 @@ export default function Employees() {
   const [showTransModal, setShowTransModal] = useState(false);
   const [showLeaveModal, setShowLeaveModal] = useState(false);
   const [showDeductionModal, setShowDeductionModal] = useState(false);
+  const [showBonusModal, setShowBonusModal] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [editingTransaction, setEditingTransaction] = useState<EmployeeTransaction | null>(null);
   const [editingLeave, setEditingLeave] = useState<EmployeeLeave | null>(null);
@@ -214,6 +216,14 @@ export default function Employees() {
     date: todayBusiness
   });
   const [savingDeduction, setSavingDeduction] = useState(false);
+
+  // المكافأة بالمبلغ بس (مفيش أيام زي الخصم — مكافأة بالأيام مالهاش معنى واضح).
+  const [bonusFormData, setBonusFormData] = useState({
+    amount: '',
+    reason: '',
+    date: todayBusiness
+  });
+  const [savingBonus, setSavingBonus] = useState(false);
 
   // سعر اليوم = الراتب الشهري ÷ 30 — نفس الأساس المستخدم في خصومات الإجازة
   // وخصومات صرف الراتب، عشان اليوم يساوي نفس القيمة في كل الشاشة.
@@ -371,6 +381,13 @@ export default function Employees() {
       .filter(d => d.employee_id === empId && d.month === month)
       .reduce((sum, d) => sum + Number(d.amount || 0), 0);
 
+  // المكافآت المسجّلة خلال الشهر — بتتجمّع وبتتضاف على المتبقي وقت صرف الراتب.
+  // مرآة getManualMonthDeductions فوق.
+  const getManualMonthBonuses = (empId: string, month: string) =>
+    employeeBonuses
+      .filter(b => b.employee_id === empId && b.month === month)
+      .reduce((sum, b) => sum + Number(b.amount || 0), 0);
+
   const filteredEmployees = employees
     .filter(e => {
       const isActive = e.is_active ?? true;
@@ -395,7 +412,7 @@ export default function Employees() {
 
   const getEmployeeMonthStats = (empId: string, month: string, excludeTransactionId?: string) => {
     const emp = employees.find(e => e.id === empId);
-    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, remaining: 0 };
+    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0 };
 
     const monthTrans = employeeTransactions.filter(t => t.employee_id === empId && t.month === month && t.id !== excludeTransactionId);
 
@@ -406,10 +423,12 @@ export default function Employees() {
     const leaveDeductions = getLeaveMonthDeductions(empId, month);
     const attendanceDeductions = getAttendanceMonthDeductions(empId, month);
     const manualDeductions = getManualMonthDeductions(empId, month);
+    // المكافآت بتزوّد المستحق، فبتتجمع جوه الـ clamp مش بعده.
+    const bonuses = getManualMonthBonuses(empId, month);
 
-    const remaining = Math.max(0, emp.monthly_salary - advances - paidSalary - deductions - leaveDeductions - attendanceDeductions - manualDeductions);
+    const remaining = Math.max(0, emp.monthly_salary + bonuses - advances - paidSalary - deductions - leaveDeductions - attendanceDeductions - manualDeductions);
 
-    return { salary: emp.monthly_salary, advances, paidSalary, deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions, incentives, leaveDeductions, attendanceDeductions, manualDeductions, remaining };
+    return { salary: emp.monthly_salary, advances, paidSalary, deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions, incentives, leaveDeductions, attendanceDeductions, manualDeductions, bonuses, remaining };
   };
 
   // تصدير كشف الرواتب للشهر المحدد (Excel)
@@ -423,6 +442,7 @@ export default function Employees() {
         'الراتب الشهري': Number(emp.monthly_salary) || 0,
         'السلف': s.advances,
         'الحوافز': s.incentives,
+        'المكافآت': s.bonuses,
         'الخصومات': s.deductions,
         'الراتب المدفوع': s.paidSalary,
         'المتبقي': s.remaining,
@@ -552,6 +572,25 @@ export default function Employees() {
     return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [profileEmployee, employeeDeductions, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
+  // مكافآت الموظف في الفترة المختارة — نفس فلترة الخصومات فوق.
+  const profileBonuses = useMemo(() => {
+    if (!profileEmployee) return [];
+    let rows = employeeBonuses.filter(b => b.employee_id === profileEmployee.id);
+    if (profileTimeFilter === 'month') {
+      const currentMonth = currentBusinessMonth;
+      rows = rows.filter(b => b.month === currentMonth || String(b.date || '').startsWith(currentMonth));
+    } else if (profileTimeFilter === 'week') {
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      rows = rows.filter(b => new Date(b.date) >= sevenDaysAgo);
+    } else if (profileTimeFilter === 'custom_month') {
+      rows = rows.filter(b => b.month === profileCustomMonth || String(b.date || '').startsWith(profileCustomMonth));
+    } else if (profileTimeFilter === 'custom_year') {
+      rows = rows.filter(b => b.month.startsWith(profileCustomYear) || String(b.date || '').startsWith(profileCustomYear));
+    }
+    return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [profileEmployee, employeeBonuses, profileTimeFilter, profileCustomMonth, profileCustomYear]);
+
   // مبيعات الموظف في الفترة المختارة — نفس فلتر باقي البروفايل، فـ«الشهر الحالي»
   // (الافتراضي) = من أول الشهر لآخره. periodLabel بيتكتب على الكارت عشان الرقم
   // ما يتقريش غلط على إنه شهري وهو ممكن يكون للكل.
@@ -589,18 +628,19 @@ export default function Employees() {
   }, [profileEmployee, salesOrders, orders, cashiers, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
   const profileStats = useMemo(() => {
-    if (!profileEmployee) return { advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDays: 0, lateDays: 0, lateMinutes: 0 };
+    if (!profileEmployee) return { advances: 0, paidSalary: 0, deductions: 0, incentives: 0, bonuses: 0, leaveDays: 0, lateDays: 0, lateMinutes: 0 };
     const attDeductions = profileAttendance.attDeductions;
     return {
       advances: profileTransactions.filter(t => t.type === 'advance').reduce((s, t: any) => s + t.amount, 0),
       paidSalary: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + t.amount, 0),
       deductions: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + (t.deductions || 0), 0) + profileLeaves.filter(l => l.leave_type === 'unpaid').reduce((s, l) => s + (l.deduction_amount || 0), 0) + attDeductions + profileDeductions.reduce((s, d) => s + Number(d.amount || 0), 0),
       incentives: profileTransactions.filter(t => t.type === 'incentive').reduce((s, t: any) => s + t.amount, 0),
+      bonuses: profileBonuses.reduce((s, b) => s + Number(b.amount || 0), 0),
       leaveDays: profileLeaves.reduce((s, l) => s + (l.days_count || 0), 0),
       lateDays: profileAttendance.lateDays,
       lateMinutes: profileAttendance.lateMinutes
     };
-  }, [profileTransactions, profileLeaves, profileAttendance, profileDeductions, profileEmployee]);
+  }, [profileTransactions, profileLeaves, profileAttendance, profileDeductions, profileBonuses, profileEmployee]);
 
   const profileLeaveBalance = profileEmployee ? getLeaveBalanceStats(profileEmployee) : null;
 
@@ -768,6 +808,46 @@ export default function Employees() {
       alert('فشل حفظ الخصم: ' + (e instanceof Error ? e.message : String(e)));
     }
     setSavingDeduction(false);
+  };
+
+  const handleOpenBonusModal = (emp: Employee) => {
+    setSelectedEmployee(emp);
+    setBonusFormData({ amount: '', reason: '', date: todayBusiness });
+    setShowBonusModal(true);
+  };
+
+  const handleBonusSubmit = async () => {
+    const emp = selectedEmployee;
+    if (!emp) return;
+    const amount = Math.round((parseFloat(bonusFormData.amount) || 0) * 100) / 100;
+    if (amount <= 0) return alert('يرجى إدخال مبلغ صحيح');
+
+    // زي الخصم: الشهر بيتاخد من تاريخ المكافأة عشان تقع على راتب الشهر الصح
+    // حتى لو اتسجّلت متأخر.
+    const month = bonusFormData.date.slice(0, 7);
+    const stats = getEmployeeMonthStats(emp.id, month);
+    const ok = window.confirm(
+      `مكافأة ${amount.toLocaleString()} ${storeSettings.currency} لـ ${emp.name} عن شهر ${month}.\n` +
+      `المتبقي حالياً: ${stats.remaining.toLocaleString()} → بعد المكافأة: ${(stats.remaining + amount).toLocaleString()}\n\n` +
+      `المكافأة مش بتطلّع فلوس من الخزنة دلوقتي — بتتضاف على المستحق للموظف وبتتصرف مع الراتب.\n\nتأكيد؟`
+    );
+    if (!ok) return;
+
+    setSavingBonus(true);
+    try {
+      await addEmployeeBonus({
+        employee_id: emp.id,
+        amount,
+        reason: bonusFormData.reason.trim(),
+        month,
+        date: bonusFormData.date,
+      });
+      setShowBonusModal(false);
+    } catch (e) {
+      // أشيع سبب: جدول db/45 لسه ماتعملش على الداتابيز.
+      alert('فشل حفظ المكافأة: ' + (e instanceof Error ? e.message : String(e)));
+    }
+    setSavingBonus(false);
   };
 
   const handleTransSubmit = async () => {
@@ -1058,6 +1138,15 @@ export default function Employees() {
               >
                 <Gift size={20} /> إضافة حافز
               </button>
+              {/* المكافأة غير «إضافة حافز» فوق: الحافز بيصرف كاش من الدرج فوراً،
+                  والمكافأة بتتجمّع وبتتصرف مع الراتب. لون مختلف عشان ما يتلخبطوش. */}
+              <button
+                onClick={() => handleOpenBonusModal(profileEmployee)}
+                disabled={!(profileEmployee.is_active ?? true)}
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-sky-50 text-sky-600 font-bold hover:bg-sky-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <PlusCircle size={20} /> إضافة مكافأة
+              </button>
               <button
                 onClick={() => handleOpenDeductionModal(profileEmployee)}
                 disabled={!(profileEmployee.is_active ?? true)}
@@ -1136,6 +1225,10 @@ export default function Employees() {
             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
               <span className="text-red-500 font-bold text-sm mb-1">خصومات (للفترة)</span>
               <span className="text-2xl font-black text-red-600">{profileStats.deductions.toLocaleString()} <span className="text-sm font-medium text-red-400">{storeSettings.currency}</span></span>
+            </div>
+            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
+              <span className="text-sky-500 font-bold text-sm mb-1">مكافآت (للفترة)</span>
+              <span className="text-2xl font-black text-sky-600">{profileStats.bonuses.toLocaleString()} <span className="text-sm font-medium text-sky-400">{storeSettings.currency}</span></span>
             </div>
           </div>
 
@@ -1352,6 +1445,58 @@ export default function Employees() {
                   {profileDeductions.length === 0 && (
                     <tr>
                       <td colSpan={6} className="py-12 text-center text-slate-400 font-bold">لا توجد خصومات يدوية في هذه الفترة</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Manual Bonuses */}
+          <div className="bg-white rounded-[32px] shadow-sm border border-slate-100 overflow-hidden">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
+              <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                <PlusCircle size={20} className="text-sky-500" />
+                سجل المكافآت
+              </h3>
+              <div className="text-xs font-bold text-slate-400">
+                إجمالي الفترة: {profileBonuses.reduce((s, b) => s + Number(b.amount || 0), 0).toLocaleString()} {storeSettings.currency}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-right">
+                <thead>
+                  <tr className="bg-white text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-slate-100">
+                    <th className="p-6">التاريخ</th>
+                    <th className="p-6">الشهر</th>
+                    <th className="p-6">السبب</th>
+                    <th className="p-6">المبلغ</th>
+                    <th className="p-6 text-left">إجراءات</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {profileBonuses.map((b) => (
+                    <tr key={b.id} className="hover:bg-slate-50/50 transition-colors">
+                      <td className="p-6 text-slate-500 font-bold">{b.date}</td>
+                      <td className="p-6 text-slate-500 font-bold">{b.month}</td>
+                      <td className="p-6 text-slate-600 font-medium">{b.reason || '-'}</td>
+                      <td className="p-6 font-black text-sky-600">+{Number(b.amount).toLocaleString()} {storeSettings.currency}</td>
+                      <td className="p-6">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            onClick={() => { if (window.confirm(`حذف مكافأة ${Number(b.amount).toLocaleString()} ${storeSettings.currency}؟\nهتتشال من المتبقي في راتب شهر ${b.month}.`)) deleteEmployeeBonus(b.id); }}
+                            className="p-2 text-slate-400 hover:text-red-500 transition"
+                            title="حذف"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {profileBonuses.length === 0 && (
+                    <tr>
+                      <td colSpan={5} className="py-12 text-center text-slate-400 font-bold">لا توجد مكافآت في هذه الفترة</td>
                     </tr>
                   )}
                 </tbody>
@@ -1885,7 +2030,7 @@ export default function Employees() {
                           const dailyRate = selectedEmployee!.monthly_salary / 30;
                           const totalDed = (parseFloat(days) || 0) * dailyRate + (parseFloat(transFormData.dedAmount) || 0);
                           const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
-                          const net = Math.max(0, stats.salary - stats.advances - stats.paidSalary - stats.deductions - totalDed);
+                          const net = Math.max(0, stats.salary + stats.bonuses - stats.advances - stats.paidSalary - stats.deductions - totalDed);
                           setTransFormData({
                             ...transFormData, 
                             dedDays: days,
@@ -1908,7 +2053,7 @@ export default function Employees() {
                           const dailyRate = selectedEmployee!.monthly_salary / 30;
                           const totalDed = (parseFloat(transFormData.dedDays) || 0) * dailyRate + (parseFloat(amt) || 0);
                           const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
-                          const net = Math.max(0, stats.salary - stats.advances - stats.paidSalary - stats.deductions - totalDed);
+                          const net = Math.max(0, stats.salary + stats.bonuses - stats.advances - stats.paidSalary - stats.deductions - totalDed);
                           setTransFormData({
                             ...transFormData, 
                             dedAmount: amt,
@@ -1947,7 +2092,7 @@ export default function Employees() {
                       if (transType === 'salary') {
                         const stats = getEmployeeMonthStats(selectedEmployee!.id, newMonth, editingTransaction?.id);
                         const totalDed = (parseFloat(transFormData.dedDays) || 0) * (selectedEmployee!.monthly_salary / 30) + (parseFloat(transFormData.dedAmount) || 0);
-                        const net = Math.max(0, stats.salary - stats.advances - stats.paidSalary - stats.deductions - totalDed);
+                        const net = Math.max(0, stats.salary + stats.bonuses - stats.advances - stats.paidSalary - stats.deductions - totalDed);
                         setTransFormData({
                           ...transFormData,
                           month: newMonth,
@@ -2253,6 +2398,93 @@ export default function Employees() {
                 className="w-full text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:opacity-90 transition-all bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {savingDeduction ? 'جاري الحفظ...' : 'تسجيل الخصم'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bonus Modal */}
+      {showBonusModal && selectedEmployee && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <div className="p-8 text-white flex justify-between items-center shrink-0 bg-sky-600">
+              <div>
+                <h2 className="text-2xl font-black">إضافة مكافأة</h2>
+                <p className="text-white/70 text-sm mt-1">{selectedEmployee.name}</p>
+              </div>
+              <button onClick={() => setShowBonusModal(false)} className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition text-white"><X size={24} /></button>
+            </div>
+            <div className="p-8 space-y-6 overflow-y-auto">
+              {(() => {
+                const month = bonusFormData.date.slice(0, 7);
+                const stats = getEmployeeMonthStats(selectedEmployee.id, month);
+                const amount = Math.round((parseFloat(bonusFormData.amount) || 0) * 100) / 100;
+                return (
+                  <div className="bg-sky-50 rounded-2xl p-4 border border-sky-100 grid grid-cols-3 gap-3">
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500">قيمة المكافأة</p>
+                      <p className="text-lg font-black text-sky-600">{amount.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500">المتبقي حالياً</p>
+                      <p className="text-lg font-black text-slate-800">{stats.remaining.toLocaleString()}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-sky-500">المتبقي بعد المكافأة</p>
+                      <p className="text-lg font-black text-sky-600">{(stats.remaining + amount).toLocaleString()} <span className="text-xs">{storeSettings.currency}</span></p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">المبلغ</label>
+                <input
+                  type="number" min="0" step="0.01"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-bold focus:ring-2 focus:ring-sky-500"
+                  value={bonusFormData.amount}
+                  onChange={e => setBonusFormData({ ...bonusFormData, amount: e.target.value })}
+                  placeholder="0"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">تاريخ المكافأة</label>
+                <input
+                  type="date"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-bold focus:ring-2 focus:ring-sky-500"
+                  value={bonusFormData.date}
+                  onChange={e => setBonusFormData({ ...bonusFormData, date: e.target.value })}
+                />
+                <p className="text-[10px] text-slate-400 mt-1">المكافأة بتتضاف على راتب شهر {bonusFormData.date.slice(0, 7)}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">السبب</label>
+                <textarea
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 h-24 outline-none font-medium resize-none"
+                  value={bonusFormData.reason}
+                  onChange={e => setBonusFormData({ ...bonusFormData, reason: e.target.value })}
+                  placeholder="سبب المكافأة — هيظهر في سجل حركات الموظف"
+                />
+              </div>
+
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4">
+                <p className="text-xs font-bold text-slate-500 leading-relaxed">
+                  ℹ️ المكافأة مش بتطلّع فلوس من الخزنة دلوقتي — بتتجمّع للموظف وبتتضاف تلقائياً على المتبقي وبتتصرف مع الراتب.
+                  <br />
+                  <span className="text-slate-400">لو عايزة تديله فلوس في إيده دلوقتي استخدمي «إضافة حافز» — دي بتخرج من الدرج فوراً.</span>
+                </p>
+              </div>
+
+              <button
+                onClick={handleBonusSubmit}
+                disabled={savingBonus || !((parseFloat(bonusFormData.amount) || 0) > 0)}
+                className="w-full text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:opacity-90 transition-all bg-sky-600 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {savingBonus ? 'جاري الحفظ...' : 'تسجيل المكافأة'}
               </button>
             </div>
           </div>

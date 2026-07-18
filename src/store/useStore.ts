@@ -426,6 +426,22 @@ export interface EmployeeDeduction {
   created_at: string;
 }
 
+/**
+ * مكافأة على الموظف — بتتجمّع خلال الشهر وبتتضاف على المتبقي وقت صرف الراتب.
+ * مرآة EmployeeDeduction بإشارة موجبة، وجدول منفصل لنفس السبب: «الحافز» في
+ * employee_transactions بيطلّع فلوس من الدرج ساعتها، والمكافأة لأ — الفلوس
+ * بتخرج مرة واحدة بس وقت صرف الراتب (شوف db/45).
+ */
+export interface EmployeeBonus {
+  id: string;
+  employee_id: string;
+  amount: number;
+  reason: string;
+  month: string;
+  date: string;
+  created_at: string;
+}
+
 export interface EmployeeAttendance {
   id: string;
   employee_id: string;
@@ -508,6 +524,7 @@ interface CashierStore {
   employeeTransactions: EmployeeTransaction[];
   employeeLeaves: EmployeeLeave[];
   employeeDeductions: EmployeeDeduction[];
+  employeeBonuses: EmployeeBonus[];
   employeeAttendance: EmployeeAttendance[];
   productSuggestions: ProductSuggestion[];
   cashierNotes: CashierNote[];
@@ -673,6 +690,8 @@ interface CashierStore {
   deleteEmployeeLeave: (id: string) => Promise<void>;
   addEmployeeDeduction: (deduction: Omit<EmployeeDeduction, 'id' | 'created_at'>) => Promise<void>;
   deleteEmployeeDeduction: (id: string) => Promise<void>;
+  addEmployeeBonus: (bonus: Omit<EmployeeBonus, 'id' | 'created_at'>) => Promise<void>;
+  deleteEmployeeBonus: (id: string) => Promise<void>;
   addEmployeeAttendance: (att: Omit<EmployeeAttendance, 'id' | 'created_at'>) => Promise<void>;
   updateEmployeeAttendance: (id: string, att: Partial<Omit<EmployeeAttendance, 'id' | 'created_at'>>) => Promise<void>;
   deleteEmployeeAttendance: (id: string) => Promise<void>;
@@ -1029,6 +1048,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   employeeTransactions: [],
   employeeLeaves: [],
   employeeDeductions: [],
+  employeeBonuses: [],
   employeeAttendance: [],
   productSuggestions: [],
   cashierNotes: [],
@@ -1295,6 +1315,14 @@ export const useStore = create<CashierStore>((set, get) => ({
         if (dedData) set({ employeeDeductions: dedData as EmployeeDeduction[] });
       } catch (e) {
         console.warn('employee_deductions not available:', e);
+      }
+
+      // نفس الأسلوب الدفاعي لمكافآت الموظفين (db/45).
+      try {
+        const { data: bonusData } = await supabase.from('employee_bonuses').select('*').order('created_at', { ascending: false });
+        if (bonusData) set({ employeeBonuses: bonusData as EmployeeBonus[] });
+      } catch (e) {
+        console.warn('employee_bonuses not available:', e);
       }
 
       // Fetch expenses separately to avoid breaking the whole loadAll if the table is missing
@@ -5501,6 +5529,28 @@ setupRealtime: () => {
       return;
     }
     set((state) => ({ employeeDeductions: state.employeeDeductions.filter(d => d.id !== id) }));
+  },
+
+  // المكافأة زي الخصم: مالهاش أي أثر على الخزنة وقت تسجيلها — الفلوس بتخرج
+  // مرة واحدة بس وقت صرف الراتب.
+  addEmployeeBonus: async (bonus) => {
+    const { data, error } = await supabase.from('employee_bonuses').insert(bonus).select().single();
+    if (error) {
+      console.error("Add Employee Bonus Error:", error);
+      throw error;
+    }
+    if (data) {
+      set((state) => ({ employeeBonuses: [data as EmployeeBonus, ...state.employeeBonuses] }));
+    }
+  },
+
+  deleteEmployeeBonus: async (id) => {
+    const { error } = await supabase.from('employee_bonuses').delete().eq('id', id);
+    if (error) {
+      console.error("Delete Employee Bonus Error:", error);
+      return;
+    }
+    set((state) => ({ employeeBonuses: state.employeeBonuses.filter(b => b.id !== id) }));
   },
 
   addEmployeeAttendance: async (att) => {
