@@ -3,6 +3,7 @@ import { useStore } from '../../store/useStore';
 import { PiggyBank, ArrowLeftRight, Banknote, Save, Trash2 } from 'lucide-react';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
 import { computeShopAvailable, markMainTreasuryNote, markSavingsGroupNote } from '../../utils/treasury';
+import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
 type Split = Record<string, number>;
 const zero = (): Split => { const z: Split = {}; ALL_PAYMENT_KEYS.forEach((k) => { z[k] = 0; }); return z; };
@@ -97,6 +98,16 @@ export default function Savings() {
     setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  // التبديل بين مصروف/إيراد بيغيّر قائمة الفئات. من غير ده الفئة القديمة بتفضل
+  // في الحالة والـ select بيعرض أول خيار — فبتتسجّل فئة غير اللي ظاهرة.
+  useEffect(() => {
+    if (!isFinancial) return;
+    const type = mode === 'income' ? 'income' : 'expense';
+    const list = categoriesFor(storeSettings as any, type);
+    if (!list.some((c) => c.value === category)) setCategory(list[0]?.value || 'عام');
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [mode, storeSettings.expenseCategories, storeSettings.incomeCategories]);
 
   // الحد الأقصى لكل وسيلة: المصروف/السحب من الرئيسية محدود برصيدها؛ التحويل من المحل محدود برصيد المحل.
   const cap = (mode === 'out' || mode === 'expense') ? savingsBal : shopAvail;
@@ -203,6 +214,28 @@ export default function Savings() {
       if (ok) { alert(isFinancial ? 'تم تسجيل المعاملة ✅' : 'تم التحويل ✅'); setAmt({}); setConvAmt(''); setNote(''); setCategory('عام'); setOtpInput(''); setOtpSent(false); setTxDate(new Date().toISOString().slice(0, 10)); load(); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setBusy(false);
+  };
+
+  // الفئة الجديدة بتتخزّن في الإعدادات (db/43) فبتظهر فوراً في كل الشاشات
+  // اللي بتقرا من financeCategories — خزينة الكاشير والميزانية وهنا.
+  const handleAddCategory = async () => {
+    const type: 'expense' | 'income' = mode === 'income' ? 'income' : 'expense';
+    const name = window.prompt(type === 'expense' ? 'اسم نوع المصروف الجديد:' : 'اسم نوع الإيراد الجديد:');
+    if (name === null) return;
+    const next = withAddedCategory(storeSettings as any, type, name);
+    if (!next) {
+      if (name.trim()) alert('النوع ده موجود بالفعل.');
+      return;
+    }
+    const clean = next[next.length - 1];
+    try {
+      await updateSettings(type === 'expense' ? { expenseCategories: next } : { incomeCategories: next });
+      setCategory(clean);
+      setOtpSent(false);
+    } catch (e) {
+      // أشيع سبب: أعمدة db/43 لسه ماتعملتش على الداتابيز.
+      alert('فشل حفظ النوع الجديد: ' + (e instanceof Error ? e.message : String(e)));
+    }
   };
 
   // ── حذف معاملة من الخزنة الرئيسية (بتأكيد OTP للمدير) ──────────────
@@ -351,25 +384,24 @@ export default function Savings() {
         {isFinancial && (
           <div>
             <label className="text-[11px] font-bold text-slate-500 block mb-1">{mode === 'income' ? 'فئة الإيراد' : 'فئة المصروف'}</label>
-            <select className={input} value={category} onChange={(e) => { setCategory(e.target.value); setOtpSent(false); }}>
-              {mode === 'expense' ? (
-                <>
-                  <option value="عام">عام</option>
-                  <option value="إيجار">إيجار</option>
-                  <option value="كهرباء/مياه">كهرباء / مياه</option>
-                  <option value="رواتب">رواتب</option>
-                  <option value="نقل/توصيل">نقل / توصيل</option>
-                  <option value="صيانة">صيانة</option>
-                </>
-              ) : (
-                <>
-                  <option value="عام">إيراد عام</option>
-                  <option value="خدمات">خدمات إضافية</option>
-                  <option value="استثمار">عائد استثمار</option>
-                  <option value="أخرى">أخرى</option>
-                </>
-              )}
-            </select>
+            {/* نفس مصدر الفئات المستخدم في خزينة الكاشير وشاشة الميزانية
+                (financeCategories) — كانت هنا نسخة ثابتة مكتوبة بالإيد، فالفئة
+                اللي المستخدم بيضيفها من أي شاشة تانية ماكانتش بتظهر هنا خالص. */}
+            <div className="flex gap-2">
+              <select className={input} value={category} onChange={(e) => { setCategory(e.target.value); setOtpSent(false); }}>
+                {categoriesFor(storeSettings as any, mode === 'income' ? 'income' : 'expense').map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handleAddCategory}
+                className="shrink-0 px-3 rounded-lg bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 font-black text-sm hover:bg-indigo-100 transition border border-indigo-100 dark:border-indigo-800"
+                title="إضافة نوع جديد"
+              >
+                + نوع
+              </button>
+            </div>
           </div>
         )}
         {hasCap && <div className="flex justify-end"><button onClick={fillAll} className="text-[11px] font-bold text-indigo-600 bg-indigo-50 dark:bg-indigo-900/30 px-3 py-1 rounded-lg">{isFinancial ? 'كل المتاح' : 'تحويل كل المتاح'}</button></div>}
