@@ -81,6 +81,30 @@ export function savingsGroupIdOf(note: any): string | null {
   return m ? m[1] : null;
 }
 
+/**
+ * معرّف مجموعة جديد يربط صف المصروف بصف/صفوف الخزنة الرئيسية.
+ * أي شاشة بتسجّل حركة على الخزنة الرئيسية لازم تولّد واحد وتمرّره للاتنين،
+ * وإلا الحذف مش هيلاقي الصف المقابل وهيسيب نص العملية ورا (شوف
+ * deleteSavingsOperation).
+ */
+export function newSavingsGroupId(): string {
+  try { return crypto.randomUUID(); }
+  catch { return 'svg-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
+}
+
+/**
+ * يشيل الوسوم المخفية ([MAIN_TREASURY] / [SVG:…]) من نص الملاحظة للعرض في
+ * حقول التعديل. الوسوم دي تصنيف محاسبي مش نص كتبه المستخدم — لو ظهرت في
+ * الفورم بيمسحها من غير ما يقصد وبيفكّ ربط المصروف بالخزنة الرئيسية.
+ */
+export function stripTreasuryMarkers(note: any): string {
+  return String(note || '')
+    .replace(MAIN_TREASURY_MARKER, '')
+    .replace(SAVINGS_GROUP_RE, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 export function isMainTreasuryPurchase(row: any): boolean {
   return String(row?.notes || '').includes(MAIN_TREASURY_MARKER);
 }

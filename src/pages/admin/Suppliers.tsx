@@ -10,7 +10,7 @@ import { generateBarcode } from '../../utils/printBarcodeLabels';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import PaymentSplitInputs from '../../components/PaymentSplitInputs';
 import { activePaymentKeys, formToSplit, sumSplit, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
-import { isMainTreasuryPurchase, markMainTreasuryNote } from '../../utils/treasury';
+import { isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../../utils/treasury';
 import * as XLSX from 'xlsx';
 
 function ProductSearchSelect({
@@ -321,16 +321,21 @@ export default function Suppliers() {
         alert('تم تعديل الفاتورة بنجاح وتحديث المخزن');
       } else {
         const invoiceNumber = `PO-${Date.now()}`;
+        // نفس الـ group_id على الفاتورة وصف دفتر الرئيسية، ونفس التوقيت المحاسبي
+        // للاتنين — من غير التوقيت كان صف الدفتر بياخد وقت السيرفر، فبين
+        // منتصف الليل وبداية اليوم المحاسبي كان بيقع في يوم غير الفاتورة.
+        const mainGroupId = payFromMainTreasury ? newSavingsGroupId() : null;
+        const mainCreatedAt = timestampForBusinessDate(businessDateStr(storeSettings), storeSettings);
         await addPurchaseInvoice({
           invoice_number: invoiceNumber,
           supplier_id: invSupplierId,
           total: invTotal,
           paid_amount: effectivePaidAmount,
           payment_method: primaryMethod as any,
-          notes: payFromMainTreasury ? markMainTreasuryNote('فاتورة مشتريات مدفوعة من الخزنة الرئيسية') : undefined,
+          notes: payFromMainTreasury ? markSavingsGroupNote(markMainTreasuryNote('فاتورة مشتريات مدفوعة من الخزنة الرئيسية'), mainGroupId) : undefined,
         }, items, adjustedSplit as any);
         if (payFromMainTreasury) {
-          await recordMainTreasuryOut(adjustedSplit as any, 'main_purchase', `فاتورة مشتريات #${invoiceNumber}`);
+          await recordMainTreasuryOut(adjustedSplit as any, 'main_purchase', `فاتورة مشتريات #${invoiceNumber}`, mainCreatedAt, mainGroupId as any);
         }
         alert('تم حفظ الفاتورة بنجاح وتحديث المخزن');
       }

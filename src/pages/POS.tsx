@@ -13,7 +13,7 @@ import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../utils/financeCategories';
 import { buildPagesQrBlock } from '../utils/pagesQr';
-import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../utils/treasury';
+import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../utils/treasury';
 import { calculateOrderReturnValue } from '../utils/returns';
 
 // فئة قيد تسوية الجرد: يضبط رصيد خزنة المحل ليطابق الكاش الفعلي المعدود.
@@ -784,6 +784,9 @@ export default function POS() {
       }
 
       const baseNote = (advanceNote ? `${advanceNote} - ` : '') + `سلفة بواسطة ${actorName}`;
+      // نفس الربط: addEmployeeTransaction بيضمّن الملاحظة دي جوه ملاحظة صف
+      // المصروف، فالوسم والـ group_id بيوصلوا للاتنين.
+      const mainGroupId = toMain ? newSavingsGroupId() : null;
       // يسجّل السلفة (تُخصم تلقائياً من راتب الشهر) + يخصم المبلغ من الخزنة كمصروف رواتب.
       // لو الخزنة الرئيسية: نعلّم الملاحظة بـ [MAIN_TREASURY] فتُستبعد من درج المحل، وتُسجّل في savings.
       await addEmployeeTransaction({
@@ -799,12 +802,12 @@ export default function POS() {
         paid_method6: advanceVal('method6'),
         month: advanceDate.slice(0, 7),
         deductions: 0,
-        note: toMain ? markMainTreasuryNote(baseNote) : baseNote,
+        note: toMain ? markSavingsGroupNote(markMainTreasuryNote(baseNote), mainGroupId) : baseNote,
         created_at: createdAt,
       } as any);
 
       if (toMain) {
-        await recordMainTreasuryOut(split as any, 'main_expense', `سلفة موظف: ${emp?.name || ''}${advanceNote ? ` - ${advanceNote}` : ''}`, createdAt);
+        await recordMainTreasuryOut(split as any, 'main_expense', `سلفة موظف: ${emp?.name || ''}${advanceNote ? ` - ${advanceNote}` : ''}`, createdAt, mainGroupId as any);
       }
 
       // تنبيه المدير على تليجرام
@@ -950,6 +953,10 @@ export default function POS() {
         }
 
         const baseNote = `${financeNote || (financeType === 'income' ? 'إيراد' : 'مصروف')} - بواسطة ${actorName}`;
+        // لازم صف المصروف وصف دفتر الرئيسية يتربطوا بنفس group_id، وإلا حذف
+        // المعاملة من صفحة الخزنة الرئيسية بيسيب صف المصروف معلّق في الميزانية
+        // (مستبعَد من خزينة الكاشير بالوسم، ومالوش مقابل في الرئيسية).
+        const mainGroupId = toMain ? newSavingsGroupId() : null;
         await addExpense({
           category: financeCategory,
           amount: total * multiplier,
@@ -959,15 +966,15 @@ export default function POS() {
           paid_instapay: financeVal('instapay') * multiplier,
           paid_method5: financeVal('method5') * multiplier,
           paid_method6: financeVal('method6') * multiplier,
-          note: toMain ? markMainTreasuryNote(baseNote) : baseNote,
+          note: toMain ? markSavingsGroupNote(markMainTreasuryNote(baseNote), mainGroupId) : baseNote,
           payment_method: primaryM,
           created_at: createdAt
         } as any);
 
         if (toMain && financeType === 'expense') {
-          await recordMainTreasuryOut(split as any, 'main_expense', `${financeCategory}${financeNote ? ` - ${financeNote}` : ''} - ${actorName}`, createdAt);
+          await recordMainTreasuryOut(split as any, 'main_expense', `${financeCategory}${financeNote ? ` - ${financeNote}` : ''} - ${actorName}`, createdAt, mainGroupId as any);
         } else if (toMain && financeType === 'income') {
-          await recordMainTreasuryIn(split as any, 'main_income', `${financeCategory}${financeNote ? ` - ${financeNote}` : ''} - ${actorName}`, createdAt);
+          await recordMainTreasuryIn(split as any, 'main_income', `${financeCategory}${financeNote ? ` - ${financeNote}` : ''} - ${actorName}`, createdAt, mainGroupId as any);
         }
 
         // Send telegram

@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf } from '../utils/paymentMethods';
-import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense } from '../utils/treasury';
+import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, newSavingsGroupId } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
@@ -835,11 +835,9 @@ function primaryOfSplit(split?: Record<string, number>): string {
 
 const DAY_CLOSING_CATEGORY = 'تحويل للخزنة الرئيسية';
 
-// معرّف مجموعة لربط صفوف معاملة الخزنة الرئيسية الواحدة (مع fallback لو randomUUID غير متاح).
-function newGroupId(): string {
-  try { return crypto.randomUUID(); }
-  catch { return 'svg-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10); }
-}
+// معرّف مجموعة لربط صفوف معاملة الخزنة الرئيسية الواحدة — مشترك مع الشاشات
+// اللي بتسجّل على الرئيسية من برّه الستور (POS/Finance/Employees).
+const newGroupId = newSavingsGroupId;
 
 function dateValueForAccounting(value?: string | Date | null): Date {
   const d = value ? new Date(value) : new Date();
@@ -4440,11 +4438,19 @@ setupRealtime: () => {
     groupRows.forEach((r) => { const m = r.method || 'cash'; if (split[m] !== undefined) split[m] += Number(r.amount) || 0; });
     const total = Object.values(split).reduce((a, b) => a + b, 0);
     const source = tx.source || groupRows[0]?.source;
-    const day = new Date(tx.created_at).toISOString().slice(0, 10);
 
     // 2) احذف صفوف الدفتر.
     const { error: delErr } = await supabase.from('savings_transactions').delete().in('id', ids);
     if (delErr) { console.error('deleteSavingsOperation error:', delErr); alert('تعذّر حذف المعاملة'); return false; }
+
+    // فاتورة المشتريات مش بتتحذف تلقائياً: حذفها بيرجّع المخزون كمان، وده قرار
+    // لازم يتاخد من شاشة المشتريات مش كأثر جانبي لحذف صف من الدفتر.
+    if (source === 'main_purchase') {
+      alert(
+        'اتمسحت الحركة من دفتر الخزنة الرئيسية.\n' +
+        'فاتورة المشتريات المرتبطة بيها لسه موجودة — امسحيها من صفحة «الموردين والمشتريات» لو ده المقصود (حذفها بيرجّع المخزون).'
+      );
+    }
 
     // 3) اعكس صف المصروف المرتبط (التحويلات + الإيراد/المصروف تعمل صف expenses؛ convert لأ).
     const needsExpense = source === 'shop_transfer' || source === 'to_shop' || source === 'main_income' || source === 'main_expense';
@@ -4463,11 +4469,15 @@ setupRealtime: () => {
         }
       }
       // (ب) العملية القديمة (بدون group_id): مطابقة بالفئة/التاريخ/الإجمالي/التقسيمة.
+      // المقارنة باليوم المحاسبي مش بـ toISOString: صف المصروف متسجّل بـ
+      // timestampForBusinessDate (٣ العصر) والقاهرة UTC+2/+3، فالمقارنة بالـ UTC
+      // كانت بتفشل وتسيب المصروف معلّق.
       if (!linkedId) {
         const isTransfer = source === 'shop_transfer' || source === 'to_shop';
+        const txDay = businessDateStr(state.storeSettings, dateValueForAccounting(tx.created_at));
         const local = expenses.find((e) => {
-          const eDay = new Date(e.date).toISOString().slice(0, 10);
-          if (eDay !== day) return false;
+          const eDay = businessDateStr(state.storeSettings, dateValueForAccounting(e.date));
+          if (eDay !== txDay) return false;
           if (Math.abs(Math.abs(Number(e.amount) || 0) - total) > 0.01) return false;
           const splitMatch = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
             .every((k) => Math.abs(Math.abs(Number((e as any)['paid_' + k]) || 0) - (split[k] || 0)) < 0.01);
@@ -4479,6 +4489,15 @@ setupRealtime: () => {
         if (local) linkedId = local.id;
       }
       if (linkedId) await get().deleteExpense(linkedId);
+      else {
+        // مش لاقيين صف المصروف المقابل. صفوف الدفتر اتمسحت خلاص، فالمصروف
+        // هيفضل في الميزانية موسوم [MAIN_TREASURY] — مستبعَد من خزينة الكاشير
+        // ومالوش مقابل في الرئيسية. نقولها صريح بدل ما تعدّي بصمت.
+        alert(
+          'اتمسحت المعاملة من دفتر الخزنة الرئيسية، بس مالقيناش صف المصروف المرتبط بيها.\n' +
+          'امسحي المصروف يدوياً من صفحة «الميزانية العامة» عشان الحسابات تظبط.'
+        );
+      }
     }
 
     sendTelegramAlert({

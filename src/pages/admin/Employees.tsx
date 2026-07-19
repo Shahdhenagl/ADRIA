@@ -7,7 +7,7 @@ import {
   DollarSign, Briefcase, ArrowRight, FileText, CalendarDays, Gift, UserCheck, UserX, Download, Clock, LogIn, ShieldCheck, MinusCircle, PlusCircle
 } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
-import { markMainTreasuryNote } from '../../utils/treasury';
+import { markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../../utils/treasury';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 
 // شكل مبسّط للفاتورة/الصنف لحساب مبيعات الموظف وعمولته. متساهل عن قصد عشان
@@ -877,6 +877,7 @@ export default function Employees() {
     }
 
     const baseNote = transFormData.note;
+    const mainGroupId = toMain ? newSavingsGroupId() : null;
     const transactionData = {
       employee_id: emp.id,
       amount: total,
@@ -892,7 +893,8 @@ export default function Employees() {
       deductions: (parseFloat(transFormData.dedAmount) || 0) + ((parseFloat(transFormData.dedDays) || 0) * (emp.monthly_salary / 30)),
       // الصرف من الرئيسية: نعلّم الملاحظة بـ [MAIN_TREASURY] فتُستبعد من خزينة الكاشير
       // (القوائم/الإجماليات/التقفيل)، والمبلغ يتخصم من الخزنة الرئيسية بدلها.
-      note: toMain ? markMainTreasuryNote(baseNote) : baseNote,
+      // والـ group_id بيربطها بصف دفتر الرئيسية عشان الحذف يعكس الاتنين مع بعض.
+      note: toMain ? markSavingsGroupNote(markMainTreasuryNote(baseNote), mainGroupId) : baseNote,
       ...(chosenDate ? { created_at: chosenDate } : {})
     };
 
@@ -901,7 +903,7 @@ export default function Employees() {
     } else {
       await addEmployeeTransaction(transactionData);
       if (toMain) {
-        await recordMainTreasuryOut(split as any, 'main_expense', `${typeLabel} موظف: ${emp.name}${baseNote ? ` - ${baseNote}` : ''}`, chosenDate);
+        await recordMainTreasuryOut(split as any, 'main_expense', `${typeLabel} موظف: ${emp.name}${baseNote ? ` - ${baseNote}` : ''}`, chosenDate, mainGroupId as any);
       }
     }
 

@@ -12,7 +12,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
-import { isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote } from '../../utils/treasury';
+import { isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers } from '../../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
@@ -453,7 +453,8 @@ export default function Finance() {
         paid_instapay: Math.abs(expense.paid_instapay || 0).toString(),
         paid_method5: Math.abs((expense as any).paid_method5 || 0).toString(),
         paid_method6: Math.abs((expense as any).paid_method6 || 0).toString(),
-        note: expense.note,
+        // بدون الوسوم — بتترجّع وقت الحفظ من الصف الأصلي.
+        note: stripTreasuryMarkers(expense.note),
         transfer_from: 'instapay',
         transfer_to: 'cash',
         transfer_amount: '',
@@ -697,7 +698,23 @@ export default function Finance() {
       }
 
       if (editingExpense) {
+        // تصنيف الخزنة بيتحدد وقت الإنشاء ومعاه صفوف في دفتر الخزنة الرئيسية.
+        // تغييره هنا كان هيسيب صفوف الدفتر زي ما هي والمصروف يتنقل للدرج →
+        // ازدواج. التبديل لازم يبقى حذف وإعادة تسجيل.
+        const wasMain = isMainTreasuryExpense(editingExpense);
+        if (wasMain !== (formData.treasury_source === 'main')) {
+          alert(
+            'مش ممكن تغيّري مصدر الخزنة على معاملة متسجّلة.\n' +
+            'امسحي المعاملة وسجّليها من تاني بالمصدر الصح عشان دفتر الخزنة الرئيسية يتظبط معاها.'
+          );
+          return;
+        }
         const multiplier = formData.transaction_type === 'income' ? -1 : 1;
+        // نرجّع الوسوم من الصف الأصلي: من غيرها المصروف بيفكّ ارتباطه بالخزنة
+        // الرئيسية ويرجع يتحسب على درج المحل غلط.
+        const keptNote = wasMain
+          ? markSavingsGroupNote(markMainTreasuryNote(formData.note), savingsGroupIdOf(editingExpense.note))
+          : formData.note;
         const expenseData = {
           category: formData.category,
           amount: amountNum * multiplier,
@@ -707,7 +724,7 @@ export default function Finance() {
           paid_instapay: insta * multiplier,
           paid_method5: m5 * multiplier,
           paid_method6: m6 * multiplier,
-          note: formData.note,
+          note: keptNote,
           payment_method: primaryM
         };
         await updateExpense(editingExpense.id, expenseData as any);
@@ -739,6 +756,9 @@ export default function Finance() {
         );
       } else {
         const multiplier = formData.transaction_type === 'income' ? -1 : 1;
+        // group_id بيربط صف المصروف بصف دفتر الرئيسية — من غيره الحذف من صفحة
+        // الخزنة الرئيسية بيسيب المصروف معلّق في الميزانية.
+        const mainGroupId = (spendFromMainTreasury || incomeToMainTreasury) ? newSavingsGroupId() : null;
         const expenseData = {
           category: formData.category,
           amount: amountNum * multiplier,
@@ -748,15 +768,15 @@ export default function Finance() {
           paid_instapay: insta * multiplier,
           paid_method5: m5 * multiplier,
           paid_method6: m6 * multiplier,
-          note: (spendFromMainTreasury || incomeToMainTreasury) ? markMainTreasuryNote(formData.note) : formData.note,
+          note: mainGroupId ? markSavingsGroupNote(markMainTreasuryNote(formData.note), mainGroupId) : formData.note,
           payment_method: primaryM,
           created_at: pickedCreatedAt
         };
         await addExpense(expenseData as any);
         if (spendFromMainTreasury) {
-          await recordMainTreasuryOut(split as any, 'main_expense', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`, pickedCreatedAt);
+          await recordMainTreasuryOut(split as any, 'main_expense', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`, pickedCreatedAt, mainGroupId as any);
         } else if (incomeToMainTreasury) {
-          await recordMainTreasuryIn(split as any, 'main_income', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`, pickedCreatedAt);
+          await recordMainTreasuryIn(split as any, 'main_income', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`, pickedCreatedAt, mainGroupId as any);
         }
       }
       setShowModal(false);
