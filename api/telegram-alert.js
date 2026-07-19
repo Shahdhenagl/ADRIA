@@ -27,6 +27,8 @@ const TYPE_LABELS = {
   payment: 'تحصيل من عميل',
   purchase: 'فاتورة شراء جديدة',
   supplier_payment: 'سداد لمورد',
+  supplier_collection: 'تحصيل من مورد',
+  supplier_return: 'مرتجع لمورد',
   return: 'مرتجع فاتورة',
   delete_invoice: 'حذف فاتورة بيع/عامة',
   delete_purchase_invoice: 'حذف فاتورة شراء',

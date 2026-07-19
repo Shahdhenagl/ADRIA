@@ -9,7 +9,7 @@ import { ALL_PAYMENT_KEYS, splitFromRow, primaryMethod, type PaymentKey } from '
 import { calculateCashRefunded } from './returns';
 import { isMainTreasuryExpense, isMainTreasuryPurchase } from './treasury';
 
-export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'purchase' | 'transfer';
+export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'purchase' | 'purchase_return' | 'transfer';
 
 export interface LedgerEntry {
   id: string;
@@ -149,8 +149,13 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
 
   for (const inv of purchases || []) {
     if (isMainTreasuryPurchase(inv)) continue;
-    const total = inv.paid_amount || 0;
-    if (total <= 0.001) continue;
+    const raw = inv.paid_amount || 0;
+    if (Math.abs(raw) <= 0.001) continue;
+    // paid_amount سالب = فلوس داخلة (مرتجع مورد أو تحصيل من مورد)، مش صادر.
+    // shareOf بترجّع قيمة مطلقة، فالإشارة بتتحدد من هنا.
+    const isInflow = raw < 0;
+    const total = Math.abs(raw);
+    const isReturn = Boolean(inv.source_invoice_id);
     for (const k of ALL_PAYMENT_KEYS) {
       const amt = shareOf(inv, k, total);
       if (amt > 0.001) {
@@ -158,10 +163,14 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
           id: `${inv.id}:${k}`,
           date: inv.created_at,
           method: k,
-          desc: `فاتورة شراء${inv.invoice_number ? ` #${inv.invoice_number}` : ''}`,
-          inAmount: 0,
-          outAmount: amt,
-          kind: 'purchase',
+          desc: isReturn
+            ? `مرتجع مورد${inv.invoice_number ? ` #${inv.invoice_number}` : ''}`
+            : isInflow
+              ? `تحصيل من مورد${inv.invoice_number ? ` #${inv.invoice_number}` : ''}`
+              : `فاتورة شراء${inv.invoice_number ? ` #${inv.invoice_number}` : ''}`,
+          inAmount: isInflow ? amt : 0,
+          outAmount: isInflow ? 0 : amt,
+          kind: isReturn ? 'purchase_return' : 'purchase',
         });
       }
     }

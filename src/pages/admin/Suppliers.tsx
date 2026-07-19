@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import type { PurchaseItem, Product } from '../../store/useStore';
-import { Users, Search, Plus, Edit2, Trash2, Phone, MapPin, Calendar, ShoppingCart, FileText, X, ChevronDown, Printer, Eye, Download, Upload, FileSpreadsheet } from 'lucide-react';
+import { Users, Search, Plus, Edit2, Trash2, Phone, MapPin, Calendar, ShoppingCart, FileText, X, ChevronDown, Printer, Eye, Download, Upload, FileSpreadsheet, RotateCcw } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { escapeHtml } from '../../utils/escapeHtml';
@@ -175,6 +175,18 @@ export default function Suppliers() {
   const [supplierFinancialPay, setSupplierFinancialPay] = useState<Record<string, string>>({});
   const [supplierFinancialDate, setSupplierFinancialDate] = useState<string>(() => businessDateStr(storeSettings));
 
+  // ── مرتجع مورد ──
+  // المرتجع دايماً مربوط بفاتورة شراء، عشان نرجّع بسعر الفاتورة نفسها ونمنع
+  // إرجاع أكتر من المشترى. التسوية: خصم من المديونية (الافتراضي) أو استرداد كاش.
+  const [showReturnModal, setShowReturnModal] = useState(false);
+  const [returnInvoice, setReturnInvoice] = useState<any>(null);
+  const [returnQty, setReturnQty] = useState<Record<string, string>>({});
+  const [returnSettlement, setReturnSettlement] = useState<'debt' | 'cash'>('debt');
+  const [returnPay, setReturnPay] = useState<Record<string, string>>({});
+  const [returnTreasuryTarget, setReturnTreasuryTarget] = useState<'shop' | 'main'>('main');
+  const [returnDate, setReturnDate] = useState<string>(() => businessDateStr(storeSettings));
+  const [isSavingReturn, setIsSavingReturn] = useState(false);
+
   const [formData, setFormData] = useState({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
 
   // Invoice form state
@@ -217,6 +229,33 @@ export default function Suppliers() {
       (supplier?.phone && supplier.phone.includes(query))
     );
   });
+
+  // صف المرتجع بيتعرف من source_invoice_id (db/46)؛ كمياته وإجماليه سالبين.
+  const isReturnRow = (inv: any) => Boolean(inv.source_invoice_id);
+  // الكمية المرتجعة سابقاً لكل منتج في فاتورة معيّنة.
+  const returnedQtyOf = (sourceInvoiceId: string) => {
+    const map: Record<string, number> = {};
+    purchaseInvoices.forEach((inv: any) => {
+      if (inv.source_invoice_id !== sourceInvoiceId) return;
+      (inv.items || []).forEach((it: any) => {
+        map[it.product_id] = (map[it.product_id] || 0) + Math.abs(Number(it.quantity) || 0);
+      });
+    });
+    return map;
+  };
+  // المرتجع متاح لفواتير الشراء الحقيقية بس — مش السداد/التحصيل/الرصيد الافتتاحي/المرتجعات.
+  const canReturn = (inv: any) =>
+    !isReturnRow(inv) && inv.invoice_number !== OPENING_MARK && (inv.items || []).length > 0 && Number(inv.total) > 0;
+
+  const openReturnModal = (inv: any) => {
+    setReturnInvoice(inv);
+    setReturnQty({});
+    setReturnSettlement('debt');
+    setReturnPay({});
+    setReturnTreasuryTarget('main');
+    setReturnDate(businessDateStr(storeSettings));
+    setShowReturnModal(true);
+  };
 
   const handleSupplierSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -868,7 +907,10 @@ export default function Suppliers() {
                         <FileText size={22} style={{ color: tc }} />
                       </div>
                       <div>
-                        <p className="font-black text-slate-800 text-lg">{inv.invoice_number}</p>
+                        <p className="font-black text-slate-800 text-lg flex items-center gap-2">
+                          {inv.invoice_number}
+                          {isReturnRow(inv) && <span className="text-[11px] font-bold px-2 py-0.5 rounded-lg bg-amber-100 text-amber-700">مرتجع مورد</span>}
+                        </p>
                         <p className="text-slate-500 text-sm font-medium">{supplier?.name || 'مورد محذوف'}</p>
                         <p className="text-slate-400 text-xs mt-1">{new Date(inv.created_at).toLocaleDateString('ar-EG', { calendar: 'gregory', year: 'numeric', month: 'long', day: 'numeric' })}</p>
                       </div>
@@ -901,6 +943,15 @@ export default function Suppliers() {
                       >
                         <Edit2 size={20} />
                       </button>
+                      {canReturn(inv) && (
+                        <button
+                          onClick={() => openReturnModal(inv)}
+                          className="p-3 bg-amber-50 text-amber-600 rounded-2xl hover:bg-amber-100 transition shadow-sm opacity-100 md:opacity-0 md:group-hover:opacity-100"
+                          title="مرتجع للمورد"
+                        >
+                          <RotateCcw size={20} />
+                        </button>
+                      )}
                       <button
                         onClick={() => printPurchaseInvoice(inv)}
                         className="p-3 bg-slate-50 text-slate-600 rounded-2xl hover:bg-slate-100 transition shadow-sm opacity-100 md:opacity-0 md:group-hover:opacity-100"
@@ -916,6 +967,206 @@ export default function Suppliers() {
           )}
         </div>
       )}
+
+      {/* ── Supplier Return Modal (مرتجع مورد) ── */}
+      {showReturnModal && returnInvoice && (() => {
+        const supplier = suppliers.find(s => s.id === returnInvoice.supplier_id);
+        const alreadyReturned = returnedQtyOf(returnInvoice.id);
+        const rows = (returnInvoice.items || []).map((it: any) => {
+          const product = products.find(p => p.id === it.product_id);
+          const unit = (product as any)?.unit || 'قطعة';
+          const available = (Number(it.quantity) || 0) - (alreadyReturned[it.product_id] || 0);
+          const entered = parseFloat(returnQty[it.product_id] || '') || 0;
+          return { it, product, unit, available, entered, lineValue: entered * (Number(it.purchase_price) || 0) };
+        });
+        const returnValue = rows.reduce((s: number, r: any) => s + r.lineValue, 0);
+        const overLimit = rows.some((r: any) => r.entered > r.available + 0.0001);
+        const overStock = rows.some((r: any) => r.entered > 0 && (Number(r.product?.stock_quantity) || 0) < r.entered - 0.0001);
+        const refundTotal = sumSplit(formToSplit(returnPay));
+        const isCash = returnSettlement === 'cash';
+        const canSubmit = returnValue > 0.009 && !overLimit && !overStock && !isSavingReturn &&
+          (!isCash || (refundTotal > 0.009 && refundTotal <= returnValue + 0.01));
+
+        const submitReturn = async () => {
+          const returns = rows
+            .filter((r: any) => r.entered > 0)
+            .map((r: any) => ({ productId: r.it.product_id, returnQty: r.entered }));
+          if (returns.length === 0) return alert('حدد كمية للإرجاع');
+
+          const useMain = isCash && returnTreasuryTarget === 'main';
+          const label = isCash
+            ? `استرداد ${refundTotal.toFixed(2)} ${storeSettings.currency} ${useMain ? 'للخزنة الرئيسية' : 'لدرج المحل'}`
+            : `خصم ${returnValue.toFixed(2)} ${storeSettings.currency} من مديونية المورد`;
+          if (!confirm(`تأكيد مرتجع للمورد «${supplier?.name || 'مورد'}»\nفاتورة: ${returnInvoice.invoice_number}\nقيمة المرتجع: ${returnValue.toFixed(2)} ${storeSettings.currency}\nالتسوية: ${label}\n\nسيتم خصم الكميات من المخزون.`)) return;
+
+          try {
+            setIsSavingReturn(true);
+            const dateISO = timestampForBusinessDate(returnDate, storeSettings);
+            const ok = await useStore.getState().processPurchaseReturn(
+              returnInvoice.id,
+              returns,
+              returnSettlement,
+              isCash ? (formToSplit(returnPay) as any) : undefined,
+              dateISO,
+              useMain
+            );
+            if (ok) {
+              alert('تم تسجيل مرتجع المورد بنجاح');
+              setShowReturnModal(false);
+              setReturnInvoice(null);
+            }
+          } finally {
+            setIsSavingReturn(false);
+          }
+        };
+
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto border border-slate-100">
+              <div className="p-6 bg-amber-50 border-b border-amber-100 flex justify-between items-center">
+                <div>
+                  <h2 className="text-xl font-black text-slate-800">مرتجع للمورد</h2>
+                  <p className="text-sm text-slate-500 font-medium mt-1">
+                    {supplier?.name || 'مورد'} — فاتورة {returnInvoice.invoice_number}
+                  </p>
+                </div>
+                <button onClick={() => { setShowReturnModal(false); setReturnInvoice(null); }} className="p-2 rounded-xl hover:bg-amber-100 transition"><X size={20} /></button>
+              </div>
+
+              <div className="p-6 space-y-5">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">تاريخ المرتجع</label>
+                  <input type="date" value={returnDate} onChange={e => setReturnDate(e.target.value)} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-400 transition font-medium" />
+                </div>
+
+                {/* الأصناف — السعر ثابت من الفاتورة الأصلية، مش متوسط التكلفة الحالي */}
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">الأصناف المرتجعة</label>
+                  <div className="space-y-2">
+                    {rows.map((r: any) => (
+                      <div key={r.it.product_id} className="bg-slate-50 border border-slate-200 rounded-2xl p-3 flex items-center gap-3 flex-wrap">
+                        <div className="flex-1 min-w-[160px]">
+                          <p className="font-bold text-slate-800 text-sm">{r.product?.name || 'منتج محذوف'}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">
+                            سعر الشراء: {Number(r.it.purchase_price).toFixed(2)} · متاح للإرجاع: <b>{formatQty(r.available, r.unit)}</b>
+                            {' · '}بالمخزون: {formatQty(Number(r.product?.stock_quantity) || 0, r.unit)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step={isFractionalUnit(r.unit) ? '0.01' : '1'}
+                            max={r.available}
+                            placeholder="0"
+                            value={returnQty[r.it.product_id] || ''}
+                            onChange={e => setReturnQty({ ...returnQty, [r.it.product_id]: e.target.value })}
+                            disabled={r.available <= 0}
+                            className="w-24 bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-center focus:outline-none focus:ring-2 focus:ring-amber-400 transition disabled:bg-slate-100 disabled:text-slate-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setReturnQty({ ...returnQty, [r.it.product_id]: String(r.available) })}
+                            disabled={r.available <= 0}
+                            className="text-xs font-bold px-2 py-2 rounded-xl bg-amber-100 text-amber-700 hover:bg-amber-200 transition disabled:opacity-40"
+                          >
+                            الكل
+                          </button>
+                          <span className="text-sm font-black text-slate-700 w-20 text-left">{r.lineValue.toFixed(2)}</span>
+                        </div>
+                        {r.entered > r.available + 0.0001 && (
+                          <p className="w-full text-xs font-bold text-red-500">أكبر من المتاح للإرجاع</p>
+                        )}
+                        {r.entered > 0 && (Number(r.product?.stock_quantity) || 0) < r.entered - 0.0001 && (
+                          <p className="w-full text-xs font-bold text-red-500">المخزون الحالي لا يكفي — الكمية دي اتباعت</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-slate-800 text-white rounded-2xl p-4 flex justify-between items-center">
+                  <span className="font-bold">قيمة المرتجع</span>
+                  <span className="text-2xl font-black">{returnValue.toFixed(2)} {storeSettings.currency}</span>
+                </div>
+
+                {/* التسوية */}
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">طريقة التسوية</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => { setReturnSettlement('debt'); setReturnPay({}); }}
+                      className={`p-3 rounded-2xl border-2 text-sm font-bold transition ${returnSettlement === 'debt' ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500'}`}
+                    >
+                      خصم من المديونية
+                      <span className="block text-[11px] font-medium mt-0.5 opacity-70">مفيش فلوس بتتحرك</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setReturnSettlement('cash')}
+                      className={`p-3 rounded-2xl border-2 text-sm font-bold transition ${returnSettlement === 'cash' ? 'border-emerald-500 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500'}`}
+                    >
+                      استرداد نقدي
+                      <span className="block text-[11px] font-medium mt-0.5 opacity-70">المورد رجّع فلوس</span>
+                    </button>
+                  </div>
+                </div>
+
+                {isCash && (
+                  <>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">المبلغ المسترد وطريقة استلامه</label>
+                      <PaymentSplitInputs
+                        value={returnPay}
+                        onChange={(k, v) => setReturnPay((s) => ({ ...s, [k]: v }))}
+                        labelClassName="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right"
+                        inputClassName="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition font-bold text-right"
+                      />
+                      {refundTotal > returnValue + 0.01 && (
+                        <p className="text-xs font-bold text-red-500 mt-2">المبلغ المسترد أكبر من قيمة المرتجع</p>
+                      )}
+                      {refundTotal > 0.009 && refundTotal < returnValue - 0.01 && (
+                        <p className="text-xs font-bold text-slate-500 mt-2">
+                          الباقي ({(returnValue - refundTotal).toFixed(2)}) هيتخصم من مديونية المورد.
+                        </p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 mb-2">الفلوس تدخل فين؟</label>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button type="button" onClick={() => setReturnTreasuryTarget('main')} className={`p-3 rounded-2xl border-2 text-sm font-bold transition ${returnTreasuryTarget === 'main' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-500'}`}>الخزنة الرئيسية</button>
+                        <button type="button" onClick={() => setReturnTreasuryTarget('shop')} className={`p-3 rounded-2xl border-2 text-sm font-bold transition ${returnTreasuryTarget === 'shop' ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-slate-200 bg-white text-slate-500'}`}>درج المحل</button>
+                      </div>
+                      <p className="text-[11px] text-slate-500 mt-2 font-medium">
+                        «درج المحل» بيظهر في تقفيل الكاشير. «الرئيسية» بيتستبعد منه ويتسجّل إيراد في الخزنة الرئيسية.
+                      </p>
+                    </div>
+                  </>
+                )}
+
+                <div className="flex gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => { setShowReturnModal(false); setReturnInvoice(null); }}
+                    className="flex-1 py-3 rounded-2xl bg-slate-100 text-slate-600 font-bold hover:bg-slate-200 transition"
+                  >
+                    إلغاء
+                  </button>
+                  <button
+                    type="button"
+                    onClick={submitReturn}
+                    disabled={!canSubmit}
+                    className="flex-1 py-3 rounded-2xl bg-amber-500 text-white font-bold hover:bg-amber-600 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {isSavingReturn ? 'جارٍ الحفظ...' : 'تأكيد المرتجع'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Supplier Modal ── */}
       {showSupplierModal && (
@@ -1171,8 +1422,9 @@ export default function Suppliers() {
             const isOpening = inv.invoice_number === OPENING_MARK;
             const isPayment = !isOpening && total === 0 && paid > 0;
             const isCollection = !isOpening && total === 0 && paid < 0;
-            const label = isOpening ? 'رصيد افتتاحي' : isCollection ? 'تحصيل من المورد' : isPayment ? 'سداد مديونية' : 'فاتورة مشتريات';
-            return { inv, credit, debit, balance: _run, label, isOpening, isPayment, isCollection };
+            const isReturn = Boolean((inv as any).source_invoice_id);
+            const label = isOpening ? 'رصيد افتتاحي' : isReturn ? 'مرتجع مورد' : isCollection ? 'تحصيل من المورد' : isPayment ? 'سداد مديونية' : 'فاتورة مشتريات';
+            return { inv, credit, debit, balance: _run, label, isOpening, isPayment, isCollection, isReturn };
           });
 
         // ── إحصائيات المنتجات المشتراة من هذا المورد ──
