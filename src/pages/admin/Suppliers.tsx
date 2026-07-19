@@ -149,7 +149,7 @@ function ProductSearchSelect({
 }
 
 export default function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, recordMainTreasuryIn } = useStore();
+  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, recordMainTreasuryIn, deletePurchaseInvoice } = useStore();
   const OPENING_MARK = 'رصيد افتتاحي';
   // الرصيد الافتتاحي كصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد.
   const openingBalanceOf = (supplierId: string) => {
@@ -186,6 +186,7 @@ export default function Suppliers() {
   const [returnTreasuryTarget, setReturnTreasuryTarget] = useState<'shop' | 'main'>('main');
   const [returnDate, setReturnDate] = useState<string>(() => businessDateStr(storeSettings));
   const [isSavingReturn, setIsSavingReturn] = useState(false);
+  const [isDeletingReturn, setIsDeletingReturn] = useState(false);
 
   const [formData, setFormData] = useState({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
 
@@ -246,6 +247,34 @@ export default function Suppliers() {
   // المرتجع متاح لفواتير الشراء الحقيقية بس — مش السداد/التحصيل/الرصيد الافتتاحي/المرتجعات.
   const canReturn = (inv: any) =>
     !isReturnRow(inv) && inv.invoice_number !== OPENING_MARK && (inv.items || []).length > 0 && Number(inv.total) > 0;
+
+  // حذف مرتجع: deletePurchaseInvoice بيعكس أثر الأصناف على المخزون، وبما إن كميات
+  // المرتجع سالبة فالطرح بيرجّع الكمية للمخزن — وحذف الصف نفسه بيرجّع الرصيد والخزنة.
+  const handleDeleteReturn = async (inv: any) => {
+    const supplier = suppliers.find(s => s.id === inv.supplier_id);
+    const returnValue = Math.abs(Number(inv.total) || 0);
+    const refunded = Math.abs(Number(inv.paid_amount) || 0);
+    const qtyLines = (inv.items || []).map((it: any) => {
+      const product = products.find(p => p.id === it.product_id);
+      return `• ${product?.name || 'منتج'}: ${Math.abs(Number(it.quantity) || 0)}`;
+    }).join('\n');
+
+    const warn = refunded > 0.009
+      ? `\n\n⚠️ المرتجع ده كان فيه استرداد ${refunded.toFixed(2)} ${storeSettings.currency}. الحذف هيرجّع المبلغ ده على الخزنة.`
+      : '';
+    if (!confirm(
+      `حذف مرتجع المورد «${supplier?.name || 'مورد'}»؟\n` +
+      `رقم: ${inv.invoice_number}\nالقيمة: ${returnValue.toFixed(2)} ${storeSettings.currency}\n\n` +
+      `هترجع الكميات دي للمخزون:\n${qtyLines || '—'}${warn}`
+    )) return;
+
+    try {
+      setIsDeletingReturn(true);
+      await deletePurchaseInvoice(inv.id);
+    } finally {
+      setIsDeletingReturn(false);
+    }
+  };
 
   const openReturnModal = (inv: any) => {
     setReturnInvoice(inv);
@@ -921,6 +950,10 @@ export default function Suppliers() {
                         <p className="text-sm font-bold text-emerald-600 mt-1">مدفوع: {inv.paid_amount.toLocaleString()}</p>
                         {remaining > 0 && <p className="text-sm font-bold text-red-500">متبقي: {remaining.toLocaleString()}</p>}
                       </div>
+                      {/* التعديل متاح للفواتير العادية بس — صف المرتجع إشاراته سالبة
+                          و updatePurchaseInvoice مش بيتعامل معاها، فالتعديل هيبوّظ
+                          المخزون والرصيد. المرتجع الغلط يتحذف ويتعاد. */}
+                      {!isReturnRow(inv) && (
                       <button
                         onClick={() => {
                           setEditingPurchaseInvoice(inv);
@@ -943,6 +976,17 @@ export default function Suppliers() {
                       >
                         <Edit2 size={20} />
                       </button>
+                      )}
+                      {isReturnRow(inv) && (
+                        <button
+                          onClick={() => handleDeleteReturn(inv)}
+                          disabled={isDeletingReturn}
+                          className="p-3 bg-red-50 text-red-600 rounded-2xl hover:bg-red-100 transition shadow-sm opacity-100 md:opacity-0 md:group-hover:opacity-100 disabled:opacity-40"
+                          title="حذف المرتجع"
+                        >
+                          <Trash2 size={20} />
+                        </button>
+                      )}
                       {canReturn(inv) && (
                         <button
                           onClick={() => openReturnModal(inv)}

@@ -5182,6 +5182,17 @@ setupRealtime: () => {
       // Delete the invoice
       const { error } = await supabase.from('purchase_invoices').delete().eq('id', id);
       if (error) throw error;
+
+      // لو الصف كان على الخزنة الرئيسية، نمسح حركة الدفتر المرتبطة بيه بالـ group_id
+      // كمان — وإلا الفلوس تفضل معلّقة في الرئيسية بعد حذف الصف.
+      const groupId = savingsGroupIdOf((invoice as any)?.notes);
+      if (groupId) {
+        const { error: savErr } = await supabase.from('savings_transactions').delete().eq('group_id', groupId);
+        if (savErr) {
+          console.error('Delete linked main-treasury row error:', savErr);
+          alert('⚠️ تم حذف الصف، لكن تعذّر عكس حركة الخزنة الرئيسية المرتبطة به. راجعها يدوياً من صفحة الخزنة الرئيسية.');
+        }
+      }
       set((state) => ({
         purchaseInvoices: state.purchaseInvoices.filter(inv => inv.id !== id),
         products: updatedProducts
@@ -5361,6 +5372,9 @@ setupRealtime: () => {
     const createdAt = dateISO || accountingTimestampForNow(state.storeSettings);
     const supplier = state.suppliers.find(s => s.id === source.supplier_id);
     const useMain = Boolean(isCash && cashRefund > 0 && toMainTreasury);
+    // أي حركة على الخزنة الرئيسية = كتابتين (صف المرتجع + صف savings_transactions).
+    // لازم يتربطوا بـ group_id، وإلا حذف المرتجع بيسيب حركة معلّقة في الرئيسية.
+    const groupId = useMain ? newGroupId() : null;
 
     try {
       // 1. صف المرتجع: total سالب (يقلّل الرصيد) و paid_amount سالب (فلوس داخلة).
@@ -5380,7 +5394,7 @@ setupRealtime: () => {
           paid_method6: -Math.abs(splits.method6 || 0),
           payment_method: primaryMethodOf(splitPayments),
           notes: useMain
-            ? markMainTreasuryNote(`مرتجع مورد - فاتورة ${source.invoice_number}`)
+            ? markSavingsGroupNote(markMainTreasuryNote(`مرتجع مورد - فاتورة ${source.invoice_number}`), groupId!)
             : `مرتجع مورد - فاتورة ${source.invoice_number}`,
           created_at: createdAt
         })
@@ -5443,6 +5457,7 @@ setupRealtime: () => {
           'main_supplier_return',
           `مرتجع مورد ${supplier?.name || 'مورد'} - ${invoiceNumber}`,
           createdAt,
+          groupId!,
         );
       }
 
