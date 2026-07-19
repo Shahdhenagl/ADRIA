@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { Briefcase, Plus, Banknote, Trash2 } from 'lucide-react';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
-import { computeShopAvailable } from '../../utils/treasury';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf } from '../../utils/paymentMethods';
+import { computeShopAvailable, isMainTreasuryExpense, stripTreasuryMarkers, savingsGroupIdOf } from '../../utils/treasury';
 
 export default function Managers() {
   // الفواتير بتتجاب من الداتابيز في load() مش من الستور — الستور بيحمّل جزء منها بس.
@@ -12,8 +12,15 @@ export default function Managers() {
 
   const [managers, setManagers] = useState<{ id: string; name: string }[]>([]);
   const [withdrawals, setWithdrawals] = useState<any[]>([]);
-  const [avail, setAvail] = useState<Record<string, number>>({ cash: 0, visa: 0, wallet: 0, instapay: 0 });
+  const [shopAvail, setShopAvail] = useState<Record<string, number>>({ cash: 0, visa: 0, wallet: 0, instapay: 0 });
+  const [mainAvail, setMainAvail] = useState<Record<string, number>>({ cash: 0, visa: 0, wallet: 0, instapay: 0 });
   const [loading, setLoading] = useState(false);
+
+  // مصدر السحب: درج المحل أو الخزنة الرئيسية. الأرقام المعروضة والتحقق من
+  // السقف بيتغيّروا معاه.
+  const [source, setSource] = useState<'shop' | 'main'>('shop');
+  const fromMain = source === 'main';
+  const avail = fromMain ? mainAvail : shopAvail;
 
   const [newManager, setNewManager] = useState('');
   const [selManager, setSelManager] = useState('');
@@ -26,19 +33,20 @@ export default function Managers() {
       const { supabase, fetchAllRows } = await import('../../lib/supabase');
       // fetchAllRows بتتخطّى حد الـ 1000 صف بتاع Supabase — الـ select العادي كان
       // بيسيب حركات بره الحساب فالرصيد يطلع غلط أول ما الحركات تكتر.
-      const [mRes, expData, purData, salData, ordData] = await Promise.all([
+      const [mRes, expData, purData, salData, ordData, savRows] = await Promise.all([
         supabase.from('managers').select('*').order('created_at', { ascending: true }),
         fetchAllRows('expenses'),
         fetchAllRows('purchase_invoices'),
         fetchAllRows('employee_transactions'),
         fetchAllRows('orders', '*, order_items(refunded_amount)'),
+        fetchAllRows('savings_transactions'),
       ]);
       setManagers((mRes.data as any[]) || []);
       const expenses = (expData as any[]) || [];
       setWithdrawals(expenses.filter((e) => e.category === 'سحب مدير').sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()));
 
       // نفس حساب «بالمحل» اللي في الخزنة الرئيسية بالحرف — مشترك في utils/treasury.
-      setAvail(computeShopAvailable(
+      setShopAvail(computeShopAvailable(
         {
           orders: (ordData as any[]).map((o) => ({ ...o, items: o.order_items || [] })),
           expenses,
@@ -47,6 +55,17 @@ export default function Managers() {
         },
         storeSettings,
       ));
+
+      // رصيد الخزنة الرئيسية لكل وسيلة = افتتاحي + (داخل − خارج) — نفس معادلة
+      // صفحة الخزنة الرئيسية بالحرف عشان الصفحتين يدّوا نفس الرقم.
+      const main: Record<string, number> = {};
+      ALL_PAYMENT_KEYS.forEach((k) => { main[k] = savingsOpeningBalanceOf(storeSettings as any, k); });
+      ((savRows as any[]) || []).forEach((t) => {
+        const m = t.method || 'cash';
+        if (main[m] === undefined) return;
+        main[m] += (t.direction === 'in' ? 1 : -1) * (Number(t.amount) || 0);
+      });
+      setMainAvail(main);
     } catch (e) { console.error(e); }
     setLoading(false);
   };
@@ -73,20 +92,32 @@ export default function Managers() {
       }
     }
     setSaving(true);
-    const ok = await managerWithdraw(selManager, split as any);
+    const ok = await managerWithdraw(selManager, split as any, fromMain);
     setSaving(false);
     if (ok) {
-      alert('تم تسجيل السحب وخصمه من الخزنة ✅');
+      alert(fromMain ? 'تم تسجيل السحب وخصمه من الخزنة الرئيسية ✅' : 'تم تسجيل السحب وخصمه من درج المحل ✅');
       setAmt({});
       load();
     }
   };
 
   // حذف حركة سحب — بيمسح المصروف فيرجع المبلغ للخزنة تلقائياً.
-  const delWithdrawal = async (id: string) => {
-    if (!confirm('حذف حركة السحب دي؟ هيرجع مبلغها للخزنة.')) return;
-    await deleteExpense(id);
-    setWithdrawals((w) => w.filter((x) => x.id !== id));
+  // سحب من الرئيسية ليه صف كمان في دفتر الرئيسية؛ حذف المصروف لوحده كان
+  // هيسيب الدفتر ناقص المبلغ للأبد، فبنمسح صفوف المجموعة معاه.
+  const delWithdrawal = async (w: any) => {
+    const isMain = isMainTreasuryExpense(w);
+    if (!confirm(`حذف حركة السحب دي؟ هيرجع مبلغها ${isMain ? 'للخزنة الرئيسية' : 'لدرج المحل'}.`)) return;
+    if (isMain) {
+      const groupId = savingsGroupIdOf(w.note);
+      if (groupId) {
+        const { supabase } = await import('../../lib/supabase');
+        await supabase.from('savings_transactions').delete().eq('group_id', groupId);
+      } else {
+        alert('السحب ده مالوش صف مرتبط في دفتر الخزنة الرئيسية — امسحي الحركة من صفحة «الخزنة الرئيسية» بنفسك بعد كده.');
+      }
+    }
+    await deleteExpense(w.id);
+    setWithdrawals((list) => list.filter((x) => x.id !== w.id));
     load();
   };
 
@@ -110,9 +141,27 @@ export default function Managers() {
         <p className="text-slate-500 mt-1 font-medium text-sm">سحب أموال من الخزنة باسم المدير (يُخصم من وسيلة الدفع ولا يُحذف)</p>
       </div>
 
+      {/* اختيار الخزنة — بيغيّر الأرقام المعروضة وسقف السحب ومكان القيد */}
+      <div className="grid grid-cols-2 gap-2">
+        <button
+          type="button"
+          onClick={() => setSource('shop')}
+          className={`py-3 rounded-2xl font-black text-sm transition ${!fromMain ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600'}`}
+        >
+          درج المحل
+        </button>
+        <button
+          type="button"
+          onClick={() => setSource('main')}
+          className={`py-3 rounded-2xl font-black text-sm transition ${fromMain ? 'bg-amber-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600'}`}
+        >
+          الخزنة الرئيسية
+        </button>
+      </div>
+
       {/* إجمالي الخزنة الحقيقي */}
-      <div className="bg-gradient-to-l from-indigo-600 to-purple-600 text-white rounded-2xl p-5 flex items-center justify-between">
-        <span className="text-sm font-bold opacity-90">إجمالي المتاح بالخزنة (كل الوسائل)</span>
+      <div className={`text-white rounded-2xl p-5 flex items-center justify-between ${fromMain ? 'bg-gradient-to-l from-amber-600 to-orange-600' : 'bg-gradient-to-l from-indigo-600 to-purple-600'}`}>
+        <span className="text-sm font-bold opacity-90">إجمالي المتاح — {fromMain ? 'الخزنة الرئيسية' : 'درج المحل'} (كل الوسائل)</span>
         <span className="text-2xl font-black">{METHODS.reduce((s, m) => s + (avail[m.key] || 0), 0).toFixed(2)} {cur}</span>
       </div>
 
@@ -152,8 +201,8 @@ export default function Managers() {
           <div className="text-center font-black text-slate-700 dark:text-slate-200">
             الإجمالي: {METHODS.reduce((s, m) => s + (+amt[m.key] || 0), 0).toFixed(2)} {cur}
           </div>
-          <button onClick={submitWithdraw} disabled={saving} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black py-3 rounded-xl transition">
-            {saving ? 'جاري التسجيل...' : 'تأكيد السحب وخصمه من الخزنة'}
+          <button onClick={submitWithdraw} disabled={saving} className={`w-full disabled:opacity-50 text-white font-black py-3 rounded-xl transition ${fromMain ? 'bg-amber-600 hover:bg-amber-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+            {saving ? 'جاري التسجيل...' : `تأكيد السحب وخصمه من ${fromMain ? 'الخزنة الرئيسية' : 'درج المحل'}`}
           </button>
         </div>
 
@@ -183,21 +232,27 @@ export default function Managers() {
           <table className="w-full text-right text-sm">
             <thead>
               <tr className="text-slate-500 border-b border-slate-200 dark:border-slate-700">
-                <th className="p-2">التاريخ</th><th className="p-2">المدير</th><th className="p-2">المبلغ</th><th className="p-2">الوسيلة</th><th className="p-2 text-center">حذف</th>
+                <th className="p-2">التاريخ</th><th className="p-2">المدير</th><th className="p-2">من</th><th className="p-2">المبلغ</th><th className="p-2">الوسيلة</th><th className="p-2 text-center">حذف</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={5} className="text-center text-slate-400 py-6">جاري التحميل...</td></tr>
+                <tr><td colSpan={6} className="text-center text-slate-400 py-6">جاري التحميل...</td></tr>
               ) : withdrawals.length === 0 ? (
-                <tr><td colSpan={5} className="text-center text-slate-400 py-6">لا توجد سحوبات</td></tr>
+                <tr><td colSpan={6} className="text-center text-slate-400 py-6">لا توجد سحوبات</td></tr>
               ) : withdrawals.map((w) => (
                 <tr key={w.id} className="border-b border-slate-100 dark:border-slate-700/50">
                   <td className="p-2">{new Date(w.created_at).toLocaleString('ar-EG')}</td>
-                  <td className="p-2 font-bold text-slate-800 dark:text-slate-100">{w.note}</td>
+                  {/* الاسم بدون الوسوم المخفية — دي تصنيف محاسبي مش جزء من الاسم */}
+                  <td className="p-2 font-bold text-slate-800 dark:text-slate-100">{stripTreasuryMarkers(w.note)}</td>
+                  <td className="p-2">
+                    {isMainTreasuryExpense(w)
+                      ? <span className="text-[10px] font-black bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">الرئيسية</span>
+                      : <span className="text-[10px] font-black bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">المحل</span>}
+                  </td>
                   <td className="p-2 font-black text-red-600">{Number(w.amount).toFixed(2)} {cur}</td>
                   <td className="p-2">{METHODS.find((m) => m.key === w.payment_method)?.label || w.payment_method}</td>
-                  <td className="p-2 text-center"><button onClick={() => delWithdrawal(w.id)} title="حذف السحب" className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg"><Trash2 size={15} /></button></td>
+                  <td className="p-2 text-center"><button onClick={() => delWithdrawal(w)} title="حذف السحب" className="text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded-lg"><Trash2 size={15} /></button></td>
                 </tr>
               ))}
             </tbody>

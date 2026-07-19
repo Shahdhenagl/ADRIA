@@ -613,7 +613,7 @@ interface CashierStore {
 
   // Expenses
   addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
-  managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }) => Promise<boolean>;
+  managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, fromMain?: boolean) => Promise<boolean>;
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury?: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
   deletePartnerTransaction: (tx: { id: string; group_id?: string | null; treasury?: string; partner_name?: string; type?: 'deposit' | 'withdraw'; amount?: number }) => Promise<boolean>;
   savingsTransfer: (split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, direction: 'in' | 'out', source: string, note?: string, dateISO?: string) => Promise<boolean>;
@@ -2592,8 +2592,12 @@ export const useStore = create<CashierStore>((set, get) => ({
         }
       }
 
+      // فاتورة متستبدلة أكتر من مرة ليها صف فرق لكل استبدال. تمرير diff بيقصر
+      // المطابقة على مبلغ واحد، فبنسيبه فاضي وقتها عشان الصفوف كلها تتشال —
+      // المطابقة أصلاً مقيّدة برقم الفاتورة + كلمة «استبدال».
+      const hasMultipleExchanges = Array.isArray(order.exchange_data?.history) && order.exchange_data.history.length > 0;
       const removedExchangeAdjustmentIds = order.exchange_data
-        ? await deleteExchangeAdjustmentsForOrder(orderId, order.exchange_data?.diff, state.expenses)
+        ? await deleteExchangeAdjustmentsForOrder(orderId, hasMultipleExchanges ? undefined : order.exchange_data?.diff, state.expenses)
         : [];
       const removedExchangeAdjustmentSet = new Set(removedExchangeAdjustmentIds);
 
@@ -4158,27 +4162,36 @@ setupRealtime: () => {
   },
 
   // سحب المدير: يُسجّل كمصروف "سحب مدير" (يخصم من الخزنة) + تنبيه تليجرام. لا يُحذف.
-  managerWithdraw: async (managerName, split) => {
-    const total = (split.cash || 0) + (split.visa || 0) + (split.wallet || 0) + (split.instapay || 0);
+  // السحب من درج المحل = صف مصروف بس. السحب من الخزنة الرئيسية = نفس صف
+  // المصروف بس موسوم [MAIN_TREASURY] (فيتستبعد من درج المحل) + صف في دفتر
+  // الرئيسية، والاتنين مربوطين بـ group_id عشان الحذف يعكسهم مع بعض.
+  managerWithdraw: async (managerName, split, fromMain) => {
+    const total = (split.cash || 0) + (split.visa || 0) + (split.wallet || 0) + (split.instapay || 0) + ((split as any).method5 || 0) + ((split as any).method6 || 0);
     if (total <= 0) return false;
-    const primary = split.cash >= split.visa && split.cash >= split.wallet && split.cash >= split.instapay ? 'cash'
-      : split.visa >= split.wallet && split.visa >= split.instapay ? 'visa'
-      : split.wallet >= split.instapay ? 'wallet' : 'instapay';
+    const primary = primaryOfSplit(split as any);
+    const groupId = fromMain ? newGroupId() : null;
+    const createdAt = accountingTimestampForNow(get().storeSettings);
     await get().addExpense({
       category: 'سحب مدير',
       amount: total,
-      note: managerName,
+      note: fromMain ? markSavingsGroupNote(markMainTreasuryNote(managerName), groupId) : managerName,
       payment_method: primary,
       paid_cash: split.cash || 0,
       paid_visa: split.visa || 0,
       paid_wallet: split.wallet || 0,
       paid_instapay: split.instapay || 0,
-    } as Omit<Expense, 'id' | 'date'>);
+      paid_method5: (split as any).method5 || 0,
+      paid_method6: (split as any).method6 || 0,
+      created_at: createdAt,
+    } as any);
+    if (fromMain) {
+      await get().recordMainTreasuryOut(split as any, 'main_expense', `سحب مدير: ${managerName}`, createdAt, groupId as any);
+    }
     sendTelegramAlert({
       type: 'manager_withdrawal',
       actor: getActorName(get()),
       currency: get().storeSettings.currency,
-      description: `سحب باسم المدير: ${managerName}`,
+      description: `سحب باسم المدير: ${managerName}${fromMain ? ' (من الخزنة الرئيسية)' : ''}`,
       amount: total,
       paymentMethod: primary,
       date: new Date().toISOString(),

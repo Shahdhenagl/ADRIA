@@ -165,6 +165,15 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
     setCart(prev => prev.filter(item => item.id !== id));
   };
 
+  // الاستبدالات اللي حصلت قبل كده على الفاتورة دي (الأقدم الأول). الأحدث بيتخزّن
+  // في جذر exchange_data والباقي في history، فبنجمّعهم هنا في ليستة واحدة.
+  const previousExchanges = useMemo(() => {
+    const xd = (invoice as any).exchange_data;
+    if (!xd) return [] as any[];
+    const past = Array.isArray(xd.history) ? xd.history : [];
+    return [...past, xd];
+  }, [invoice]);
+
   // فرق الاستبدال: موجب = نحصّل من العميل، سالب = نرجّع للعميل
   const settleAmount = exchangeMode ? total - selectedOldTotal : total - oldPaid;
   const methodLabelOf = (m: string) => payLabelOf(storeSettings as any, m);
@@ -327,7 +336,15 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
           before: selectedOldItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
           kept: keptOldItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
           after: cart.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
-          originalTotal: oldTotal, oldTotal: selectedOldTotal, keptTotal: keptOldTotal, newTotal: total, finalTotal: finalExchangeTotal, diff: settleAmount, method: settleMethod, split: { ...effectiveSplit }, date: exchangeAtISO,
+          // originalTotal لازم يفضل إجمالي *الفاتورة الأصلية* عبر كل الاستبدالات:
+          // computeDayBudget بيعتمد عليه في عرض مبيعات يوم البيع، فلو اتحدّث
+          // باستبدال تاني كانت مبيعات يوم مقفول هتتغيّر بأثر رجعي.
+          originalTotal: previousExchanges.length ? (Number(previousExchanges[0].originalTotal) || oldTotal) : oldTotal,
+          oldTotal: selectedOldTotal, keptTotal: keptOldTotal, newTotal: total, finalTotal: finalExchangeTotal, diff: settleAmount, method: settleMethod, split: { ...effectiveSplit }, date: exchangeAtISO,
+          round: previousExchanges.length + 1,
+          // كل الاستبدالات السابقة بترتيبها — الأحدث بيفضل في جذر exchange_data
+          // عشان الشاشات القديمة تفضل شغالة من غير تعديل.
+          history: previousExchanges,
         });
         printExchangeReceipt();
       }
@@ -361,6 +378,41 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
             <div className="bg-red-50 text-red-600 p-4 rounded-xl flex items-center gap-2 border border-red-100">
               <AlertCircle size={20} />
               <p className="font-semibold">{error}</p>
+            </div>
+          )}
+
+          {/* سجل الاستبدالات السابقة — الفاتورة اتستبدلت قبل كده، فالكاشير محتاج
+              يعرف إيه اللي راح وإيه اللي جه في كل مرة قبل ما يستبدل تاني. */}
+          {exchangeMode && previousExchanges.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl overflow-hidden">
+              <div className="px-4 py-3 bg-amber-100 text-amber-800 font-black text-sm flex items-center gap-2">
+                <RefreshCw size={16} />
+                الفاتورة دي اتستبدلت {previousExchanges.length} مرة قبل كده
+              </div>
+              <div className="p-3 space-y-2">
+                {previousExchanges.map((x: any, idx: number) => {
+                  const names = (arr: any[]) => (arr || []).map((i) => `${i.name} ×${i.quantity}`).join('، ') || '—';
+                  const d = Number(x.diff) || 0;
+                  return (
+                    <div key={idx} className="bg-white border border-amber-100 rounded-lg p-3 text-xs space-y-1">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
+                        <span className="font-black text-amber-700">استبدال {idx + 1}</span>
+                        <span className="text-slate-400 font-bold">
+                          {x.date ? new Date(x.date).toLocaleDateString('ar-EG', { calendar: 'gregory' }) : ''}
+                        </span>
+                      </div>
+                      <div><span className="font-bold text-slate-500">رجّع:</span> <span className="text-red-600 font-bold">{names(x.before)}</span></div>
+                      <div><span className="font-bold text-slate-500">خد:</span> <span className="text-emerald-700 font-bold">{names(x.after)}</span></div>
+                      <div className="font-bold text-slate-600">
+                        {Math.abs(d) < 0.01 ? 'من غير فرق' : d > 0 ? `دفع فرق ${Math.abs(d).toLocaleString()} ${storeSettings.currency}` : `استلم فرق ${Math.abs(d).toLocaleString()} ${storeSettings.currency}`}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="px-4 py-2 bg-amber-100/60 text-[11px] font-bold text-amber-800">
+                القطع اللي تحت في «القطع القديمة» هي اللي مع العميل دلوقتي بعد الاستبدالات دي.
+              </div>
             </div>
           )}
 
@@ -399,7 +451,9 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
           {exchangeMode ? (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <div className="bg-slate-50 border border-slate-200 rounded-xl overflow-hidden">
-                <div className="px-4 py-3 bg-slate-100 text-slate-700 font-black text-sm">القطع القديمة</div>
+                <div className="px-4 py-3 bg-slate-100 text-slate-700 font-black text-sm">
+                  {previousExchanges.length > 0 ? 'القطع اللي مع العميل دلوقتي' : 'القطع القديمة'}
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm text-right">
                     <thead className="text-slate-500 font-bold">

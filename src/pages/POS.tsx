@@ -552,9 +552,13 @@ export default function POS() {
         }
         // الاستبدال يُحسب على يوم الاستبدال (exchange_data.date) لا يوم البيع، عشان
         // استبدال فاتورة قديمة يظهر في تقفيل اليوم اللي اتعمل فيه فعلاً.
+        // فاتورة ممكن تتستبدل أكتر من مرة — كل استبدال بيتعدّ على يومه هو.
         if (o.exchange_data) {
-          const xd = new Date(o.exchange_data.date || o.date);
-          if (xd >= start && xd < end) bd.exchangeCount += 1;
+          const past = Array.isArray(o.exchange_data.history) ? o.exchange_data.history : [];
+          [...past, o.exchange_data].forEach((x: any) => {
+            const xd = new Date(x?.date || o.date);
+            if (xd >= start && xd < end) bd.exchangeCount += 1;
+          });
         }
         // المرتجع يُحسب خارج من الخزنة على يوم الاسترجاع (refunded_at)، ولو مفيش
         // (بيانات قديمة قبل db/36) نرجع لتاريخ الفاتورة. شغّلي db/36 عشان يتحسب على يومه الصح.
@@ -2590,9 +2594,20 @@ export default function POS() {
                             // فاتورة اترجعت بالكامل = كل أصنافها مرتجعة → مايصحّش نستبدل فيها.
                             const items = o.items || [];
                             const fullyReturned = items.length > 0 && items.every((it: any) => (it.returned_quantity || 0) >= (it.quantity || 0));
-                            if (o.exchange_data) return <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تم الاستبدال</button>;
                             if (fullyReturned) return <span className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 flex items-center gap-1"><RefreshCcw size={14} /> مرتجعة بالكامل</span>;
-                            return perm('editDelete') ? <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال</button> : null;
+                            // فاتورة متستبدلة قبل كده: بنعرض زرار العرض *و* زرار
+                            // استبدال تاني — الفاتورة دلوقتي شايلة القطع الحالية،
+                            // فالاستبدال التاني بيشتغل عليها عادي.
+                            return (
+                              <>
+                                {o.exchange_data && (
+                                  <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تم الاستبدال</button>
+                                )}
+                                {perm('editDelete') && (
+                                  <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> {o.exchange_data ? 'استبدال تاني' : 'استبدال'}</button>
+                                )}
+                              </>
+                            );
                           })()}
                           {perm('editDelete') && (
                             <button onClick={() => deleteOrderWithOtp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200 flex items-center gap-1"><Trash2 size={14} /> حذف</button>
@@ -2630,8 +2645,33 @@ export default function POS() {
                 <button onClick={() => setViewExchange(null)} className="hover:bg-white/20 p-1.5 rounded-lg"><X size={22} /></button>
               </div>
               <div className="p-4 overflow-y-auto space-y-4">
+                {/* استبدالات سابقة (لو الفاتورة اتستبدلت أكتر من مرة) */}
+                {Array.isArray(ex.history) && ex.history.length > 0 && (
+                  <div className="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-3 border border-amber-100 dark:border-amber-800 space-y-2">
+                    <div className="text-xs font-black text-amber-700">استبدالات سابقة ({ex.history.length})</div>
+                    {ex.history.map((h: any, i: number) => {
+                      const names = (arr: any[]) => (arr || []).map((it: any) => `${it.name} ×${it.quantity}`).join('، ') || '—';
+                      const hd = Number(h.diff) || 0;
+                      return (
+                        <div key={i} className="bg-white dark:bg-slate-800 rounded-lg p-2 text-[11px] space-y-0.5 border border-amber-100 dark:border-amber-800/50">
+                          <div className="flex justify-between font-black text-amber-700">
+                            <span>استبدال {i + 1}</span>
+                            <span className="text-slate-400">{h.date ? new Date(h.date).toLocaleDateString('ar-EG', { calendar: 'gregory' }) : ''}</span>
+                          </div>
+                          <div className="text-red-600 font-bold">رجّع: {names(h.before)}</div>
+                          <div className="text-emerald-700 font-bold">خد: {names(h.after)}</div>
+                          <div className="font-bold text-slate-600 dark:text-slate-300">
+                            {Math.abs(hd) < 0.01 ? 'من غير فرق' : hd > 0 ? `دفع ${Math.abs(hd).toFixed(2)} ${cur}` : `استلم ${Math.abs(hd).toFixed(2)} ${cur}`}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 <div className="bg-red-50 dark:bg-red-900/20 rounded-xl p-3 border border-red-100 dark:border-red-800">
-                  <div className="text-xs font-black text-red-600 mb-1">قبل الاستبدال — الإجمالي: {(Number(ex.oldTotal) || 0).toFixed(2)} {cur}</div>
+                  <div className="text-xs font-black text-red-600 mb-1">
+                    {Array.isArray(ex.history) && ex.history.length > 0 ? 'آخر استبدال — رجّع' : 'قبل الاستبدال'} — الإجمالي: {(Number(ex.oldTotal) || 0).toFixed(2)} {cur}
+                  </div>
                   {list(ex.before)}
                 </div>
                 <div className="bg-emerald-50 dark:bg-emerald-900/20 rounded-xl p-3 border border-emerald-100 dark:border-emerald-800">
