@@ -2633,6 +2633,14 @@ export default function POS() {
                 </div>
                 <div className={`rounded-xl p-3 text-center font-black ${Math.abs(diff) < 0.01 ? 'bg-slate-100 dark:bg-slate-900/40 text-slate-600' : diff > 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
                   {Math.abs(diff) < 0.01 ? 'لا يوجد فرق' : `${diff > 0 ? 'تم تحصيل' : 'تم رد'}: ${Math.abs(diff).toFixed(2)} ${cur}`}
+                  {/* استبدال قديم مالوش split — بيقع على method القديمة. */}
+                  {Math.abs(diff) >= 0.01 && (() => {
+                    const used = Object.entries((ex.split || {}) as Record<string, number>).filter(([, v]) => (Number(v) || 0) > 0.001);
+                    const text = used.length
+                      ? used.map(([k, v]) => `${payLabelOf(storeSettings as any, k)} ${(Number(v) || 0).toFixed(2)}`).join(' + ')
+                      : (ex.method ? payLabelOf(storeSettings as any, ex.method) : '');
+                    return text ? <div className="text-[11px] font-bold text-slate-600 mt-1">{text}</div> : null;
+                  })()}
                   {ex.date ? <div className="text-[11px] font-bold text-slate-500 mt-1">{new Date(ex.date).toLocaleString('ar-EG')}</div> : null}
                 </div>
                 <button onClick={() => reprintOrder(viewExchange)} className="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2"><Printer size={16} /> طباعة الفاتورة الحالية</button>

@@ -41,7 +41,17 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
     return p;
   });
   const setPayVal = (k: string, v: number) => setPay((s) => ({ ...s, [k]: v }));
-  const [settleMethod, setSettleMethod] = useState<string>(invoice.payment_method || 'cash');
+  // تقسيمة فرق الاستبدال على أكتر من وسيلة دفع. طول ما الكاشير ملمسش الحقول
+  // (splitTouched=false) المبلغ كله بيقع تلقائياً على وسيلة الفاتورة الأصلية
+  // وبيتحرّك لوحده مع أي تعديل في العربة؛ أول ما يلمس حاجة بيبقى يدوي بالكامل
+  // ولازم المجموع يساوي الفرق.
+  const defaultSettleKey = payKeys.includes(invoice.payment_method as any) ? (invoice.payment_method as string) : (payKeys[0] || 'cash');
+  const [settleSplit, setSettleSplit] = useState<Record<string, number>>({});
+  const [splitTouched, setSplitTouched] = useState(false);
+  const setSplitVal = (k: string, v: number) => {
+    setSplitTouched(true);
+    setSettleSplit((s) => ({ ...s, [k]: Math.max(0, v) }));
+  };
 
   const [reason, setReason] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -159,13 +169,35 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   const settleAmount = exchangeMode ? total - selectedOldTotal : total - oldPaid;
   const methodLabelOf = (m: string) => payLabelOf(storeSettings as any, m);
 
+  // قيمة الفرق المطلوب توزيعها (بدون إشارة — الاتجاه بيتحدد من settleAmount).
+  const settleTotal = Math.round(Math.abs(settleAmount) * 100) / 100;
+  const effectiveSplit = useMemo(() => {
+    const s: Record<string, number> = {};
+    payKeys.forEach((k) => { s[k] = splitTouched ? (settleSplit[k] || 0) : 0; });
+    if (!splitTouched) s[defaultSettleKey] = settleTotal;
+    return s;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [splitTouched, settleSplit, settleTotal, defaultSettleKey, payKeys.join(',')]);
+  const splitSum = Math.round(payKeys.reduce((s, k) => s + (effectiveSplit[k] || 0), 0) * 100) / 100;
+  const splitRemaining = Math.round((settleTotal - splitSum) * 100) / 100;
+  // لو مفيش فرق أصلاً مفيش حاجة تتوزّع.
+  const splitOk = settleTotal < 0.01 || Math.abs(splitRemaining) < 0.01;
+  const settleMethod = primaryMethod_(effectiveSplit as any);
+
   const printExchangeReceipt = () => {
     const cur = storeSettings.currency;
     const date = new Date().toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const rows = (items: OrderItem[]) => items.map(i => `<tr><td style="text-align:right;font-weight:700;">${escapeHtml(i.name)}</td><td style="text-align:center;">${i.quantity}</td><td style="text-align:left;">${(i.quantity * (i.sale_price || 0)).toFixed(2)}</td></tr>`).join('');
     const diffBlock = Math.abs(settleAmount) < 0.01
       ? `<div class="rem">لا يوجد فرق</div>`
-      : `<div class="rem">${settleAmount > 0 ? 'تحصيل من العميل' : 'مرتجع للعميل'}: ${Math.abs(settleAmount).toFixed(2)} ${cur}<br/><span style="font-size:11px;">طريقة ${settleAmount > 0 ? 'التحصيل' : 'الرد'}: ${methodLabelOf(settleMethod)}</span></div>`;
+      : (() => {
+          const used = payKeys.filter((k) => (effectiveSplit[k] || 0) > 0.001);
+          // وسيلة واحدة → سطر زي ما كان؛ أكتر من واحدة → كل وسيلة بمبلغها.
+          const methodsText = used.length <= 1
+            ? escapeHtml(methodLabelOf(used[0] || settleMethod))
+            : used.map((k) => `${escapeHtml(methodLabelOf(k))} ${(effectiveSplit[k] || 0).toFixed(2)}`).join(' + ');
+          return `<div class="rem">${settleAmount > 0 ? 'تحصيل من العميل' : 'مرتجع للعميل'}: ${Math.abs(settleAmount).toFixed(2)} ${cur}<br/><span style="font-size:11px;">طريقة ${settleAmount > 0 ? 'التحصيل' : 'الرد'}: ${methodsText}</span></div>`;
+        })();
     const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"/><title>إيصال استبدال #${invoice.id}</title><style>
       @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@700;900&display=swap');
       *{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo',sans-serif;color:#000;}
@@ -216,6 +248,13 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
     }
     if (exchangeMode && selectedOldItems.length === 0) {
       setError('اختاري قطعة واحدة على الأقل من الفاتورة القديمة للاستبدال.');
+      return;
+    }
+
+    if (exchangeMode && !splitOk) {
+      setError(splitRemaining > 0
+        ? `باقي ${splitRemaining.toLocaleString()} ${storeSettings.currency} من الفرق من غير وسيلة دفع`
+        : `التقسيمة أكبر من الفرق بـ ${Math.abs(splitRemaining).toLocaleString()} ${storeSettings.currency}`);
       return;
     }
 
@@ -272,8 +311,9 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
         if (Math.abs(settleAmount) >= 0.01) {
           const m = settleMethod;
           const amt = Math.abs(settleAmount);
+          // paid_* بتتخزن كقيم موجبة في الحالتين — اتجاه الحركة في amount نفسه.
           const sp: Record<string, number> = {};
-          payKeys.forEach((k) => { sp[k] = m === k ? amt : 0; });
+          payKeys.forEach((k) => { sp[k] = effectiveSplit[k] || 0; });
           await addExpense({
             category: 'فرق استبدال مبيعات',
             amount: settleAmount > 0 ? -amt : amt, // تحصيل = إيراد (سالب) / رد = مصروف (موجب)
@@ -287,7 +327,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
           before: selectedOldItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
           kept: keptOldItems.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
           after: cart.map((i) => ({ name: i.name, quantity: i.quantity, sale_price: i.sale_price })),
-          originalTotal: oldTotal, oldTotal: selectedOldTotal, keptTotal: keptOldTotal, newTotal: total, finalTotal: finalExchangeTotal, diff: settleAmount, method: settleMethod, date: exchangeAtISO,
+          originalTotal: oldTotal, oldTotal: selectedOldTotal, keptTotal: keptOldTotal, newTotal: total, finalTotal: finalExchangeTotal, diff: settleAmount, method: settleMethod, split: { ...effectiveSplit }, date: exchangeAtISO,
         });
         printExchangeReceipt();
       }
@@ -542,9 +582,37 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                       </div>
                       <div>
                         <label className="block text-sm font-bold text-slate-600 mb-1">{settleAmount > 0 ? 'طريقة تحصيل الفرق' : 'طريقة رد الفلوس للعميل'}</label>
-                        <select value={settleMethod} onChange={(e) => setSettleMethod(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold">
-                          {payKeys.map((k) => <option key={k} value={k}>{payLabelOf(storeSettings as any, k)}</option>)}
-                        </select>
+                        <p className="text-[11px] text-slate-400 mb-2 font-bold">تقدري تقسّمي المبلغ على أكتر من وسيلة — المهم المجموع يساوي الفرق.</p>
+                        <div className="space-y-2">
+                          {payKeys.map((k) => (
+                            <div key={k} className="flex items-center gap-3">
+                              <label className="w-24 text-sm font-medium text-slate-600 shrink-0">{payLabelOf(storeSettings as any, k)}:</label>
+                              <input
+                                type="number" min="0" step="0.01"
+                                value={effectiveSplit[k] ? effectiveSplit[k] : ''}
+                                onChange={(e) => setSplitVal(k, Number(e.target.value))}
+                                className="flex-1 min-w-0 p-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-bold"
+                                placeholder="0"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="flex items-center justify-between mt-2 text-xs font-bold">
+                          <button
+                            type="button"
+                            onClick={() => { setSplitTouched(false); setSettleSplit({}); }}
+                            className="text-indigo-600 hover:underline"
+                          >
+                            إعادة الكل على {methodLabelOf(defaultSettleKey)}
+                          </button>
+                          {Math.abs(splitRemaining) < 0.01 ? (
+                            <span className="text-emerald-600">التقسيمة مظبوطة ✓</span>
+                          ) : splitRemaining > 0 ? (
+                            <span className="text-amber-600">باقي {splitRemaining.toLocaleString()} {storeSettings.currency}</span>
+                          ) : (
+                            <span className="text-red-600">زيادة {Math.abs(splitRemaining).toLocaleString()} {storeSettings.currency}</span>
+                          )}
+                        </div>
                       </div>
                     </>
                   )}
@@ -714,8 +782,8 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
           </button>
           <button
             onClick={handleSave}
-            disabled={isSubmitting}
-            className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200 disabled:opacity-50 flex items-center gap-2"
+            disabled={isSubmitting || (exchangeMode && !splitOk)}
+            className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
             {isSubmitting ? 'جاري الحفظ...' : (exchangeMode ? 'تأكيد الاستبدال وطباعة' : 'حفظ التعديلات')}
           </button>
