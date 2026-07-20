@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { useStore } from '../../store/useStore';
+import { useStore, findLinkedSalaryExpense } from '../../store/useStore';
 import { FileBarChart, Printer } from 'lucide-react';
 import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
@@ -93,16 +93,10 @@ export default function Reports() {
       else if (paid < 0) add(inN, { ...absSplits(p), paid_amount: Math.abs(paid) }, 'paid_amount');
     });
 
-    const hasMatchingSalaryExpense = (tx: any) => {
-      const txDate = new Date(tx.created_at).toISOString().slice(0, 10);
-      return extra.expenses.some((e) => {
-        const eDate = new Date(e.created_at || e.date).toISOString().slice(0, 10);
-        return e.category === 'رواتب'
-          && eDate === txDate
-          && Math.abs(Number(e.amount) || 0) === Math.abs(Number(tx.amount) || 0)
-          && ALL_PAYMENT_KEYS.every((k) => Math.abs(Number(e['paid_' + k]) || 0) === Math.abs(Number(tx['paid_' + k]) || 0));
-      });
-    };
+    // الراتب متسجّل مرتين (صف موظف + مصروف «رواتب») فبنعدّه مرة واحدة.
+    // الأولوية للربط الصريح employee_transaction_id (db/49)، والمطابقة الهشّة
+    // للصفوف القديمة بس — راجع findLinkedSalaryExpense في الستور.
+    const hasMatchingSalaryExpense = (tx: any) => Boolean(findLinkedSalaryExpense(extra.expenses as any[], tx));
     extra.salaries
       .filter((s) => !isMainTreasuryExpense(s) && !hasMatchingSalaryExpense(s) && pass(s.created_at))
       .forEach((s) => add(outN, s, 'amount'));

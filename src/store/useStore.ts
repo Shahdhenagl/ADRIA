@@ -264,6 +264,8 @@ export interface Expense {
   payment_method: 'cash' | 'visa' | 'wallet' | 'instapay' | 'method5' | 'method6';
   date: string;
   car_id?: string;
+  /** لمصاريف فئة «رواتب»: id معاملة الموظف المقابلة (db/49) — بديل المطابقة الهشّة. */
+  employee_transaction_id?: string | null;
 }
 
 export interface CarSubscription {
@@ -1018,6 +1020,29 @@ const getSplits = (split: any, method: string, amount: number) => {
 };
 
 // الوسيلة الأساسية لصف مقسّم = الوسيلة صاحبة أكبر مبلغ (الافتراضي كاش).
+/**
+ * صف المصروف المقابل لمعاملة موظف (راتب/سلفة/حافز).
+ * الأولوية للربط الصريح employee_transaction_id (db/49). الصفوف القديمة
+ * مالهاش ربط فبنقع على المطابقة بالتاريخ + المبلغ + التقسيمة — وهي هشّة
+ * (راتبين متطابقين في نفس اليوم = ممكن ترجّع الصف الغلط)، فبنستخدمها
+ * للتوافق مع البيانات القديمة بس.
+ */
+export const findLinkedSalaryExpense = (expenses: any[], tx: any): any | undefined => {
+  if (!tx) return undefined;
+  const linked = expenses.find((e) => e.employee_transaction_id && e.employee_transaction_id === tx.id);
+  if (linked) return linked;
+  const txDate = new Date(tx.created_at).toISOString().slice(0, 10);
+  return expenses.find((e) => {
+    if (e.employee_transaction_id) return false; // مربوط بمعاملة تانية — ما ينفعش
+    const eDate = new Date(e.date || e.created_at).toISOString().slice(0, 10);
+    return e.category === 'رواتب'
+      && eDate === txDate
+      && Math.abs(Number(e.amount) || 0) === Math.abs(Number(tx.amount) || 0)
+      && (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
+        .every((k) => Math.abs(Number(e['paid_' + k]) || 0) === Math.abs(Number(tx['paid_' + k]) || 0));
+  });
+};
+
 const primaryMethodOf = (split: any): 'cash' | 'visa' | 'wallet' | 'instapay' | 'method5' | 'method6' => {
   if (!split) return 'cash';
   const keys = ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const;
@@ -4156,6 +4181,9 @@ setupRealtime: () => {
       note: expense.note,
       payment_method: expense.payment_method,
       car_id: expense.car_id || null,
+      // ربط مصروف الراتب بمعاملة الموظف (db/49). لو الميجريشن لسه ماتشغّلتش،
+      // بنتجاهل العمود عشان الحفظ ما يفشلش والكود يقع على المطابقة القديمة.
+      ...((expense as any).employee_transaction_id ? { employee_transaction_id: (expense as any).employee_transaction_id } : {}),
       created_at: createdAt
     }).select().single();
 
@@ -4178,7 +4206,8 @@ setupRealtime: () => {
         note: (data as any).note,
         payment_method: (data as any).payment_method,
         date: (data as any).created_at,
-        car_id: (data as any).car_id
+        car_id: (data as any).car_id,
+        employee_transaction_id: (data as any).employee_transaction_id ?? null
       };
       set((state) => ({ expenses: [newExp, ...state.expenses] }));
     }
@@ -5700,7 +5729,9 @@ setupRealtime: () => {
         paid_method6: (transaction as any).paid_method6 || 0,
         note: note,
         payment_method: transaction.payment_method,
-        created_at: createdAt
+        created_at: createdAt,
+        // ربط صريح بدل المطابقة بالتاريخ/المبلغ (db/49)
+        employee_transaction_id: (data as any).id
       } as any);
 
       set((state) => ({ employeeTransactions: [data as EmployeeTransaction, ...state.employeeTransactions] }));
@@ -5722,18 +5753,7 @@ setupRealtime: () => {
     const emp = get().employees.find(e => e.id === updatedTransaction.employee_id);
     const typeLabel = updatedTransaction.type === 'salary' ? 'راتب' : updatedTransaction.type === 'advance' ? 'سلفة' : 'حافز';
     const note = `${typeLabel} - ${emp?.name || 'موظف'}${updatedTransaction.note ? ` (${updatedTransaction.note})` : ''}`;
-    const currentDate = new Date(current.created_at).toISOString().slice(0, 10);
-
-    const linkedExpense = get().expenses.find(e => {
-      const expenseDate = new Date(e.date).toISOString().slice(0, 10);
-      return e.category === 'رواتب'
-        && expenseDate === currentDate
-        && Math.abs(e.amount) === Math.abs(current.amount)
-        && Math.abs(e.paid_cash || 0) === Math.abs(current.paid_cash || 0)
-        && Math.abs(e.paid_visa || 0) === Math.abs(current.paid_visa || 0)
-        && Math.abs(e.paid_wallet || 0) === Math.abs(current.paid_wallet || 0)
-        && Math.abs(e.paid_instapay || 0) === Math.abs(current.paid_instapay || 0);
-    });
+    const linkedExpense = findLinkedSalaryExpense(get().expenses, current);
 
     if (linkedExpense) {
       await get().updateExpense(linkedExpense.id, {
@@ -5743,9 +5763,13 @@ setupRealtime: () => {
         paid_visa: updatedTransaction.paid_visa,
         paid_wallet: updatedTransaction.paid_wallet,
         paid_instapay: updatedTransaction.paid_instapay,
+        // الطريقتين الإضافيتين كانوا ناسيين هنا، فتعديل راتب مدفوع بيهم كان
+        // بيسيب صف المصروف بالمبالغ القديمة والخزنة تختلف عن جدول الموظفين.
+        paid_method5: (updatedTransaction as any).paid_method5 || 0,
+        paid_method6: (updatedTransaction as any).paid_method6 || 0,
         note,
         payment_method: updatedTransaction.payment_method
-      });
+      } as any);
     }
 
     set((state) => ({
@@ -5758,23 +5782,15 @@ setupRealtime: () => {
     if (!current) return;
     if (!(await ensureAccountingDayOpen(get(), current.created_at))) return;
 
+    // نلاقي المصروف المرتبط **قبل** الحذف: on delete set null بتصفّر الربط،
+    // فبعد الحذف مش هنعرف نوصله غير بالمطابقة الهشّة.
+    const linkedExpense = findLinkedSalaryExpense(get().expenses, current);
+
     const { error } = await supabase.from('employee_transactions').delete().eq('id', id);
     if (error) {
       console.error("Delete Employee Transaction Error:", error);
       return;
     }
-
-    const currentDate = new Date(current.created_at).toISOString().slice(0, 10);
-    const linkedExpense = get().expenses.find(e => {
-      const expenseDate = new Date(e.date).toISOString().slice(0, 10);
-      return e.category === 'رواتب'
-        && expenseDate === currentDate
-        && Math.abs(e.amount) === Math.abs(current.amount)
-        && Math.abs(e.paid_cash || 0) === Math.abs(current.paid_cash || 0)
-        && Math.abs(e.paid_visa || 0) === Math.abs(current.paid_visa || 0)
-        && Math.abs(e.paid_wallet || 0) === Math.abs(current.paid_wallet || 0)
-        && Math.abs(e.paid_instapay || 0) === Math.abs(current.paid_instapay || 0);
-    });
 
     if (linkedExpense) {
       await get().deleteExpense(linkedExpense.id);

@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useStore } from '../../store/useStore';
+import { useStore, findLinkedSalaryExpense } from '../../store/useStore';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { allocatePayment } from '../../utils/paymentAllocator';
 import { 
@@ -215,21 +215,11 @@ export default function Budget() {
       );
     });
 
-    const hasMatchingExpense = (et: typeof employeeTransactions[number]) => {
-      const etDate = new Date(et.created_at).toISOString().slice(0, 10);
-      return expenses.some(e => {
-        const expenseDate = new Date(e.date).toISOString().slice(0, 10);
-        return e.category === 'رواتب'
-          && expenseDate === etDate
-          && Math.abs(e.amount) === Math.abs(et.amount)
-          && Math.abs(e.paid_cash || 0) === Math.abs(et.paid_cash || 0)
-          && Math.abs(e.paid_visa || 0) === Math.abs(et.paid_visa || 0)
-          && Math.abs(e.paid_wallet || 0) === Math.abs(et.paid_wallet || 0)
-          && Math.abs(e.paid_instapay || 0) === Math.abs(et.paid_instapay || 0)
-          && Math.abs((e as any).paid_method5 || 0) === Math.abs(et.paid_method5 || 0)
-          && Math.abs((e as any).paid_method6 || 0) === Math.abs(et.paid_method6 || 0);
-      });
-    };
+    // الراتب متسجّل مرتين (صف موظف + مصروف «رواتب») فبنعدّه مرة واحدة.
+    // الأولوية للربط الصريح employee_transaction_id (db/49)، والمطابقة الهشّة
+    // للصفوف القديمة بس — راجع findLinkedSalaryExpense في الستور.
+    const hasMatchingExpense = (et: typeof employeeTransactions[number]) =>
+      Boolean(findLinkedSalaryExpense(expenses as any[], et));
 
     // 3. Purchase Invoices (Purchases & Supplier payments)
     purchaseInvoices.forEach(p => {
