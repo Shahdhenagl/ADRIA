@@ -70,9 +70,12 @@ where pi.invoice_number like 'SUP-COL-%'
 order by pi.created_at desc;
 
 
--- (4) الاتجاه المعاكس: فواتير متعلّمة [MAIN_TREASURY] من غير صف مقابل في الدفتر.
---     دي معناها فلوس اتصرفت/اتحصّلت على الرئيسية بس الدفتر مايعرفش عنها حاجة
---     (بيحصل لو تسجيل صف الدفتر فشل بعد ما الفاتورة اتحفظت).
+-- (4) فواتير متعلّمة [MAIN_TREASURY] من غير وسم الربط [SVG:].
+--     ⚠️ ده بيقيس **الربط** بس، مش وجود صف الدفتر. الصفوف اللي هتظهر هنا
+--     غالباً حساباتها سليمة دلوقتي — بس هي **معرّضة للخطر**: لو أي واحدة فيهم
+--     اتحذفت، صف الدفتر المقابل هيتعلّق والرصيد الرئيسي هيبوظ بمقدار مبلغها.
+--     دي كل الحركات اللي اتسجّلت قبل إصلاح الربط. للتأكد من الأرقام نفسها
+--     استخدم استعلام (5).
 select
   pi.id, pi.invoice_number, pi.created_at,
   pi.total, pi.paid_amount, pi.notes
@@ -80,6 +83,38 @@ from purchase_invoices pi
 where pi.notes like '%[MAIN_TREASURY]%'
   and pi.notes !~ '\[SVG:'
 order by pi.created_at desc;
+
+
+-- (5) ✅ المصالحة — ده الاستعلام اللي بيقول هل الرصيد غلط فعلاً وبكام.
+--     بيقارن مجموع دفتر الرئيسية بمجموع الفواتير المقابلة لكل نوع حركة.
+--     diff = 0  → سليم.
+--     diff > 0  → الدفتر فيه أكتر من الفواتير = صفوف دفتر يتيمة (فاتورتها
+--                 اتحذفت). الرصيد الرئيسي غلط بالمقدار ده.
+--     diff < 0  → فيه فواتير مالهاش صف دفتر (فشل التسجيل بعد حفظ الفاتورة).
+with ledger as (
+  select
+    source,
+    sum(case when direction = 'out' then amount else -amount end) as ledger_net
+  from savings_transactions
+  where source in ('main_supplier_payment', 'main_supplier_collection')
+  group by source
+),
+invoices as (
+  select 'main_supplier_payment' as source, coalesce(sum(paid_amount), 0) as inv_net
+  from purchase_invoices
+  where notes like '%[MAIN_TREASURY]%' and invoice_number like 'PAY-%'
+  union all
+  select 'main_supplier_collection', coalesce(sum(-paid_amount), 0)
+  from purchase_invoices
+  where notes like '%[MAIN_TREASURY]%' and invoice_number like 'SUP-COL-%'
+)
+select
+  coalesce(l.source, i.source)                        as movement,
+  coalesce(l.ledger_net, 0)                           as ledger_total,
+  coalesce(i.inv_net, 0)                              as invoices_total,
+  coalesce(l.ledger_net, 0) - coalesce(i.inv_net, 0)  as diff
+from ledger l
+full outer join invoices i on i.source = l.source;
 
 
 -- ── بعد المراجعة ──
