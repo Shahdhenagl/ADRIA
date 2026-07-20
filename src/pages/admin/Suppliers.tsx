@@ -149,7 +149,7 @@ function ProductSearchSelect({
 }
 
 export default function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, recordMainTreasuryIn, deletePurchaseInvoice } = useStore();
+  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, deletePurchaseInvoice } = useStore();
   const OPENING_MARK = 'رصيد افتتاحي';
   // الرصيد الافتتاحي كصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد.
   const openingBalanceOf = (supplierId: string) => {
@@ -1569,8 +1569,8 @@ export default function Suppliers() {
             setIsPayingDebt(true);
             const dateISO = timestampForBusinessDate(supplierFinancialDate, storeSettings);
             if (isCollection) {
+              // collectSupplierCredit بقى بيسجّل حركة الرئيسية جوّه بنفسه (مربوطة بـ group_id).
               await useStore.getState().collectSupplierCredit(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO, useMain);
-              if (useMain) await recordMainTreasuryIn(splitPayments as any, 'main_supplier_collection', `تحصيل من مورد ${selectedSupplierProfile.name}`, dateISO);
             } else {
               await useStore.getState().paySupplierDebt(selectedSupplierProfile.id, totalPaid, splitPayments as any, dateISO, useMain);
             }

@@ -152,7 +152,21 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
     }
   });
 
-  (rows.purchases || []).filter((p: any) => !isMainTreasuryPurchase(p)).forEach((p: any) => add(-1, p, 'paid_amount'));
+  // paid_amount سالب = فلوس داخلة (مرتجع مورد / تحصيل من مورد) مش خارجة.
+  // الصف اللي فيه تقسيم مسجّل بيتظبط لوحده (تقسيم سالب × -1 = موجب)، لكن صف من
+  // غير تقسيم (بيانات قديمة) applySplit بتاخد له Math.abs فكان بيتحسب صادر
+  // بالغلط. بنطبّع الصف لقيم موجبة وندخّله بإشارة +1 — زي ما بيتعمل مع المصاريف
+  // السالبة فوق — فالحالتين بيدّوا وارد.
+  (rows.purchases || []).filter((p: any) => !isMainTreasuryPurchase(p)).forEach((p: any) => {
+    const paid = +p.paid_amount || 0;
+    if (paid < 0) {
+      const absRec: any = { ...p, paid_amount: Math.abs(paid) };
+      ALL_PAYMENT_KEYS.forEach((k) => { absRec['paid_' + k] = Math.abs(+p['paid_' + k] || 0); });
+      add(1, absRec, 'paid_amount');
+    } else {
+      add(-1, p, 'paid_amount');
+    }
+  });
   (rows.salaries || []).forEach((s: any) => add(-1, s, 'amount'));
   ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
   return net;

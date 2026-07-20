@@ -5240,6 +5240,7 @@ setupRealtime: () => {
       // If splitPayments is undefined, default to cash or the primary method
       const primaryMethod = splitPayments ? methods.sort((a, b) => b.amount - a.amount)[0].name : 'cash';
       const splits = getSplits(splitPayments, primaryMethod, amount);
+      const mainGroupId = fromMainTreasury ? newGroupId() : null;
 
       const { data, error } = await supabase
         .from('purchase_invoices')
@@ -5256,8 +5257,10 @@ setupRealtime: () => {
         paid_method6: splits.method6 || 0,
           payment_method: primaryMethod,
           // السداد من الخزنة الرئيسية بيتعلّم في notes عشان يتستبعد من تقفيل الكاشير
-          // (خزنة المحل) ويتخصم من الخزنة الرئيسية بدلها.
-          ...(fromMainTreasury ? { notes: markMainTreasuryNote('سداد مورد من الخزنة الرئيسية') } : {}),
+          // (خزنة المحل) ويتخصم من الخزنة الرئيسية بدلها. و[SVG:] بيربطه بصف
+          // الدفتر عشان الحذف يشيل الاتنين — من غيره صف الدفتر بيفضل معلّق
+          // والرصيد الرئيسي بيبوظ للأبد.
+          ...(fromMainTreasury ? { notes: markSavingsGroupNote(markMainTreasuryNote('سداد مورد من الخزنة الرئيسية'), mainGroupId!) } : {}),
           ...(dateISO ? { created_at: dateISO } : {})
         })
         .select()
@@ -5284,6 +5287,7 @@ setupRealtime: () => {
           'main_supplier_payment',
           `سداد مورد ${supplier?.name || 'مورد'} - ${invoiceNumber}`,
           (data as any).created_at,
+          mainGroupId!,
         );
       }
       sendTelegramAlert({
@@ -5515,6 +5519,7 @@ setupRealtime: () => {
       ];
       const primaryMethod = splitPayments ? methods.sort((a, b) => b.amount - a.amount)[0].name : 'cash';
       const splits = getSplits(splitPayments, primaryMethod, amount);
+      const mainGroupId = toMainTreasury ? newGroupId() : null;
 
       const { data, error } = await supabase
         .from('purchase_invoices')
@@ -5531,8 +5536,9 @@ setupRealtime: () => {
           paid_method6: -Math.abs(splits.method6 || 0),
           payment_method: primaryMethod,
           // التحصيل للخزنة الرئيسية بيتعلّم عشان يتستبعد من تقفيل الكاشير (خزنة المحل)
-          // ويتسجّل إيراد في الخزنة الرئيسية بدلها.
-          ...(toMainTreasury ? { notes: markMainTreasuryNote('تحصيل من مورد للخزنة الرئيسية') } : {}),
+          // ويتسجّل إيراد في الخزنة الرئيسية بدلها. و[SVG:] بيربطه بصف الدفتر
+          // عشان الحذف يشيل الاتنين.
+          ...(toMainTreasury ? { notes: markSavingsGroupNote(markMainTreasuryNote('تحصيل من مورد للخزنة الرئيسية'), mainGroupId!) } : {}),
           ...(dateISO ? { created_at: dateISO } : {})
         })
         .select()
@@ -5553,6 +5559,17 @@ setupRealtime: () => {
       });
 
       const supplier = state.suppliers.find((s) => s.id === supplierId);
+      // تسجيل الإيراد في دفتر الرئيسية جوه الستور (كان بيتنادى من صفحة الموردين
+      // من غير group_id، فالحذف كان بيسيب صف معلّق يبوّظ الرصيد الرئيسي).
+      if (toMainTreasury) {
+        await get().recordMainTreasuryIn(
+          splits,
+          'main_supplier_collection',
+          `تحصيل من مورد ${supplier?.name || 'مورد'} - ${invoiceNumber}`,
+          (data as any).created_at,
+          mainGroupId!,
+        );
+      }
       sendTelegramAlert({
         type: 'supplier_collection',
         actor: getActorName(state),
