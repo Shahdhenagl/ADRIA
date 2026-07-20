@@ -1,8 +1,10 @@
 import { useMemo, useState, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
-import { activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
-import { buildPaymentLedger, type LedgerEntry } from '../../utils/paymentLedger';
+import { activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, ALL_PAYMENT_KEYS, type PaymentKey } from '../../utils/paymentMethods';
+import { buildPaymentLedger, type LedgerEntry, type LedgerKind } from '../../utils/paymentLedger';
+import { stripTreasuryMarkers } from '../../utils/treasury';
+import { businessDayRange } from '../../utils/businessDay';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
@@ -10,7 +12,22 @@ import html2canvas from 'html2canvas-pro';
 const METHOD_ICON: Record<string, any> = { cash: Banknote, visa: CreditCard, wallet: WalletIcon, instapay: Smartphone, method5: Zap, method6: Landmark };
 const KIND_LABEL: Record<string, string> = { sale: 'بيع', payment: 'سداد آجل', return: 'مرتجع', expense: 'مصروف', purchase: 'شراء', purchase_return: 'مرتجع مورد', transfer: 'تحويل' };
 // وصف حركة الخزنة الرئيسية حسب مصدرها في جدول savings_transactions.
-const SAV_SOURCE_LABEL: Record<string, string> = { day_closing: 'تقفيل اليوم', shop_transfer: 'تحويل من المحل', to_shop: 'تحويل للمحل', convert: 'تحويل بين الطرق', main_expense: 'صرف من الخزنة الرئيسية', main_income: 'إيداع بالخزنة الرئيسية', manual: 'حركة يدوية' };
+const SAV_SOURCE_LABEL: Record<string, string> = { day_closing: 'تقفيل اليوم', shop_transfer: 'تحويل من المحل', to_shop: 'تحويل للمحل', convert: 'تحويل بين الطرق', main_expense: 'صرف من الخزنة الرئيسية', main_income: 'إيداع بالخزنة الرئيسية', manual: 'حركة يدوية', partner: 'حركة شريك', main_purchase: 'فاتورة مشتريات', main_supplier_payment: 'سداد لمورد', main_supplier_collection: 'تحصيل من مورد', main_supplier_return: 'مرتجع مورد' };
+// نوع الحركة في عمود «النوع» — كان كله بيتحسب 'transfer' ماعدا main_expense.
+const SAV_SOURCE_KIND: Record<string, LedgerKind> = {
+  main_expense: 'expense',
+  main_income: 'expense',
+  main_purchase: 'purchase',
+  main_supplier_payment: 'purchase',
+  main_supplier_collection: 'purchase_return',
+  main_supplier_return: 'purchase_return',
+  partner: 'expense',
+  day_closing: 'transfer',
+  shop_transfer: 'transfer',
+  to_shop: 'transfer',
+  convert: 'transfer',
+  manual: 'transfer',
+};
 
 // نطاق الكشف: خزنة المحل، الخزنة الرئيسية، أو الاتنين مع بعض. كل واحدة حساب مستقل
 // برصيد افتتاحي خاص بها؛ في «الكل» التحويلات بينهم بتتقابل (خروج+دخول) فمفيش ازدواج.
@@ -66,10 +83,12 @@ export default function PaymentAccounts() {
       id: `sav:${t.id}`,
       date: t.created_at,
       method: t.method as PaymentKey,
-      desc: t.note || SAV_SOURCE_LABEL[t.source] || 'حركة خزنة رئيسية',
+      desc: stripTreasuryMarkers(t.note) || SAV_SOURCE_LABEL[t.source] || 'حركة خزنة رئيسية',
       inAmount: t.direction === 'in' ? amt : 0,
       outAmount: t.direction === 'out' ? amt : 0,
-      kind: t.source === 'main_expense' ? 'expense' : 'transfer',
+      // كل حركة مش main_expense كانت بتتسمّى «تحويل» — يعني السداد للموردين
+      // والمشتريات والإيرادات وسحب الشركاء كلهم كانوا بيظهروا بنوع غلط.
+      kind: SAV_SOURCE_KIND[t.source] || 'transfer',
     };
   }), [savRows]);
   // الكشف الفعّال حسب النطاق المختار.
@@ -78,9 +97,13 @@ export default function PaymentAccounts() {
   ), [scope, shopLedger, mainLedger]);
 
   // ملخص كل الوسائل (كل الفترات)
+  // بنبني على ALL_PAYMENT_KEYS مش على المفعّلة بس: لو وسيلة إضافية (method5/6)
+  // اتشغّلت واتسجّل عليها حركات وبعدين اتقفلت، الصفوف بتاعتها كانت بتتسقط هنا
+  // في صمت بينما صفحة الخزنة الرئيسية بتعدّها — فالصفحتين كانوا بيدّوا أرقام
+  // مختلفة من غير أي تنبيه.
   const summary = useMemo(() => {
     const map: Record<string, { in: number; out: number; balance: number }> = {};
-    methods.forEach((k) => { map[k] = { in: 0, out: 0, balance: openingOf(k) }; });
+    ALL_PAYMENT_KEYS.forEach((k) => { map[k] = { in: 0, out: 0, balance: openingOf(k) }; });
     for (const e of ledger) {
       if (!map[e.method]) continue;
       map[e.method].in += e.inAmount;
@@ -91,27 +114,46 @@ export default function PaymentAccounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ledger, scope, methods.join(','), storeSettings.paymentOpeningBalances, storeSettings.initial_balance, storeSettings.savingsOpeningBalances]);
 
+  // وسائل مقفولة لكن عليها حركة فعلية — لازم تظهر، وإلا فلوسها تختفي من الكشف.
+  const hiddenActiveKeys = useMemo(() => {
+    const used = new Set(ledger.map((e) => e.method));
+    return ALL_PAYMENT_KEYS.filter((k) => !methods.includes(k) && (used.has(k) || Math.abs(summary[k]?.balance || 0) > 0.009));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledger, methods.join(','), summary]);
+
+  // الوسائل المعروضة = المفعّلة + أي وسيلة مقفولة عليها رصيد/حركة.
+  const shownMethods = useMemo(() => [...methods, ...hiddenActiveKeys], [methods.join(','), hiddenActiveKeys]);
+
   // كشف الوسيلة المختارة
   const statement = useMemo(() => {
     const all = ledger.filter((e) => e.method === selected).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const fromT = from ? new Date(from).setHours(0, 0, 0, 0) : -Infinity;
-    const toT = to ? new Date(to).setHours(23, 59, 59, 999) : Infinity;
+    // حدود الفترة باليوم المحاسبي (dayStartHour) مش بمنتصف الليل — الحركة اللي
+    // بتتسجّل الساعة ١ صباحاً وساعة بداية اليوم ٦ بتخصّ اليوم اللي قبله، وكانت
+    // بتقع هنا في يوم مختلف عن تقفيل اليوم وصفحة الميزانية.
+    const fromT = from ? businessDayRange(from, storeSettings as any).start.getTime() : -Infinity;
+    const toT = to ? businessDayRange(to, storeSettings as any).end.getTime() : Infinity;
     // رصيد افتتاحي للفترة = الافتتاحي العام + صافي كل ما قبل تاريخ البداية
     let periodOpening = openingOf(selected);
     const rows: { e: typeof all[number]; balance: number }[] = [];
     let running = periodOpening;
+    let totalIn = 0;
+    let totalOut = 0;
     for (const e of all) {
       const t = new Date(e.date).getTime();
       if (t < fromT) { periodOpening += e.inAmount - e.outAmount; running = periodOpening; continue; }
-      if (t > toT) continue;
+      if (t >= toT) continue;
       const q = search.trim();
       running += e.inAmount - e.outAmount;
       if (q && !(`${e.desc} ${KIND_LABEL[e.kind]}`.includes(q))) continue;
+      // الإجماليات لازم تتجمع من الصفوف الظاهرة بس، عشان
+      // «افتتاحي + وارد − صادر» يطابق الرصيد الختامي المعروض تحتيها.
+      totalIn += e.inAmount;
+      totalOut += e.outAmount;
       rows.push({ e, balance: running });
     }
-    const totalIn = rows.reduce((s, r) => s + r.e.inAmount, 0);
-    const totalOut = rows.reduce((s, r) => s + r.e.outAmount, 0);
-    const closing = running;
+    // مع بحث فعّال الرصيد الجاري بيفضل تراكمي على كل الحركات (عشان يبقى صح)،
+    // فالختامي المعروض لازم يكون ختامي الصفوف الظاهرة نفسها.
+    const closing = search.trim() ? periodOpening + totalIn - totalOut : running;
     return { rows, periodOpening, totalIn, totalOut, closing };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ledger, scope, selected, from, to, search, storeSettings.paymentOpeningBalances, storeSettings.initial_balance, storeSettings.savingsOpeningBalances]);
@@ -239,8 +281,11 @@ export default function PaymentAccounts() {
       {/* أدوات الكشف */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-wrap gap-2">
-          {methods.map((k) => (
-            <button key={k} onClick={() => setSelected(k)} className={`px-3 py-2 rounded-xl text-sm font-black ${selected === k ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>{payLabelOf(storeSettings as any, k)}</button>
+          {shownMethods.map((k) => (
+            <button key={k} onClick={() => setSelected(k)} className={`px-3 py-2 rounded-xl text-sm font-black ${selected === k ? 'bg-indigo-600 text-white' : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700'}`}>
+              {payLabelOf(storeSettings as any, k)}
+              {hiddenActiveKeys.includes(k) && <span className="text-[10px] font-bold mr-1 opacity-70">(مقفولة)</span>}
+            </button>
           ))}
         </div>
         <div className="flex items-end gap-2 mr-auto flex-wrap">
