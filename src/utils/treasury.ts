@@ -141,6 +141,11 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   (rows.expenses || []).forEach((e: any) => {
     const amount = Number(e.amount) || 0;
     if (isMainTreasuryExpense(e)) return;
+    // كل راتب/سلفة بيتسجّل مرتين: صف في employee_transactions + صف مصروف بفئة
+    // «رواتب» (addEmployeeTransaction بيعمل الاتنين). بنعدّه من جدول الموظفين بس
+    // — زي ما POS بيعمل بالظبط — وإلا بيتخصم مرتين من الدرج ورصيد المحل يطلع
+    // سالب رغم إن الحركات متزنة.
+    if (e.category === 'رواتب') return;
     if (isInternalTransfer(e.category)) { applyInternalTransferNet(net, e); return; }
     if (amount < 0) {
       // مصروف بمبلغ سالب = إيراد مسجّل يدوياً (داخل للخزنة) مش خارج منها
@@ -167,7 +172,10 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
       add(-1, p, 'paid_amount');
     }
   });
-  (rows.salaries || []).forEach((s: any) => add(-1, s, 'amount'));
+  // الرواتب/السلف المصروفة من الخزنة الرئيسية معلّمة بـ [MAIN_TREASURY] في
+  // ملاحظتها — لازم تتستبعد من الدرج زي أي حركة رئيسية، وإلا بتتخصم من خزنة
+  // المحل رغم إن الفلوس خرجت من الرئيسية أصلاً.
+  (rows.salaries || []).filter((s: any) => !isMainTreasuryExpense(s)).forEach((s: any) => add(-1, s, 'amount'));
   ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
   return net;
 }
