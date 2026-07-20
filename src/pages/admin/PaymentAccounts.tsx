@@ -10,24 +10,26 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 
 const METHOD_ICON: Record<string, any> = { cash: Banknote, visa: CreditCard, wallet: WalletIcon, instapay: Smartphone, method5: Zap, method6: Landmark };
-const KIND_LABEL: Record<string, string> = { sale: 'بيع', payment: 'سداد آجل', return: 'مرتجع', expense: 'مصروف', purchase: 'شراء', purchase_return: 'مرتجع مورد', transfer: 'تحويل' };
+const KIND_LABEL: Record<string, string> = { sale: 'بيع', payment: 'سداد آجل', return: 'مرتجع', expense: 'مصروف', purchase: 'شراء', purchase_return: 'مرتجع مورد', income: 'إيراد', transfer: 'تحويل' };
 // وصف حركة الخزنة الرئيسية حسب مصدرها في جدول savings_transactions.
 const SAV_SOURCE_LABEL: Record<string, string> = { day_closing: 'تقفيل اليوم', shop_transfer: 'تحويل من المحل', to_shop: 'تحويل للمحل', convert: 'تحويل بين الطرق', main_expense: 'صرف من الخزنة الرئيسية', main_income: 'إيداع بالخزنة الرئيسية', manual: 'حركة يدوية', partner: 'حركة شريك', main_purchase: 'فاتورة مشتريات', main_supplier_payment: 'سداد لمورد', main_supplier_collection: 'تحصيل من مورد', main_supplier_return: 'مرتجع مورد' };
 // نوع الحركة في عمود «النوع» — كان كله بيتحسب 'transfer' ماعدا main_expense.
+// المصادر اللي ليها نوع ثابت بغضّ النظر عن الاتجاه:
 const SAV_SOURCE_KIND: Record<string, LedgerKind> = {
-  main_expense: 'expense',
-  main_income: 'expense',
   main_purchase: 'purchase',
   main_supplier_payment: 'purchase',
   main_supplier_collection: 'purchase_return',
   main_supplier_return: 'purchase_return',
-  partner: 'expense',
   day_closing: 'transfer',
   shop_transfer: 'transfer',
   to_shop: 'transfer',
   convert: 'transfer',
-  manual: 'transfer',
 };
+// الباقي (main_expense / main_income / partner / manual) نوعه بيتحدد من اتجاه
+// الحركة: داخل = إيراد، خارج = مصروف. من غير كده الإيراد كان بيظهر «مصروف»
+// ومبلغه في عمود الوارد — تناقض واضح للمستخدم، ونفس الحاجة لإيداع الشريك.
+const savKindOf = (t: any): LedgerKind =>
+  SAV_SOURCE_KIND[t.source] || (t.direction === 'in' ? 'income' : 'expense');
 
 // نطاق الكشف: خزنة المحل، الخزنة الرئيسية، أو الاتنين مع بعض. كل واحدة حساب مستقل
 // برصيد افتتاحي خاص بها؛ في «الكل» التحويلات بينهم بتتقابل (خروج+دخول) فمفيش ازدواج.
@@ -88,7 +90,7 @@ export default function PaymentAccounts() {
       outAmount: t.direction === 'out' ? amt : 0,
       // كل حركة مش main_expense كانت بتتسمّى «تحويل» — يعني السداد للموردين
       // والمشتريات والإيرادات وسحب الشركاء كلهم كانوا بيظهروا بنوع غلط.
-      kind: SAV_SOURCE_KIND[t.source] || 'transfer',
+      kind: savKindOf(t),
     };
   }), [savRows]);
   // الكشف الفعّال حسب النطاق المختار.

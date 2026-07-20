@@ -7,9 +7,9 @@
  */
 import { ALL_PAYMENT_KEYS, splitFromRow, primaryMethod, type PaymentKey } from './paymentMethods';
 import { calculateCashRefunded } from './returns';
-import { isMainTreasuryExpense, isMainTreasuryPurchase } from './treasury';
+import { isMainTreasuryExpense, isMainTreasuryPurchase, stripTreasuryMarkers } from './treasury';
 
-export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'purchase' | 'purchase_return' | 'transfer';
+export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'income' | 'purchase' | 'purchase_return' | 'transfer';
 
 export interface LedgerEntry {
   id: string;
@@ -119,7 +119,9 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
             id: `${e.id}:${k}`,
             date: e.date,
             method: k,
-            desc: e.note || 'تحويل رصيد',
+            // stripTreasuryMarkers: الملاحظة ممكن تحمل وسوم داخلية زي [SVG:uuid]
+            // (بيتحطّ على تحويلات الخزنة الرئيسية) وماينفعش تظهر للمستخدم.
+            desc: stripTreasuryMarkers(e.note) || 'تحويل رصيد',
             inAmount: raw > 0 ? raw : 0,
             outAmount: raw < 0 ? -raw : 0,
             kind: 'transfer',
@@ -138,10 +140,15 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
           id: `${e.id}:${k}`,
           date: e.date,
           method: k,
-          desc: e.category ? `${e.category}${e.note ? ` — ${e.note}` : ''}` : (e.note || 'مصروف'),
+          desc: (() => {
+            const note = stripTreasuryMarkers(e.note);
+            return e.category ? `${e.category}${note ? ` — ${note}` : ''}` : (note || (isIncome ? 'إيراد' : 'مصروف'));
+          })(),
           inAmount: isIncome ? amt : 0,
           outAmount: isIncome ? 0 : amt,
-          kind: 'expense',
+          // مصروف بمبلغ سالب = إيراد مسجّل يدوياً. كان بيتسمّى «مصروف» رغم إن
+          // مبلغه ظاهر في عمود الوارد — تناقض في الكشف.
+          kind: isIncome ? 'income' : 'expense',
         });
       }
     }
