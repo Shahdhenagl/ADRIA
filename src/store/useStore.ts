@@ -603,7 +603,6 @@ interface CashierStore {
   }) => Promise<boolean>;
   confirmHeldInvoice: (id: string) => Promise<HeldInvoice | null>;
   returnHeldInvoice: (id: string) => Promise<boolean>;
-  sweepExpiredHeldInvoices: () => Promise<void>;
   recordHeldDepositConversion: (deposit: number, split: Record<string, number>, invoiceId: string) => Promise<void>;
 
   // Admin
@@ -1434,8 +1433,6 @@ export const useStore = create<CashierStore>((set, get) => ({
       get().loadCoupons();
       get().loadHeldInvoices();
       get().loadDevoAndWriteOffs();
-      // إرجاع الفواتير المعلقة المنتهية (أكثر من أسبوع) للمخزون تلقائياً.
-      get().sweepExpiredHeldInvoices();
 
       // Setup Realtime subscriptions
       get().setupRealtime();
@@ -2208,57 +2205,10 @@ export const useStore = create<CashierStore>((set, get) => ({
     } as any);
   },
 
-  // إرجاع تلقائي للفواتير المعلقة المنتهية (تجاوزت أسبوعاً) للمخزون. مستقل عن
-  // الحالة المحلية حتى يعمل بشكل صحيح حتى لو سبق التحميل.
-  sweepExpiredHeldInvoices: async () => {
-    try {
-      const nowIso = new Date().toISOString();
-      const { data, error } = await supabase
-        .from('held_invoices')
-        .select('*')
-        .lt('expires_at', nowIso);
-      if (error || !data || data.length === 0) return;
-
-      for (const row of data as any[]) {
-        const { error: delErr } = await supabase.from('held_invoices').delete().eq('id', row.id);
-        if (delErr) { console.error('Sweep delete error:', delErr); continue; }
-        const items = Array.isArray(row.items) ? row.items : [];
-        for (const item of items) {
-          const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', item.id).single();
-          const currentStock = (prodData as any)?.stock_quantity ?? 0;
-          await supabase.from('products').update({ stock_quantity: currentStock + (item.quantity || 0) }).eq('id', item.id);
-        }
-        // رد عربون الحجز المنتهي للعميل (مرتجع من الدرج).
-        const depAmt = Math.max(0, Number(row.deposit) || 0);
-        if (depAmt > 0) {
-          const split = row.deposit_split || { cash: depAmt };
-          await get().addExpense({
-            category: 'حجز',
-            amount: depAmt,
-            ...paidFromSplit(split),
-            note: `رد عربون حجز منتهٍ - ${row.customer_name?.trim() || 'عميل'}`,
-            payment_method: primaryOfSplit(split) as any,
-          } as any);
-        }
-      }
-
-      const expiredIds = new Set((data as any[]).map((r) => r.id));
-      const expiredItemQty = new Map<string, number>();
-      for (const row of data as any[]) {
-        const items = Array.isArray(row.items) ? row.items : [];
-        for (const it of items) expiredItemQty.set(it.id, (expiredItemQty.get(it.id) || 0) + (it.quantity || 0));
-      }
-      set((s) => ({
-        heldInvoices: s.heldInvoices.filter((h) => !expiredIds.has(h.id)),
-        products: s.products.map((p) => expiredItemQty.has(p.id)
-          ? { ...p, stock_quantity: p.stock_quantity + (expiredItemQty.get(p.id) || 0) }
-          : p),
-      }));
-      new BroadcastChannel('cashier-sync').postMessage('sync_products');
-    } catch (e) {
-      console.error('Failed to sweep expired held invoices:', e);
-    }
-  },
+  // ملاحظة: الفواتير المعلقة **مالهاش إلغاء تلقائي**. كانت بتترجّع للمخزون
+  // ويترد عربونها بعد أسبوع (sweepExpiredHeldInvoices + كرون يومي)، واتشالت
+  // بالكامل: الحجز يفضل قائم لحد ما الموظف ياخد قرار — تأكيد بيع أو إرجاع
+  // للمخزون. عمود expires_at في db/25 اتساب للتوافق لكن مبقاش بيأثر على حاجة.
 
   // ── Returns ────────────────────────────────────────────────
   payInvoiceDebt: async (invoiceId, customerId, amount, splitPayments, paymentMethod = 'cash', discount = 0) => {

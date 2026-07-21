@@ -3745,8 +3745,9 @@ export default function POS() {
               ) : (
                 heldInvoices.map((h) => {
                   const created = new Date(h.created_at);
-                  const expires = new Date(h.expires_at);
-                  const daysLeft = Math.ceil((expires.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
+                  // مفيش انتهاء صلاحية: الحجز بيفضل قائم لحد ما الموظف يأكّد البيع
+                  // أو يرجّعه للمخزون. بنعرض عمر الحجز بدل «يتبقى كذا يوم».
+                  const ageDays = Math.max(0, Math.floor((Date.now() - created.getTime()) / (1000 * 60 * 60 * 24)));
                   const itemsCount = h.items.reduce((s, i) => s + (i.quantity || 0), 0);
                   return (
                     <div key={h.id} className="border border-slate-200 dark:border-slate-700 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-900/40">
@@ -3763,8 +3764,8 @@ export default function POS() {
                         </div>
                         <div className="text-left shrink-0">
                           <div className="text-lg font-black text-indigo-600 dark:text-indigo-400">{Number(h.total).toFixed(2)} <span className="text-[10px] text-slate-400">{storeSettings.currency}</span></div>
-                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${daysLeft <= 1 ? 'text-red-500 bg-red-50 border-red-100' : 'text-amber-600 bg-amber-50 border-amber-100'}`}>
-                            {daysLeft > 0 ? `يتبقى ${daysLeft} يوم` : 'منتهية'}
+                          <span className={`text-[10px] font-black px-2 py-0.5 rounded-md border ${ageDays >= 7 ? 'text-amber-600 bg-amber-50 border-amber-100' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
+                            {ageDays === 0 ? 'محجوزة اليوم' : `محجوزة من ${ageDays} يوم`}
                           </span>
                         </div>
                       </div>

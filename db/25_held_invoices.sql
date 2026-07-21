@@ -5,9 +5,10 @@
 --  staff can later either:
 --    * تأكيد البيع  → load it back into the cart and complete a normal sale, or
 --    * إرجاع للمخزون → cancel it and return the reserved quantities to stock.
---  Any held invoice not actioned within 7 days is automatically returned to
---  stock (client-side sweep on app load + a daily Vercel cron — see
---  /api/expire-held-invoices).
+--  There is NO automatic expiry: a held invoice stays held indefinitely until a
+--  member of staff actions it. (An earlier version returned it to stock after 7
+--  days via a client-side sweep + daily cron — both removed. The expires_at
+--  column below is kept for backwards compatibility but is no longer read.)
 --
 --  Stock is deducted from products.stock_quantity at the moment of holding and
 --  added back on return/expiry, so the available quantity always reflects the
