@@ -910,6 +910,28 @@ function accountingTimestampForNow(settings: StoreSettings): string {
   return timestampForBusinessDate(businessDateStr(settings), settings);
 }
 
+/**
+ * أقرب يوم محاسبي **مفتوح** ابتداءً من النهاردة ورايح قدّام.
+ *
+ * بيتستخدم للحركات اللي **لازم** تتسجّل حتى لو اليوم اتقفل — زي رد عربون حجز
+ * ملغي: البضاعة رجعت للمخزون والفلوس اترجعت للعميل فعلاً، فلو منعنا القيد
+ * الفلوس بتفضل في الخزنة على الورق والحسابات تبوظ. بدل كده بنرحّله لأول يوم
+ * مفتوح ونقول للمستخدم.
+ */
+async function nextOpenAccountingTimestamp(
+  settings: StoreSettings,
+  maxDays = 60,
+): Promise<{ iso: string; day: string; shifted: boolean } | null> {
+  const cursor = new Date(`${businessDateStr(settings)}T00:00:00`);
+  for (let i = 0; i < maxDays; i++) {
+    const day = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
+    const iso = timestampForBusinessDate(day, settings);
+    if (!(await isAccountingDayClosed(settings, iso))) return { iso, day, shifted: i > 0 };
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return null;
+}
+
 function isExchangeAdjustmentForOrder(expense: any, orderId: string, diff?: number): boolean {
   const note = String(expense?.note || '');
   const category = String(expense?.category || '');
@@ -2234,6 +2256,11 @@ export const useStore = create<CashierStore>((set, get) => ({
       return false;
     }
 
+    // لازم نتأكد إن اليوم مفتوح **قبل** confirmHeldInvoice، لأنه بيحذف صف الحجز
+    // ويرجّع المخزون. لو checkout فشل بعد كده (يوم مقفول) الطلب بيضيع: لا حجز
+    // ولا فاتورة.
+    if (!(await ensureAccountingDayOpen(state))) return false;
+
     // نحفظ حالة الكاشير ونرجّعها بعد الخلاص (الموديول في الأدمن، مينفعش يمسح سلة شغالة).
     const prevCart = state.cart, prevType = state.invoiceType, prevSp = state.salesperson;
     const confirmed = await get().confirmHeldInvoice(id);
@@ -2288,13 +2315,22 @@ export const useStore = create<CashierStore>((set, get) => ({
       const depAmt = Math.max(0, Number(held.deposit) || 0);
       if (depAmt > 0) {
         const split = held.deposit_split || { cash: depAmt };
+        // الفلوس بترجع للعميل فعلاً، فالقيد لازم يتسجّل. لو اليوم اتقفل محاسبياً
+        // بنرحّله لأول يوم مفتوح بدل ما يتمنع ويفضل العربون في الخزنة على الورق.
+        const openDay = await nextOpenAccountingTimestamp(state.storeSettings);
         await get().addExpense({
           category: 'حجز',
           amount: depAmt,
           ...paidFromSplit(split),
           note: `رد عربون حجز - ${held.customer_name?.trim() || 'عميل'}`,
           payment_method: primaryOfSplit(split) as any,
+          ...(openDay ? { created_at: openDay.iso } : {}),
         } as any);
+        if (openDay?.shifted) {
+          alert(`ملاحظة: اليوم الحالي مقفول محاسبياً، فرد العربون (${depAmt.toFixed(2)}) اتسجّل على يوم ${openDay.day} — أول يوم مفتوح.`);
+        } else if (!openDay) {
+          alert('⚠️ تعذّر إيجاد يوم محاسبي مفتوح لتسجيل رد العربون. راجع المحاسب.');
+        }
       }
       // علامة الإلغاء بتفضل في الجدول كسجل تاريخي (بدل الحذف) عشان موديول
       // الداشبورد يعرض الملغيات. loadHeldInvoices بيفلترها فمش هتظهر للكاشير.
