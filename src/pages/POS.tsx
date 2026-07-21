@@ -670,6 +670,8 @@ export default function POS() {
   // نموذج حفظ فاتورة معلّقة مع عربون
   const [showHoldForm, setShowHoldForm] = useState(false);
   const [holdDepositPay, setHoldDepositPay] = useState<Record<string, string>>({});
+  // نوع الحجز: حجز محل (العميل هييجي ياخده) أو طلب أونلاين (بيمرّ بشحن وتسليم).
+  const [holdKind, setHoldKind] = useState<'shop' | 'online'>('shop');
   const holdDepositTotal = activePayKeys.reduce((s, k) => s + (parseFloat(holdDepositPay[k] || '') || 0), 0);
   // عربون محصّل لفاتورة معلّقة يجري إتمامها الآن (يُضاف للمدفوع ويُسجّل تحويله بعد الإتمام)
   const [activeDeposit, setActiveDeposit] = useState<{ amount: number; split: Record<string, number> } | null>(null);
@@ -1581,11 +1583,13 @@ export default function POS() {
       notes: deferredNote,
       deposit,
       depositSplit,
+      kind: holdKind,
     });
     setHoldBusy(false);
     if (ok) {
       setShowHoldForm(false);
       setHoldDepositPay({});
+      setHoldKind('shop');
       setCustomerName('');
       setCustomerPhone('');
       setCustomerId('');
@@ -3691,6 +3695,28 @@ export default function POS() {
                 <span className="text-sm font-bold text-indigo-600 dark:text-indigo-400">إجمالي الفاتورة</span>
                 <span className="text-2xl font-black text-indigo-600 dark:text-indigo-400">{total.toFixed(2)} <span className="text-xs opacity-60">{storeSettings.currency}</span></span>
               </div>
+              {/* نوع الحجز — الأونلاين بيتتبّع بحالات (شحن/تسليم) من لوحة التحكم */}
+              <div>
+                <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">نوع الفاتورة</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setHoldKind('shop')}
+                    className={`p-3 rounded-2xl border-2 text-sm font-black transition ${holdKind === 'shop' ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500'}`}
+                  >
+                    🏬 حجز محل
+                    <span className="block text-[10px] font-bold mt-0.5 opacity-70">العميل هييجي ياخده</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setHoldKind('online')}
+                    className={`p-3 rounded-2xl border-2 text-sm font-black transition ${holdKind === 'online' ? 'border-sky-500 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-400' : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-500'}`}
+                  >
+                    🚚 أونلاين
+                    <span className="block text-[10px] font-bold mt-0.5 opacity-70">شحن ← تسليم</span>
+                  </button>
+                </div>
+              </div>
               <div>
                 <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">العربون المحصّل (اختياري) — يدخل الخزنة</label>
                 <div className="grid grid-cols-2 gap-3">
@@ -3753,9 +3779,15 @@ export default function POS() {
                     <div key={h.id} className="border border-slate-200 dark:border-slate-700 rounded-2xl p-4 bg-slate-50/50 dark:bg-slate-900/40">
                       <div className="flex justify-between items-start gap-3 mb-2">
                         <div className="min-w-0">
-                          <div className="font-black text-slate-800 dark:text-white truncate">
-                            {h.customer_name?.trim() || 'عميل نقدي'}
-                            {h.customer_phone ? <span className="text-xs font-bold text-slate-400 mr-2">{h.customer_phone}</span> : null}
+                          <div className="font-black text-slate-800 dark:text-white truncate flex items-center gap-2">
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-md border shrink-0 ${h.kind === 'online' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
+                              {h.kind === 'online' ? '🚚 أونلاين' : '🏬 حجز'}
+                            </span>
+                            {h.status === 'shipped' && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-violet-50 text-violet-700 border-violet-200 shrink-0">تم الشحن</span>
+                            )}
+                            <span className="truncate">{h.customer_name?.trim() || 'عميل نقدي'}</span>
+                            {h.customer_phone ? <span className="text-xs font-bold text-slate-400 shrink-0">{h.customer_phone}</span> : null}
                           </div>
                           <div className="text-[11px] font-bold text-slate-400">
                             {created.toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}

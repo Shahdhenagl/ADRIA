@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Settings, LogOut, FileText, Users, BarChart3, Wallet, MessageCircle, CreditCard, Building2, BellRing, WifiOff, Ticket, PieChart, Scissors, Briefcase, Handshake, PiggyBank, ClipboardCheck, FileBarChart, RotateCcw, Landmark, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Package, Settings, LogOut, FileText, Users, BarChart3, Wallet, MessageCircle, CreditCard, Building2, BellRing, WifiOff, Ticket, PieChart, Scissors, Briefcase, Handshake, PiggyBank, ClipboardCheck, FileBarChart, RotateCcw, Landmark, PackageSearch, Menu, X } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { useEffect, useState } from 'react';
 
@@ -56,6 +56,7 @@ export default function AdminLayout() {
     { section: 'المبيعات والفواتير', items: [
       { name: 'الفواتير والمرتجعات', path: '/admin/invoices', icon: FileText },
       { name: 'الفواتير الأوفلاين', path: '/admin/offline-invoices', icon: WifiOff },
+      { name: 'المعلقة والطلبات', path: '/admin/held-invoices', icon: PackageSearch },
       { name: 'كوبونات الخصم', path: '/admin/coupons', icon: Ticket },
     ]},
     { section: 'المخزون والتصنيع', items: [

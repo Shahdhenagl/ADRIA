@@ -248,7 +248,30 @@ export interface HeldInvoice {
   deposit_split?: Record<string, number>; // تقسيمة العربون على وسائل الدفع
   created_at: string;
   expires_at: string;
+  /** حجز محل أو طلب أونلاين (db/52). */
+  kind?: HeldKind;
+  /** دورة حياة الطلب: معلق → شحن → تسليم/إلغاء (db/52). */
+  status?: HeldStatus;
+  /** رقم فاتورة البيع اللي اتولدت عند التسليم. */
+  order_id?: string | null;
+  status_at?: string | null;
+  status_note?: string | null;
 }
+
+export type HeldKind = 'shop' | 'online';
+export type HeldStatus = 'held' | 'shipped' | 'delivered' | 'cancelled';
+/** الحالات اللي لسه شاغلة مخزون وبتظهر للكاشير. */
+export const ACTIVE_HELD_STATUSES: HeldStatus[] = ['held', 'shipped'];
+export const HELD_STATUS_LABEL: Record<HeldStatus, string> = {
+  held: 'معلقة',
+  shipped: 'تم الشحن',
+  delivered: 'تم التسليم',
+  cancelled: 'ملغية',
+};
+export const HELD_KIND_LABEL: Record<HeldKind, string> = {
+  shop: 'حجز محل',
+  online: 'أونلاين',
+};
 
 export interface Expense {
   id: string;
@@ -600,9 +623,13 @@ interface CashierStore {
     notes?: string;
     deposit?: number;
     depositSplit?: Record<string, number>;
+    kind?: HeldKind;
   }) => Promise<boolean>;
   confirmHeldInvoice: (id: string) => Promise<HeldInvoice | null>;
   returnHeldInvoice: (id: string) => Promise<boolean>;
+  loadAllHeldInvoices: () => Promise<HeldInvoice[]>;
+  setHeldInvoiceStatus: (id: string, status: HeldStatus, note?: string) => Promise<boolean>;
+  deliverHeldInvoice: (id: string, splitPayments: Record<string, number>) => Promise<boolean>;
   recordHeldDepositConversion: (deposit: number, split: Record<string, number>, invoiceId: string) => Promise<void>;
 
   // Admin
@@ -1016,6 +1043,14 @@ const getSplits = (split: any, method: string, amount: number) => {
     method5: method === 'method5' ? amount : 0,
     method6: method === 'method6' ? amount : 0,
   };
+};
+
+const ALL_PAY_KEYS = ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const;
+/** جمع تقسيمتين دفع وسيلة بوسيلة (العربون + المحصّل عند التسليم). */
+const sumSplits = (a: any, b: any): Record<string, number> => {
+  const out: Record<string, number> = {};
+  ALL_PAY_KEYS.forEach((k) => { out[k] = (Number(a?.[k]) || 0) + (Number(b?.[k]) || 0); });
+  return out;
 };
 
 // الوسيلة الأساسية لصف مقسّم = الوسيلة صاحبة أكبر مبلغ (الافتراضي كاش).
@@ -1978,6 +2013,8 @@ export const useStore = create<CashierStore>((set, get) => ({
   },
 
   // ── Held / reserved invoices (فواتير معلقة) ─────────────────
+  // شاشة الكاشير بتشوف الحجوزات النشطة بس (معلقة/اتشحنت). المنتهية
+  // (تم التسليم/ملغية) بتفضل في الجدول كسجل تاريخي لموديول الداشبورد.
   loadHeldInvoices: async () => {
     try {
       const { data, error } = await supabase
@@ -1985,17 +2022,35 @@ export const useStore = create<CashierStore>((set, get) => ({
         .select('*')
         .order('created_at', { ascending: false });
       if (!error && data) {
-        set({ heldInvoices: (data as any[]).map((h) => ({ ...h, items: Array.isArray(h.items) ? h.items : [] })) as HeldInvoice[] });
+        // ملاحظة: الفلترة في الكود مش في الاستعلام عشان تشتغل قبل تشغيل db/52
+        // (الصفوف القديمة مالهاش عمود status فبترجع undefined = نشطة).
+        const active = (data as any[]).filter((h) => !h.status || ACTIVE_HELD_STATUSES.includes(h.status));
+        set({ heldInvoices: active.map((h) => ({ ...h, items: Array.isArray(h.items) ? h.items : [] })) as HeldInvoice[] });
       }
     } catch (e) {
       console.error('Held invoices table might not exist yet:', e);
     }
   },
 
+  // كل الحجوزات بما فيها المنتهية — لموديول الداشبورد.
+  loadAllHeldInvoices: async () => {
+    const { data, error } = await supabase
+      .from('held_invoices')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error || !data) return [];
+    return (data as any[]).map((h) => ({
+      ...h,
+      items: Array.isArray(h.items) ? h.items : [],
+      kind: h.kind || 'shop',
+      status: h.status || 'held',
+    })) as HeldInvoice[];
+  },
+
   // Saves the current cart as a held invoice and RESERVES the stock (deducts it
   // from products.stock_quantity, like a real sale) so the quantity can't be
   // sold twice. No invoice number is consumed until the sale is confirmed.
-  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit } = {}) => {
+  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit, kind = 'shop' } = {}) => {
     const state = get();
     if (state.cart.length === 0) return false;
     try {
@@ -2036,6 +2091,8 @@ export const useStore = create<CashierStore>((set, get) => ({
           notes: notes?.trim() || null,
           deposit: depAmt,
           deposit_split: depAmt > 0 ? depSplit : null,
+          kind: kind || 'shop',
+          status: 'held',
         })
         .select()
         .single();
@@ -2143,6 +2200,69 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
   },
 
+  // تغيير حالة طلب أونلاين بين معلق ↔ اتشحن. مالهوش أثر على المخزون أو الخزنة
+  // (البضاعة محجوزة أصلاً من ساعة الحجز) — مجرد تتبّع.
+  // التسليم والإلغاء ليهم دوالهم لأنهم بيحرّكوا فلوس ومخزون.
+  setHeldInvoiceStatus: async (id, status, note) => {
+    if (status === 'delivered' || status === 'cancelled') {
+      console.error('use deliverHeldInvoice / returnHeldInvoice instead');
+      return false;
+    }
+    const { error } = await supabase.from('held_invoices')
+      .update({ status, status_at: new Date().toISOString(), ...(note ? { status_note: note } : {}) })
+      .eq('id', id);
+    if (error) { alert('تعذّر تغيير الحالة: ' + error.message); return false; }
+    set((s) => ({ heldInvoices: s.heldInvoices.map((h) => (h.id === id ? { ...h, status } : h)) }));
+    return true;
+  },
+
+  // تسليم طلب أونلاين + تحصيله من الموديول مباشرةً.
+  // بيستخدم نفس مسار الكاشير: نرجّع الكمية المحجوزة للمخزون ونحمّلها في السلة
+  // وننده checkout (اللي بيخصمها تاني) — فصافي أثر المخزون صفر والفاتورة
+  // بتاخد كل منطق البيع العادي (ترقيم، عميل، ربح، تنبيهات).
+  deliverHeldInvoice: async (id, splitPayments) => {
+    const state = get();
+    const held = state.heldInvoices.find((h) => h.id === id);
+    if (!held) { alert('الطلب غير موجود'); return false; }
+
+    const paid = ALL_PAY_KEYS.reduce((s, k) => s + (Number(splitPayments?.[k]) || 0), 0);
+    const total = Number(held.total) || 0;
+    const depAmt = Math.max(0, Number(held.deposit) || 0);
+    // العربون اتحصّل وقت الحجز، فالمطلوب دلوقتي هو الباقي بس.
+    if (paid > (total - depAmt) + 0.01) {
+      alert(`المبلغ المحصّل (${paid.toFixed(2)}) أكبر من الباقي على العميل (${(total - depAmt).toFixed(2)})`);
+      return false;
+    }
+
+    // نحفظ حالة الكاشير ونرجّعها بعد الخلاص (الموديول في الأدمن، مينفعش يمسح سلة شغالة).
+    const prevCart = state.cart, prevType = state.invoiceType, prevSp = state.salesperson;
+    const confirmed = await get().confirmHeldInvoice(id);
+    if (!confirmed) return false;
+
+    try {
+      const invoiceId = await get().checkout(
+        total,
+        { name: held.customer_name || '', phone: held.customer_phone || '', custom_id: held.customer_custom_id || '' } as any,
+        depAmt + paid,                       // المدفوع = العربون + المحصّل دلوقتي
+        'sale',
+        primaryOfSplit({ ...(held.deposit_split || {}), ...splitPayments } as any) as any,
+        (depAmt > 0 ? sumSplits(held.deposit_split || { cash: depAmt }, splitPayments) : splitPayments) as any,
+        undefined,
+        `طلب أونلاين${held.notes ? ` - ${held.notes}` : ''}`,
+      );
+      // العربون اتسجّل إيراد وقت الحجز، والفاتورة سجّلته ضمن المدفوع — القيد ده
+      // بيطلعه تاني عشان ما يتحسبش مرتين.
+      if (depAmt > 0) await get().recordHeldDepositConversion(depAmt, held.deposit_split || { cash: depAmt }, String(invoiceId));
+
+      await supabase.from('held_invoices')
+        .update({ status: 'delivered', order_id: String(invoiceId), status_at: new Date().toISOString() })
+        .eq('id', id);
+      return true;
+    } finally {
+      set({ cart: prevCart, invoiceType: prevType, salesperson: prevSp });
+    }
+  },
+
   // إرجاع للمخزون: تُعاد الكمية المحجوزة ويُحذف سجل الحجز.
   returnHeldInvoice: async (id) => {
     const state = get();
@@ -2176,6 +2296,11 @@ export const useStore = create<CashierStore>((set, get) => ({
           payment_method: primaryOfSplit(split) as any,
         } as any);
       }
+      // علامة الإلغاء بتفضل في الجدول كسجل تاريخي (بدل الحذف) عشان موديول
+      // الداشبورد يعرض الملغيات. loadHeldInvoices بيفلترها فمش هتظهر للكاشير.
+      await supabase.from('held_invoices')
+        .update({ status: 'cancelled', status_at: new Date().toISOString() })
+        .eq('id', id);
       set({
         heldInvoices: state.heldInvoices.filter((h) => h.id !== id),
         products: restoredProducts,
