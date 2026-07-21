@@ -348,7 +348,9 @@ export default function Employees() {
   // حساب التأخير لحظة تسجيل الحضور.
   const computeLateness = (emp: Employee, now: Date) => {
     if (!emp.shift_start) return { lateMinutes: 0, deduction: 0 };
-    const dateStr = formatDateInput(now);
+    // بداية الدوام بتترّبط باليوم المحاسبي مش التقويمي، عشان وردية بتعدّي منتصف
+    // الليل تفضل محسوبة على يوم بدايتها.
+    const dateStr = businessDateStr(storeSettings as any, now);
     const [sh, sm] = emp.shift_start.slice(0, 5).split(':').map((x) => parseInt(x, 10));
     const expected = new Date(`${dateStr}T00:00:00`);
     expected.setHours(sh || 0, sm || 0, 0, 0);
@@ -954,7 +956,10 @@ export default function Employees() {
       return alert('حدّد "بداية الدوام" لهذا الموظف أولاً من تعديل بياناته حتى يُحسب التأخير.');
     }
     const now = new Date();
-    const dateStr = formatDateInput(now);
+    // اليوم المحاسبي (day_start_hour، افتراضي ٣ ص) مش تاريخ التقويم — لازم يطابق
+    // دالة attendance_business_date في db/51 اللي بتستخدمها صفحة الحضور الذاتي،
+    // وإلا تسجيل بعد نص الليل من اللوحة بيكتب صف بتاريخ تاني عن اللي بتدوّر عليه.
+    const dateStr = businessDateStr(storeSettings as any, now);
     const already = employeeAttendance.find(a => a.employee_id === emp.id && a.date === dateStr);
     if (already) {
       return alert('تم تسجيل حضور هذا الموظف اليوم بالفعل.');

@@ -21,9 +21,11 @@ const ERROR_AR: Record<string, string> = {
   inactive: 'هذا الموظف غير نشط',
   no_pin: 'لا يوجد رقم سري مسجّل لك، راجع المدير',
   wrong_pin: 'الرقم السري غير صحيح',
-  not_checked_in: 'لم تسجّل حضور اليوم بعد',
-  already_checked_in: 'لقد سجّلت حضورك اليوم بالفعل',
-  already_checked_out: 'لقد سجّلت انصرافك اليوم بالفعل',
+  // اليوم بينتهي عند ساعة بداية اليوم المحاسبي (٣ ص افتراضياً) مش نص الليل،
+  // فوردية بدأت بالليل وخلصت بعد ١٢ لسه بتقدر تسجّل انصراف. بعد ٣ ص بتتقفل.
+  not_checked_in: 'لم تسجّل حضور في الوردية الحالية. لو نسيت انصراف وردية سابقة راجع المدير',
+  already_checked_in: 'لقد سجّلت حضورك في هذه الوردية بالفعل',
+  already_checked_out: 'لقد سجّلت انصرافك في هذه الوردية بالفعل',
   bad_action: 'إجراء غير معروف',
 };
 
@@ -272,7 +274,7 @@ export default function Attendance() {
               </button>
             </div>
             {selectedId && !checkedIn && (
-              <p className="text-center text-[11px] font-bold text-slate-400">زر الانصراف يُفعّل بعد تسجيل الحضور</p>
+              <p className="text-center text-[11px] font-bold text-slate-400">زر الانصراف يُفعّل بعد تسجيل الحضور — والوردية تفضل مفتوحة بعد منتصف الليل</p>
             )}
           </div>
 
