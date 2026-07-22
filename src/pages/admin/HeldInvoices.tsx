@@ -27,6 +27,8 @@ export default function HeldInvoices() {
   const [filter, setFilter] = useState<Filter>('active');
   const [search, setSearch] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  // الطلب اللي بيتطبع دلوقتي — يمنع الضغط المتكرر (الطباعة الصامتة مالهاش مؤشّر).
+  const [printingId, setPrintingId] = useState<string | null>(null);
   // مودال التحصيل عند التسليم
   const [collecting, setCollecting] = useState<HeldInvoice | null>(null);
   const [collectPay, setCollectPay] = useState<Record<string, string>>({});
@@ -245,9 +247,15 @@ export default function HeldInvoices() {
                 {isActive(r) && (
                   <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
                     {r.kind === 'online' && (
-                      <button onClick={() => printShippingLabel(r as any, storeSettings)}
-                        className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl font-black text-xs">
-                        <Printer size={14} /> طباعة إيصال الطلب
+                      <button
+                        onClick={async () => {
+                          if (printingId) return;
+                          setPrintingId(r.id);
+                          try { await printShippingLabel(r, storeSettings); } finally { setPrintingId(null); }
+                        }}
+                        disabled={!!printingId}
+                        className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
+                        <Printer size={14} /> {printingId === r.id ? 'جارٍ الطباعة...' : 'طباعة إيصال الطلب'}
                       </button>
                     )}
                     {r.kind === 'online' && st === 'held' && (

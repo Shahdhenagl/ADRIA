@@ -12,7 +12,7 @@
  * مشترك بين شاشة الكاشير وموديول لوحة التحكم عشان الاتنين يطبعوا نفس المستند.
  */
 import { escapeHtml } from './escapeHtml';
-import { printDocument } from './printWindow';
+import { printDocument, AUTO_PRINT_SCRIPT } from './printWindow';
 import { buildPagesQrBlock } from './pagesQr';
 import { formatQty } from './units';
 
@@ -39,7 +39,7 @@ const STATUS_TEXT: Record<string, string> = {
   cancelled: 'ملغي',
 };
 
-export function printShippingLabel(held: ShippingLabelHeld, settings: any) {
+export async function printShippingLabel(held: ShippingLabelHeld, settings: any): Promise<void> {
   const cur = settings?.currency || 'ج.م';
   const dep = Math.max(0, Number(held.deposit) || 0);
   const total = Number(held.total) || 0;
@@ -72,8 +72,10 @@ export function printShippingLabel(held: ShippingLabelHeld, settings: any) {
 <meta charset="UTF-8"/>
 <title>طلب أونلاين #${escapeHtml(orderRef)}</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
-  *{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo', sans-serif;}
+  /* من غير @import لخطوط جوجل: الـ CSS import ده بيوقف رسم الصفحة كلها لحد ما
+     السيرفر يرد. الطابعة بتاخد «صورة» من الصفحة، فلو النت بطيء بتتصور نص
+     صفحة → الإيصال بيطلع مقصوص. الخط بيتاخد من الجهاز لو متسطّب، وإلا Tahoma. */
+  *{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo','Segoe UI',Tahoma,Arial,sans-serif;}
   body{background:#fff;color:#000;margin:0;}
   .invoice-container{width:72mm;margin:0 auto;padding:0 1.5mm 2mm;display:flex;flex-direction:column;}
 
@@ -82,8 +84,10 @@ export function printShippingLabel(held: ShippingLabelHeld, settings: any) {
   .store-name{font-size:18px;font-weight:900;color:#000;line-height:1.1;}
   .store-details{font-size:10px;color:#000;margin-top:1px;line-height:1.3;font-weight:bold;}
 
-  .kind-bar{margin:3px 0;padding:3px 0;text-align:center;background:#000;color:#fff;border-radius:4px;
-            font-size:13px;font-weight:900;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+  /* برواز أسود على أبيض — مش خلفية سوداء. الطابعة الحرارية بتاخد وقت في طباعة
+     البلوك الأسود الكامل وبيطلع مسحة سودا والكلام مش باين. */
+  .kind-bar{margin:3px 0;padding:3px 0;text-align:center;border:2px solid #000;border-radius:4px;
+            font-size:13px;font-weight:900;letter-spacing:1px;}
 
   .customer-info-grid{display:flex;flex-direction:column;gap:1px;margin-bottom:4px;font-size:11px;}
   .info-item{display:flex;justify-content:space-between;gap:6px;padding:1px 0;}
@@ -137,7 +141,7 @@ export function printShippingLabel(held: ShippingLabelHeld, settings: any) {
     </div>
   </div>
 
-  <div class="kind-bar">🚚 طلب أونلاين${statusText ? ` — ${escapeHtml(statusText)}` : ''}</div>
+  <div class="kind-bar">طلب أونلاين${statusText ? ` — ${escapeHtml(statusText)}` : ''}</div>
 
   <div class="customer-info-grid">
     <div class="info-item"><strong>اسم العميل:</strong> <span>${escapeHtml(held.customer_name?.trim() || 'عميل')}</span></div>
@@ -150,7 +154,7 @@ export function printShippingLabel(held: ShippingLabelHeld, settings: any) {
   <div class="addr-box">
     <div class="lbl">عنوان التوصيل:</div>
     <div class="addr">${escapeHtml(held.customer_address?.trim() || '— لم يُسجَّل عنوان —')}</div>
-    ${held.shipping_note ? `<div class="note">🚚 للمندوب: ${escapeHtml(held.shipping_note)}</div>` : ''}
+    ${held.shipping_note ? `<div class="note">للمندوب: ${escapeHtml(held.shipping_note)}</div>` : ''}
   </div>
 
   <table>
@@ -192,8 +196,8 @@ export function printShippingLabel(held: ShippingLabelHeld, settings: any) {
 
   <div class="footer">شكراً لتعاملكم معنا</div>
 </div>
-<script>window.onload=()=>{setTimeout(()=>{window.print();window.onafterprint=()=>window.close();},500);}<\/script>
+${AUTO_PRINT_SCRIPT}
 </body></html>`;
 
-  void printDocument('invoice', html);
+  await printDocument('invoice', html);
 }

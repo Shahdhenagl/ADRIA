@@ -667,6 +667,8 @@ export default function POS() {
   const [workDateOverride, setWorkDateOverride] = useState('');
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showHeldModal, setShowHeldModal] = useState(false);
+  // الطلب اللي بيتطبع دلوقتي — يمنع الضغط المتكرر (الطباعة الصامتة مالهاش مؤشّر).
+  const [printingHeldId, setPrintingHeldId] = useState<string | null>(null);
   const [holdBusy, setHoldBusy] = useState(false);
   // نموذج حفظ فاتورة معلّقة مع عربون
   const [showHoldForm, setShowHoldForm] = useState(false);
@@ -3873,11 +3875,19 @@ export default function POS() {
                               );
                             })}
                           </div>
+                          {/* الطباعة الصامتة مبيبانش منها حاجة على الشاشة، فالكاشير كان
+                              بيدوس تاني وتالت وتطلع نسخ مكرّرة — نقفل الزرار لحد ما تخلص. */}
                           <button
-                            onClick={() => printShippingLabel(h as any, storeSettings)}
-                            className="w-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
+                            onClick={async () => {
+                              if (printingHeldId) return;
+                              setPrintingHeldId(h.id);
+                              try { await printShippingLabel(h, storeSettings); }
+                              finally { setPrintingHeldId(null); }
+                            }}
+                            disabled={!!printingHeldId}
+                            className="w-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95 disabled:opacity-50"
                           >
-                            <Printer size={14} /> طباعة إيصال الطلب
+                            <Printer size={14} /> {printingHeldId === h.id ? 'جارٍ الطباعة...' : 'طباعة إيصال الطلب'}
                           </button>
                         </div>
                       )}

@@ -23,6 +23,30 @@ export async function printDocument(kind: PrintKind, html: string, features?: st
   openPrintWindow(html, features);
 }
 
+/**
+ * سكربت الطباعة التلقائية للمستندات المطبوعة.
+ *
+ * القديم كان `window.onload = ...` وبس، وده بيقع في حالتين:
+ *  - النافذة اتفتحت بـ window.open('') والـ load اتنفّذ على الصفحة الفاضية قبل
+ *    document.write → الحدث مش هيحصل تاني والطباعة مبتحصلش خالص (المستخدم
+ *    بيفضل مستني وبعدين بيضغط طباعة بنفسه أو يضغط الزرار تاني فتطلع نسخ).
+ *  - مورد خارجي (خط أو صورة QR) بيعلّق → الـ load مبيجيش أبداً.
+ *
+ * الحل: نطبع لما الصفحة تخلص تحميل، أو فوراً لو كانت خلصت بالفعل، مع مؤقّت
+ * احتياطي — وكله محمي بعلم `printed` عشان تطلع نسخة واحدة بس.
+ */
+export const AUTO_PRINT_SCRIPT = `<script>(function(){
+  var printed=false;
+  function go(){
+    if(printed) return; printed=true;
+    window.onafterprint=function(){ try{window.close();}catch(e){} };
+    try{ window.focus(); window.print(); }catch(e){}
+  }
+  if(document.readyState==='complete') setTimeout(go,300);
+  else window.addEventListener('load',function(){ setTimeout(go,300); });
+  setTimeout(go,2500); // احتياطي لو مورد خارجي علّق
+})();<\/script>`;
+
 export function openPrintWindow(html: string, features = 'width=800,height=1000'): Window | null {
   const isMobile = typeof navigator !== 'undefined'
     && /Android|iPhone|iPad|iPod|Mobile|Opera Mini|IEMobile/i.test(navigator.userAgent);
