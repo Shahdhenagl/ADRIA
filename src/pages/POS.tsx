@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, type Product } from '../store/useStore';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, Clock, PauseCircle, Undo2 } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, Clock, PauseCircle, Undo2, Truck } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { printBarcodeLabels, generateBarcode } from '../utils/printBarcodeLabels';
@@ -15,13 +15,14 @@ import { categoriesFor, withAddedCategory } from '../utils/financeCategories';
 import { buildPagesQrBlock } from '../utils/pagesQr';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../utils/treasury';
 import { calculateOrderReturnValue } from '../utils/returns';
+import { printShippingLabel } from '../utils/printShippingLabel';
 
 // فئة قيد تسوية الجرد: يضبط رصيد خزنة المحل ليطابق الكاش الفعلي المعدود.
 // يُحسب ضمن الداخل/الخارج (عشان الرصيد يتصحّح) لكن له خانته المستقلة في التفصيل.
 const RECONCILE_CAT = 'تسوية جرد الخزنة';
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, recordHeldDepositConversion, updateSettings } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -672,6 +673,8 @@ export default function POS() {
   const [holdDepositPay, setHoldDepositPay] = useState<Record<string, string>>({});
   // نوع الحجز: حجز محل (العميل هييجي ياخده) أو طلب أونلاين (بيمرّ بشحن وتسليم).
   const [holdKind, setHoldKind] = useState<'shop' | 'online'>('shop');
+  const [holdAddress, setHoldAddress] = useState('');
+  const [holdShipNote, setHoldShipNote] = useState('');
   const holdDepositTotal = activePayKeys.reduce((s, k) => s + (parseFloat(holdDepositPay[k] || '') || 0), 0);
   // عربون محصّل لفاتورة معلّقة يجري إتمامها الآن (يُضاف للمدفوع ويُسجّل تحويله بعد الإتمام)
   const [activeDeposit, setActiveDeposit] = useState<{ amount: number; split: Record<string, number> } | null>(null);
@@ -1584,12 +1587,15 @@ export default function POS() {
       deposit,
       depositSplit,
       kind: holdKind,
+      ...(holdKind === 'online' ? { customerAddress: holdAddress, shippingNote: holdShipNote } : {}),
     });
     setHoldBusy(false);
     if (ok) {
       setShowHoldForm(false);
       setHoldDepositPay({});
       setHoldKind('shop');
+      setHoldAddress('');
+      setHoldShipNote('');
       setCustomerName('');
       setCustomerPhone('');
       setCustomerId('');
@@ -3717,6 +3723,29 @@ export default function POS() {
                   </button>
                 </div>
               </div>
+              {/* عنوان التوصيل — مطلوب للأونلاين عشان بوليصة الشحن */}
+              {holdKind === 'online' && (
+                <div className="space-y-3 bg-sky-50 dark:bg-sky-900/20 border border-sky-100 dark:border-sky-800/40 rounded-2xl p-4">
+                  <div>
+                    <label className="text-xs font-black text-sky-700 dark:text-sky-400 uppercase tracking-widest mb-1.5 block">عنوان التوصيل <span className="text-red-500">*</span></label>
+                    <textarea
+                      value={holdAddress} onChange={(e) => setHoldAddress(e.target.value)}
+                      placeholder="المحافظة، المنطقة، الشارع، رقم العمارة والدور..."
+                      className="w-full bg-white dark:bg-slate-900 border-2 border-transparent focus:border-sky-500 py-2.5 px-3 rounded-xl outline-none font-bold text-sm resize-none h-20"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] font-black text-slate-500 uppercase mb-1.5 block">ملاحظة للمندوب (اختياري)</label>
+                    <input
+                      value={holdShipNote} onChange={(e) => setHoldShipNote(e.target.value)}
+                      placeholder="علامة مميزة، أفضل وقت للتسليم..."
+                      className="w-full bg-white dark:bg-slate-900 border-2 border-transparent focus:border-sky-500 py-2.5 px-3 rounded-xl outline-none font-bold text-sm"
+                    />
+                  </div>
+                  {!holdAddress.trim() && <p className="text-[11px] font-black text-amber-600">⚠️ من غير عنوان، بوليصة الشحن هتطلع ناقصة.</p>}
+                  {!customerPhone.trim() && <p className="text-[11px] font-black text-amber-600">⚠️ اكتب موبايل العميل — المندوب محتاجه.</p>}
+                </div>
+              )}
               <div>
                 <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">العربون المحصّل (اختياري) — يدخل الخزنة</label>
                 <div className="grid grid-cols-2 gap-3">
@@ -3812,12 +3841,44 @@ export default function POS() {
                         </div>
                       )}
 
+                      {/* الأونلاين: طباعة بوليصة الشحن + تغيير الحالة من الكاشير */}
+                      {h.kind === 'online' && (
+                        <div className="flex gap-2 mb-2">
+                          <button
+                            onClick={() => printShippingLabel(h as any, storeSettings)}
+                            className="flex-1 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
+                          >
+                            <Printer size={14} /> طباعة بوليصة الشحن
+                          </button>
+                          {h.status !== 'shipped' ? (
+                            <button
+                              onClick={async () => {
+                                if (!confirm(`تغيير حالة الطلب إلى «تم الشحن»؟`)) return;
+                                await setHeldInvoiceStatus(h.id, 'shipped');
+                              }}
+                              className="flex-1 bg-violet-600 text-white py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
+                            >
+                              <Truck size={14} /> تم الشحن
+                            </button>
+                          ) : (
+                            <button
+                              onClick={async () => {
+                                if (!confirm('رجوع الطلب لحالة «معلق»؟')) return;
+                                await setHeldInvoiceStatus(h.id, 'held');
+                              }}
+                              className="flex-1 bg-white dark:bg-slate-800 text-violet-600 border border-violet-200 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
+                            >
+                              <Undo2 size={14} /> رجوع لمعلق
+                            </button>
+                          )}
+                        </div>
+                      )}
                       <div className="flex gap-2">
                         <button
                           onClick={() => handleConfirmHeld(h.id)}
                           className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1.5 transition active:scale-95"
                         >
-                          <Check size={16} /> تأكيد البيع
+                          <Check size={16} /> {h.kind === 'online' ? 'تسليم وتحصيل' : 'تأكيد البيع'}
                         </button>
                         <button
                           onClick={() => handleReturnHeld(h.id)}

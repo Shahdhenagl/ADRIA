@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore, HELD_STATUS_LABEL, HELD_KIND_LABEL, type HeldInvoice, type HeldStatus } from '../../store/useStore';
-import { PackageSearch, Search, Truck, CheckCircle2, XCircle, AlertTriangle, Clock, RefreshCw, Store } from 'lucide-react';
+import { PackageSearch, Search, Truck, CheckCircle2, XCircle, AlertTriangle, Clock, RefreshCw, Store, Printer } from 'lucide-react';
 import { activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
 import { formatQty } from '../../utils/units';
+import { printShippingLabel } from '../../utils/printShippingLabel';
 
 // حد اعتبار الحجز «قديم» — بعده بيتلوّن تحذيري في القائمة وبيتعدّ في بطاقة التنبيه.
 const STALE_DAYS = 14;
@@ -215,6 +216,12 @@ export default function HeldInvoices() {
                       {r.customer_name?.trim() || 'عميل نقدي'}
                       {r.customer_phone && <span className="text-xs font-bold text-slate-400 mr-2" dir="ltr">{r.customer_phone}</span>}
                     </div>
+                    {r.kind === 'online' && (
+                      <div className={`text-xs font-bold mt-1 ${r.customer_address ? 'text-sky-700 dark:text-sky-400' : 'text-amber-600'}`}>
+                        📍 {r.customer_address?.trim() || 'لا يوجد عنوان مسجّل'}
+                        {r.shipping_note && <span className="block text-[11px] text-slate-400 mt-0.5">🚚 {r.shipping_note}</span>}
+                      </div>
+                    )}
                     <div className="text-xs text-slate-500 font-medium mt-1 line-clamp-2">
                       {(r.items || []).map((i: any) => `${i.name}×${formatQty(i.quantity, i.unit || 'قطعة')}`).join(' ، ')}
                     </div>
@@ -237,6 +244,12 @@ export default function HeldInvoices() {
 
                 {isActive(r) && (
                   <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
+                    {r.kind === 'online' && (
+                      <button onClick={() => printShippingLabel(r as any, storeSettings)}
+                        className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl font-black text-xs">
+                        <Printer size={14} /> بوليصة شحن
+                      </button>
+                    )}
                     {r.kind === 'online' && st === 'held' && (
                       <button onClick={() => doShip(r)} disabled={busyId === r.id}
                         className="flex items-center gap-1.5 bg-violet-600 text-white px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">

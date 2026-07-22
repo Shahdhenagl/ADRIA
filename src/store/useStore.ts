@@ -248,6 +248,9 @@ export interface HeldInvoice {
   deposit_split?: Record<string, number>; // تقسيمة العربون على وسائل الدفع
   created_at: string;
   expires_at: string;
+  /** عنوان التوصيل + ملاحظات المندوب — للطلبات الأونلاين (db/53). */
+  customer_address?: string | null;
+  shipping_note?: string | null;
   /** حجز محل أو طلب أونلاين (db/52). */
   kind?: HeldKind;
   /** دورة حياة الطلب: معلق → شحن → تسليم/إلغاء (db/52). */
@@ -624,6 +627,8 @@ interface CashierStore {
     deposit?: number;
     depositSplit?: Record<string, number>;
     kind?: HeldKind;
+    customerAddress?: string;
+    shippingNote?: string;
   }) => Promise<boolean>;
   confirmHeldInvoice: (id: string) => Promise<HeldInvoice | null>;
   returnHeldInvoice: (id: string) => Promise<boolean>;
@@ -904,6 +909,35 @@ async function ensureAccountingDayOpen(state: CashierStore, value?: string | Dat
   if (!(await isAccountingDayClosed(state.storeSettings, value))) return true;
   alert(`اليوم ${day} تم تقفيله بالفعل. لا يمكن إضافة أو تعديل أو حذف أي حركة مالية في يوم مقفول.`);
   return false;
+}
+
+/**
+ * يرجّع الكمية المحجوزة للمخزون ويبني عناصر السلة من الحجز — **من غير ما يلمس
+ * صف الحجز نفسه**. مشترك بين «تأكيد البيع» (بيحذف الصف) و«تسليم أونلاين»
+ * (بيعلّم الصف delivered عشان يفضل في السجل).
+ */
+async function restoreHeldStockToCart(state: CashierStore, held: HeldInvoice) {
+  for (const item of held.items) {
+    const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', item.id).single();
+    const currentStock = (prodData as any)?.stock_quantity ?? 0;
+    await supabase.from('products').update({ stock_quantity: currentStock + item.quantity }).eq('id', item.id);
+  }
+  const restoredProducts = state.products.map((p) => {
+    const it = held.items.find((i) => i.id === p.id);
+    return it ? { ...p, stock_quantity: p.stock_quantity + it.quantity } : p;
+  });
+  const cartItems: OrderItem[] = held.items.map((it) => {
+    const prod = restoredProducts.find((p) => p.id === it.id);
+    const base: any = prod ? { ...prod } : {
+      id: it.id, name: it.name, barcode: it.barcode || '',
+      purchase_price: it.purchase_price || 0,
+      average_purchase_price: it.average_purchase_price || it.purchase_price || 0,
+      sale_price: it.sale_price, stock_quantity: it.quantity,
+      category_id: it.category_id || '', unit: it.unit || 'قطعة',
+    };
+    return { ...base, sale_price: it.sale_price, quantity: it.quantity, returned_quantity: 0 };
+  });
+  return { restoredProducts, cartItems };
 }
 
 function accountingTimestampForNow(settings: StoreSettings): string {
@@ -2072,7 +2106,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   // Saves the current cart as a held invoice and RESERVES the stock (deducts it
   // from products.stock_quantity, like a real sale) so the quantity can't be
   // sold twice. No invoice number is consumed until the sale is confirmed.
-  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit, kind = 'shop' } = {}) => {
+  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit, kind = 'shop', customerAddress, shippingNote } = {}) => {
     const state = get();
     if (state.cart.length === 0) return false;
     try {
@@ -2115,6 +2149,8 @@ export const useStore = create<CashierStore>((set, get) => ({
           deposit_split: depAmt > 0 ? depSplit : null,
           kind: kind || 'shop',
           status: 'held',
+          customer_address: customerAddress?.trim() || null,
+          shipping_note: shippingNote?.trim() || null,
         })
         .select()
         .single();
@@ -2173,6 +2209,9 @@ export const useStore = create<CashierStore>((set, get) => ({
     const held = state.heldInvoices.find((h) => h.id === id);
     if (!held) return null;
     try {
+      // «تأكيد البيع» من الكاشير: الصف بيتشال من الجدول لأن الكاشير هيكمّل البيع
+      // بنفسه والفاتورة هتبان في الفواتير. (تسليم الأونلاين بيعلّم الصف delivered
+      // بدل الحذف — شوف deliverHeldInvoice.)
       const { error } = await supabase.from('held_invoices').delete().eq('id', id);
       if (error) {
         console.error('Confirm held invoice delete error:', error);
@@ -2180,30 +2219,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         return null;
       }
 
-      // Return the reserved stock so the upcoming checkout deducts it cleanly.
-      for (const item of held.items) {
-        const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', item.id).single();
-        const currentStock = (prodData as any)?.stock_quantity ?? 0;
-        await supabase.from('products').update({ stock_quantity: currentStock + item.quantity }).eq('id', item.id);
-      }
-
-      const restoredProducts = state.products.map((p) => {
-        const it = held.items.find((i) => i.id === p.id);
-        return it ? { ...p, stock_quantity: p.stock_quantity + it.quantity } : p;
-      });
-
-      // Rebuild cart items from the held items + the latest product record.
-      const cartItems: OrderItem[] = held.items.map((it) => {
-        const prod = restoredProducts.find((p) => p.id === it.id);
-        const base: any = prod ? { ...prod } : {
-          id: it.id, name: it.name, barcode: it.barcode || '',
-          purchase_price: it.purchase_price || 0,
-          average_purchase_price: it.average_purchase_price || it.purchase_price || 0,
-          sale_price: it.sale_price, stock_quantity: it.quantity,
-          category_id: it.category_id || '', unit: it.unit || 'قطعة',
-        };
-        return { ...base, sale_price: it.sale_price, quantity: it.quantity, returned_quantity: 0 };
-      });
+      const { restoredProducts, cartItems } = await restoreHeldStockToCart(state, held);
 
       set({
         heldInvoices: state.heldInvoices.filter((h) => h.id !== id),
@@ -2263,8 +2279,15 @@ export const useStore = create<CashierStore>((set, get) => ({
 
     // نحفظ حالة الكاشير ونرجّعها بعد الخلاص (الموديول في الأدمن، مينفعش يمسح سلة شغالة).
     const prevCart = state.cart, prevType = state.invoiceType, prevSp = state.salesperson;
-    const confirmed = await get().confirmHeldInvoice(id);
-    if (!confirmed) return false;
+    // مش بننده confirmHeldInvoice لأنه بيحذف الصف — وإحنا عايزينه يفضل بحالة
+    // delivered عشان يبان في سجل الموديول.
+    const { restoredProducts, cartItems } = await restoreHeldStockToCart(state, held);
+    set({
+      products: restoredProducts,
+      cart: cartItems,
+      invoiceType: held.invoice_type || 'retail',
+      salesperson: held.salesperson_id ? { id: held.salesperson_id, name: held.salesperson_name || '' } : null,
+    });
 
     try {
       const invoiceId = await get().checkout(
@@ -2284,22 +2307,26 @@ export const useStore = create<CashierStore>((set, get) => ({
       await supabase.from('held_invoices')
         .update({ status: 'delivered', order_id: String(invoiceId), status_at: new Date().toISOString() })
         .eq('id', id);
+      set((s) => ({ heldInvoices: s.heldInvoices.filter((h) => h.id !== id) }));
       return true;
     } finally {
       set({ cart: prevCart, invoiceType: prevType, salesperson: prevSp });
     }
   },
 
-  // إرجاع للمخزون: تُعاد الكمية المحجوزة ويُحذف سجل الحجز.
+  // إرجاع للمخزون: تُعاد الكمية المحجوزة ويُعلَّم الصف «ملغي» (مش بيتحذف) عشان
+  // يفضل ظاهر في سجل الملغيات بموديول لوحة التحكم.
   returnHeldInvoice: async (id) => {
     const state = get();
     const held = state.heldInvoices.find((h) => h.id === id);
     if (!held) return false;
     try {
-      const { error } = await supabase.from('held_invoices').delete().eq('id', id);
+      const { error } = await supabase.from('held_invoices')
+        .update({ status: 'cancelled', status_at: new Date().toISOString() })
+        .eq('id', id);
       if (error) {
         console.error('Return held invoice error:', error);
-        alert('تعذّر إرجاع الفاتورة للمخزون: ' + error.message);
+        alert('تعذّر إرجاع الفاتورة للمخزون: ' + error.message + '\n(لو العمود status مش موجود شغّل db/52 الأول.)');
         return false;
       }
       for (const item of held.items) {
@@ -2332,11 +2359,6 @@ export const useStore = create<CashierStore>((set, get) => ({
           alert('⚠️ تعذّر إيجاد يوم محاسبي مفتوح لتسجيل رد العربون. راجع المحاسب.');
         }
       }
-      // علامة الإلغاء بتفضل في الجدول كسجل تاريخي (بدل الحذف) عشان موديول
-      // الداشبورد يعرض الملغيات. loadHeldInvoices بيفلترها فمش هتظهر للكاشير.
-      await supabase.from('held_invoices')
-        .update({ status: 'cancelled', status_at: new Date().toISOString() })
-        .eq('id', id);
       set({
         heldInvoices: state.heldInvoices.filter((h) => h.id !== id),
         products: restoredProducts,
