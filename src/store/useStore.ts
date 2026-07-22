@@ -256,6 +256,10 @@ export interface HeldInvoice {
   kind?: HeldKind;
   /** دورة حياة الطلب: معلق → شحن → تسليم/إلغاء (db/52). */
   status?: HeldStatus;
+  /** بيانات المرتجع + تكلفة شحن المرتجع (db/54). */
+  return_data?: any;
+  returned_at?: string | null;
+  shipping_return_cost?: number | null;
   /** رقم فاتورة البيع اللي اتولدت عند التسليم. */
   order_id?: string | null;
   status_at?: string | null;
@@ -263,13 +267,23 @@ export interface HeldInvoice {
 }
 
 export type HeldKind = 'shop' | 'online';
-export type HeldStatus = 'held' | 'shipped' | 'delivered' | 'cancelled';
-/** الحالات اللي لسه شاغلة مخزون وبتظهر للكاشير. */
-export const ACTIVE_HELD_STATUSES: HeldStatus[] = ['held', 'shipped'];
+export type HeldStatus = 'held' | 'shipped' | 'money_pending' | 'delivered' | 'returned' | 'cancelled';
+/**
+ * الحالات اللي لسه شاغلة مخزون وبتظهر للكاشير (db/54).
+ * money_pending منها: العميل استلم ودفع لشركة الشحن بس الفلوس ما وصلتش
+ * الخزنة، فالطلب لسه مفتوح لحد ما يتحصّل.
+ */
+export const ACTIVE_HELD_STATUSES: HeldStatus[] = ['held', 'shipped', 'money_pending'];
+/** الترتيب الطبيعي لدورة حياة الطلب الأونلاين — بيستخدمه الكاشير والموديول. */
+export const ONLINE_FLOW_STATUSES: HeldStatus[] = ['held', 'shipped', 'money_pending', 'delivered'];
+/** حالات منتهية بدون بيع — مستبعدة من إحصائيات الفلوس. */
+export const HELD_DEAD_STATUSES: HeldStatus[] = ['cancelled', 'returned'];
 export const HELD_STATUS_LABEL: Record<HeldStatus, string> = {
-  held: 'معلقة',
+  held: 'تم التجهيز',
   shipped: 'تم الشحن',
-  delivered: 'تم التسليم',
+  money_pending: 'الفلوس في الطريق',
+  delivered: 'تم التحصيل',
+  returned: 'مرتجع',
   cancelled: 'ملغية',
 };
 export const HELD_KIND_LABEL: Record<HeldKind, string> = {
@@ -635,6 +649,12 @@ interface CashierStore {
   returnHeldInvoice: (id: string) => Promise<boolean>;
   loadAllHeldInvoices: () => Promise<HeldInvoice[]>;
   setHeldInvoiceStatus: (id: string, status: HeldStatus, note?: string) => Promise<boolean>;
+  /** مرتجع طلب أونلاين: كميات مرتجعة لكل صنف + مصاريف شحن المرتجع اختيارية. */
+  returnHeldItems: (
+    id: string,
+    returnQty: Record<string, number>,
+    shipping?: { amount: number; split?: Record<string, number>; note?: string },
+  ) => Promise<boolean>;
   deliverHeldInvoice: (id: string, splitPayments: Record<string, number>) => Promise<boolean>;
   recordHeldDepositConversion: (deposit: number, split: Record<string, number>, invoiceId: string) => Promise<void>;
 
@@ -2243,8 +2263,9 @@ export const useStore = create<CashierStore>((set, get) => ({
   // (البضاعة محجوزة أصلاً من ساعة الحجز) — مجرد تتبّع.
   // التسليم والإلغاء ليهم دوالهم لأنهم بيحرّكوا فلوس ومخزون.
   setHeldInvoiceStatus: async (id, status, note) => {
-    if (status === 'delivered' || status === 'cancelled') {
-      console.error('use deliverHeldInvoice / returnHeldInvoice instead');
+    // الحالات اللي بتحرّك فلوس/مخزون ليها دوالها — مش مجرد تغيير حالة.
+    if (status === 'delivered' || status === 'cancelled' || status === 'returned') {
+      console.error('use deliverHeldInvoice / returnHeldInvoice / returnHeldItems instead');
       return false;
     }
     const { error } = await supabase.from('held_invoices')
@@ -2369,6 +2390,136 @@ export const useStore = create<CashierStore>((set, get) => ({
     } catch (err) {
       console.error('Failed to return held invoice:', err);
       alert('تعذّر إرجاع الفاتورة للمخزون.');
+      return false;
+    }
+  },
+
+  /**
+   * مرتجع طلب أونلاين بعد الشحن — العميل ما استلمش كله أو جزء منه (db/54).
+   *
+   *  جزئي  → الأصناف المرتجعة بترجع للمخزون، والإجمالي بيتحسب من اللي فضل،
+   *          والطلب بيكمّل دورته عادي (شحن → تحصيل) بالمبلغ الجديد.
+   *  كلي   → كل الأصناف بترجع، الحالة 'returned'، والعربون بيترد للعميل.
+   *
+   * مصاريف شحن المرتجع (لو اتسجّلت) بتتقيّد مصروف على الخزنة بتاريخ **لحظة**
+   * تسجيل المرتجع؛ ولو اليوم مقفول محاسبياً بتترحّل لأول يوم مفتوح زي رد العربون.
+   */
+  returnHeldItems: async (id, returnQty, shipping) => {
+    const state = get();
+    const held = state.heldInvoices.find((h) => h.id === id);
+    if (!held) { alert('الطلب غير موجود — حدّثي الصفحة وحاولي تاني.'); return false; }
+
+    // كمية مرتجعة لكل صنف، محصورة بين صفر والكمية المتاحة.
+    const back = held.items.map((it) => {
+      const want = Number(returnQty?.[it.id]) || 0;
+      return { it, qty: Math.max(0, Math.min(Number(it.quantity) || 0, want)) };
+    });
+    const returnedValue = back.reduce((s, b) => s + b.qty * (Number(b.it.sale_price) || 0), 0);
+    const shipCost = Math.max(0, Number(shipping?.amount) || 0);
+    if (returnedValue <= 0 && shipCost <= 0) { alert('اختاري كمية مرتجعة أو سجّلي مصاريف شحن المرتجع.'); return false; }
+
+    // الأصناف الباقية بعد المرتجع (اللي كميتها بقت صفر بتختفي).
+    const remaining = held.items
+      .map((it) => {
+        const b = back.find((x) => x.it.id === it.id);
+        return { ...it, quantity: (Number(it.quantity) || 0) - (b?.qty || 0) };
+      })
+      .filter((it) => (Number(it.quantity) || 0) > 0.0001);
+    const newTotal = remaining.reduce((s, it) => s + (Number(it.sale_price) || 0) * (Number(it.quantity) || 0), 0);
+    const isFull = remaining.length === 0;
+
+    try {
+      // 1) رجّع الكميات المرتجعة للمخزون.
+      for (const b of back) {
+        if (b.qty <= 0) continue;
+        const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', b.it.id).single();
+        const currentStock = (prodData as any)?.stock_quantity ?? 0;
+        await supabase.from('products').update({ stock_quantity: currentStock + b.qty }).eq('id', b.it.id);
+      }
+      const restoredProducts = state.products.map((p) => {
+        const b = back.find((x) => x.it.id === p.id && x.qty > 0);
+        return b ? { ...p, stock_quantity: p.stock_quantity + b.qty } : p;
+      });
+
+      // 2) سجّل المرتجع على صف الطلب.
+      const nowIso = new Date().toISOString();
+      const prevLog = Array.isArray(held.return_data?.history) ? held.return_data.history : [];
+      const entry = {
+        at: nowIso,
+        items: back.filter((b) => b.qty > 0).map((b) => ({ id: b.it.id, name: b.it.name, quantity: b.qty, sale_price: b.it.sale_price })),
+        value: returnedValue,
+        full: isFull,
+        shipping_cost: shipCost,
+        note: shipping?.note || null,
+      };
+      const patch: any = {
+        items: remaining,
+        total: isFull ? 0 : newTotal,
+        return_data: { ...entry, history: [...prevLog, entry] },
+        returned_at: nowIso,
+        shipping_return_cost: (Number(held.shipping_return_cost) || 0) + shipCost,
+        ...(isFull ? { status: 'returned', status_at: nowIso } : {}),
+      };
+      const { error } = await supabase.from('held_invoices').update(patch).eq('id', id);
+      if (error) {
+        console.error('returnHeldItems error:', error);
+        alert('تعذّر تسجيل المرتجع: ' + error.message + '\n(لو الأعمدة مش موجودة شغّلي db/54 الأول.)');
+        return false;
+      }
+
+      // 3) مصاريف شحن المرتجع — مصروف من الخزنة بتاريخ دلوقتي.
+      if (shipCost > 0) {
+        const split = shipping?.split && Object.values(shipping.split).some((v) => Number(v) > 0)
+          ? shipping.split
+          : { cash: shipCost };
+        const openDay = await nextOpenAccountingTimestamp(state.storeSettings);
+        await get().addExpense({
+          category: 'مصاريف شحن مرتجع',
+          amount: shipCost,
+          ...paidFromSplit(split),
+          note: `شحن مرتجع - ${held.customer_name?.trim() || 'عميل'}${shipping?.note ? ` - ${shipping.note}` : ''}`,
+          payment_method: primaryOfSplit(split) as any,
+          ...(openDay ? { created_at: openDay.iso } : {}),
+        } as any);
+        if (openDay?.shifted) alert(`ملاحظة: اليوم الحالي مقفول محاسبياً، فمصاريف شحن المرتجع اتسجّلت على يوم ${openDay.day} — أول يوم مفتوح.`);
+      }
+
+      // 4) العربون: في المرتجع الكلي بيترد كله، وفي الجزئي بيترد الزيادة عن
+      //    الإجمالي الجديد بس (باقي العربون بيفضل محجوز على الطلب).
+      const depAmt = Math.max(0, Number(held.deposit) || 0);
+      const refund = isFull ? depAmt : Math.max(0, depAmt - newTotal);
+      if (refund > 0.009) {
+        const dsplit = held.deposit_split || { cash: depAmt };
+        // نوزّع المبلغ المردود بنسبة تقسيمة العربون الأصلية.
+        const ratio = depAmt > 0 ? refund / depAmt : 1;
+        const rsplit: Record<string, number> = {};
+        Object.entries(dsplit).forEach(([k, v]) => { rsplit[k] = (Number(v) || 0) * ratio; });
+        const openDay = await nextOpenAccountingTimestamp(state.storeSettings);
+        await get().addExpense({
+          category: 'حجز',
+          amount: refund,
+          ...paidFromSplit(rsplit),
+          note: `رد عربون (مرتجع أونلاين) - ${held.customer_name?.trim() || 'عميل'}`,
+          payment_method: primaryOfSplit(rsplit) as any,
+          ...(openDay ? { created_at: openDay.iso } : {}),
+        } as any);
+        if (!isFull) await supabase.from('held_invoices').update({ deposit: newTotal }).eq('id', id);
+      }
+
+      // 5) حدّث الحالة المحلية.
+      set({
+        products: restoredProducts,
+        heldInvoices: isFull
+          ? state.heldInvoices.filter((h) => h.id !== id)
+          : state.heldInvoices.map((h) => (h.id === id
+            ? { ...h, items: remaining, total: newTotal, ...(refund > 0.009 ? { deposit: newTotal } : {}) } as HeldInvoice
+            : h)),
+      });
+      new BroadcastChannel('cashier-sync').postMessage('sync_products');
+      return true;
+    } catch (err) {
+      console.error('returnHeldItems failed:', err);
+      alert('تعذّر تسجيل المرتجع.');
       return false;
     }
   },

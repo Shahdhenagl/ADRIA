@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore, HELD_STATUS_LABEL, HELD_KIND_LABEL, type HeldInvoice, type HeldStatus } from '../../store/useStore';
-import { PackageSearch, Search, Truck, CheckCircle2, XCircle, AlertTriangle, Clock, RefreshCw, Store, Printer } from 'lucide-react';
+import { PackageSearch, Search, Truck, CheckCircle2, XCircle, AlertTriangle, Clock, RefreshCw, Printer, Undo2, Wallet } from 'lucide-react';
 import { activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
 import { formatQty } from '../../utils/units';
 import { printShippingLabel } from '../../utils/printShippingLabel';
+import { HeldReturnModal } from '../../components/HeldReturnModal';
 
 // حد اعتبار الحجز «قديم» — بعده بيتلوّن تحذيري في القائمة وبيتعدّ في بطاقة التنبيه.
 const STALE_DAYS = 14;
@@ -11,7 +12,9 @@ const STALE_DAYS = 14;
 const STATUS_STYLE: Record<HeldStatus, string> = {
   held: 'bg-amber-50 text-amber-700 border-amber-200',
   shipped: 'bg-violet-50 text-violet-700 border-violet-200',
+  money_pending: 'bg-sky-50 text-sky-700 border-sky-200',
   delivered: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  returned: 'bg-orange-50 text-orange-700 border-orange-200',
   cancelled: 'bg-slate-100 text-slate-500 border-slate-200',
 };
 
@@ -32,6 +35,8 @@ export default function HeldInvoices() {
   // مودال التحصيل عند التسليم
   const [collecting, setCollecting] = useState<HeldInvoice | null>(null);
   const [collectPay, setCollectPay] = useState<Record<string, string>>({});
+  // مودال المرتجع (بيظهر بعد الشحن)
+  const [returning, setReturning] = useState<HeldInvoice | null>(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -41,16 +46,35 @@ export default function HeldInvoices() {
 
   const ageDaysOf = (r: HeldInvoice) =>
     Math.max(0, Math.floor((Date.now() - new Date(r.created_at).getTime()) / 86400000));
-  const isActive = (r: HeldInvoice) => r.status === 'held' || r.status === 'shipped';
+  const isActive = (r: HeldInvoice) => r.status === 'held' || r.status === 'shipped' || r.status === 'money_pending';
   const isStale = (r: HeldInvoice) => isActive(r) && ageDaysOf(r) >= STALE_DAYS;
 
-  const stats = useMemo(() => ({
-    held: rows.filter((r) => r.status === 'held').length,
-    shipped: rows.filter((r) => r.status === 'shipped').length,
-    stale: rows.filter(isStale).length,
-    reservedValue: rows.filter(isActive).reduce((s, r) => s + (Number(r.total) || 0), 0),
-    depositsHeld: rows.filter(isActive).reduce((s, r) => s + (Number(r.deposit) || 0), 0),
-  }), [rows]);
+  /**
+   * إحصائيات كل حالة بالعدد وبالفلوس.
+   * «الفلوس في الطريق» رقمها هو **المتبقّي** (الإجمالي ناقص العربون) — ده اللي
+   * شركة الشحن مدينة لينا بيه فعلاً، مش إجمالي الطلب.
+   * الملغي والمرتجع مستبعدين من فلوس الإحصائيات (عدد بس) لأنهم مالهمش قيمة قادمة.
+   */
+  const stats = useMemo(() => {
+    const of = (st: HeldStatus) => rows.filter((r) => (r.status || 'held') === st);
+    const sumTotal = (list: HeldInvoice[]) => list.reduce((s, r) => s + (Number(r.total) || 0), 0);
+    const sumDue = (list: HeldInvoice[]) => list.reduce((s, r) => s + Math.max(0, (Number(r.total) || 0) - (Number(r.deposit) || 0)), 0);
+    const byStatus = {} as Record<HeldStatus, { count: number; money: number }>;
+    (['held', 'shipped', 'money_pending', 'delivered', 'returned', 'cancelled'] as HeldStatus[]).forEach((st) => {
+      const list = of(st);
+      byStatus[st] = {
+        count: list.length,
+        money: st === 'money_pending' ? sumDue(list) : st === 'cancelled' || st === 'returned' ? 0 : sumTotal(list),
+      };
+    });
+    return {
+      byStatus,
+      stale: rows.filter(isStale).length,
+      depositsHeld: rows.filter(isActive).reduce((s, r) => s + (Number(r.deposit) || 0), 0),
+      returnShipCost: rows.reduce((s, r) => s + (Number(r.shipping_return_cost) || 0), 0),
+    };
+    /* eslint-disable-next-line react-hooks/exhaustive-deps */
+  }, [rows]);
 
   const list = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -66,11 +90,17 @@ export default function HeldInvoices() {
     /* eslint-disable-next-line react-hooks/exhaustive-deps */
   }, [rows, filter, search]);
 
-  const doShip = async (r: HeldInvoice) => {
-    if (!confirm(`تغيير حالة طلب «${r.customer_name || 'عميل'}» إلى «تم الشحن»؟`)) return;
+  const setStatus = async (r: HeldInvoice, status: HeldStatus, confirmMsg?: string) => {
+    if (confirmMsg && !confirm(confirmMsg)) return;
     setBusyId(r.id);
-    try { if (await setHeldInvoiceStatus(r.id, 'shipped')) await refresh(); } finally { setBusyId(null); }
+    try { if (await setHeldInvoiceStatus(r.id, status)) await refresh(); } finally { setBusyId(null); }
   };
+  const doShip = (r: HeldInvoice) => setStatus(r, 'shipped', `تغيير حالة طلب «${r.customer_name || 'عميل'}» إلى «تم الشحن»؟`);
+  const doUnship = (r: HeldInvoice) => setStatus(r, 'shipped', 'رجوع الطلب لحالة «تم الشحن»؟');
+  const doMoneyPending = (r: HeldInvoice) => setStatus(
+    r, 'money_pending',
+    'العميل استلم ودفع لشركة الشحن، والفلوس لسه ما وصلتش الخزنة؟\n(الفاتورة والقيد المالي هيتعملوا لما تدوسي «تم التحصيل».)',
+  );
 
   const doCancel = async (r: HeldInvoice) => {
     const dep = Number(r.deposit) || 0;
@@ -84,6 +114,13 @@ export default function HeldInvoices() {
       await loadHeldInvoices();
       if (await returnHeldInvoice(r.id)) await refresh();
     } finally { setBusyId(null); }
+  };
+
+  // returnHeldItems (زي returnHeldInvoice) بيشتغل على النسخة المحمّلة في الستور،
+  // والموديول بيقرا من loadAllHeldInvoices — فنحمّل الستور الأول.
+  const openReturn = async (r: HeldInvoice) => {
+    await loadHeldInvoices();
+    setReturning(r);
   };
 
   const openCollect = async (r: HeldInvoice) => {
@@ -135,19 +172,36 @@ export default function HeldInvoices() {
         </button>
       </div>
 
-      {/* بطاقات الملخّص */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      {/* بطاقات الحالات — العدد + قيمتها بالفلوس، وكل بطاقة زرار فلترة */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {([
+          { st: 'held' as HeldStatus, icon: Clock, tone: 'text-amber-600', hint: 'متجهّز ومحجوز من المخزون' },
+          { st: 'shipped' as HeldStatus, icon: Truck, tone: 'text-violet-600', hint: 'مع شركة الشحن' },
+          { st: 'money_pending' as HeldStatus, icon: Wallet, tone: 'text-sky-600', hint: 'العميل دفع — لسه ما وصلتش الخزنة' },
+          { st: 'delivered' as HeldStatus, icon: CheckCircle2, tone: 'text-emerald-600', hint: 'دخلت الخزنة واتسجّلت فاتورة' },
+        ]).map((c) => (
+          <button key={c.st} onClick={() => setFilter(c.st)}
+            className={`text-right bg-white dark:bg-slate-800 rounded-2xl p-4 border transition ${filter === c.st ? 'border-indigo-500 ring-2 ring-indigo-500/20' : 'border-slate-200 dark:border-slate-700 hover:border-indigo-300'}`}>
+            <div className="flex items-center gap-2 text-[11px] font-bold text-slate-500"><c.icon size={14} /> {HELD_STATUS_LABEL[c.st]}</div>
+            <div className={`text-xl font-black mt-1 ${c.tone}`}>{stats.byStatus[c.st].money.toFixed(0)} <span className="text-[11px] text-slate-400">{cur}</span></div>
+            <div className="text-[11px] font-bold text-slate-400 mt-0.5">{stats.byStatus[c.st].count} طلب · {c.hint}</div>
+          </button>
+        ))}
+      </div>
+
+      {/* أرقام مساعدة: مالهاش قيمة قادمة (ملغي/مرتجع) + العرابين وتكلفة شحن المرتجع */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {[
-          { label: 'معلقة', value: stats.held, icon: Clock, tone: 'text-amber-600' },
-          { label: 'تم الشحن', value: stats.shipped, icon: Truck, tone: 'text-violet-600' },
-          { label: `قديمة (+${STALE_DAYS} يوم)`, value: stats.stale, icon: AlertTriangle, tone: stats.stale > 0 ? 'text-red-600' : 'text-slate-400' },
-          { label: 'قيمة محجوزة', value: `${stats.reservedValue.toFixed(0)} ${cur}`, icon: Store, tone: 'text-indigo-600' },
-          { label: 'عرابين بالخزنة', value: `${stats.depositsHeld.toFixed(0)} ${cur}`, icon: CheckCircle2, tone: 'text-emerald-600' },
+          { label: 'عرابين بالخزنة', value: `${stats.depositsHeld.toFixed(0)} ${cur}`, icon: CheckCircle2, tone: 'text-emerald-600', f: null },
+          { label: 'مصاريف شحن مرتجع', value: `${stats.returnShipCost.toFixed(0)} ${cur}`, icon: Undo2, tone: 'text-orange-600', f: 'returned' as Filter },
+          { label: `${HELD_STATUS_LABEL.returned} (خارج الإحصائيات)`, value: `${stats.byStatus.returned.count} طلب`, icon: Undo2, tone: 'text-orange-600', f: 'returned' as Filter },
+          { label: `${HELD_STATUS_LABEL.cancelled} (خارج الإحصائيات)`, value: `${stats.byStatus.cancelled.count} طلب`, icon: XCircle, tone: 'text-slate-400', f: 'cancelled' as Filter },
         ].map((c) => (
-          <div key={c.label} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700">
+          <button key={c.label} onClick={() => c.f && setFilter(c.f)} disabled={!c.f}
+            className="text-right bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 disabled:cursor-default">
             <div className="flex items-center gap-2 text-[11px] font-bold text-slate-500"><c.icon size={14} /> {c.label}</div>
             <div className={`text-xl font-black mt-1 ${c.tone}`}>{c.value}</div>
-          </div>
+          </button>
         ))}
       </div>
 
@@ -169,11 +223,10 @@ export default function HeldInvoices() {
 
       {/* فلاتر + بحث */}
       <div className="flex flex-wrap gap-2 items-center">
-        <Chip id="active" label="النشطة" count={stats.held + stats.shipped} />
-        <Chip id="held" label={HELD_STATUS_LABEL.held} />
-        <Chip id="shipped" label={HELD_STATUS_LABEL.shipped} />
-        <Chip id="delivered" label={HELD_STATUS_LABEL.delivered} />
-        <Chip id="cancelled" label={HELD_STATUS_LABEL.cancelled} />
+        <Chip id="active" label="النشطة" count={rows.filter(isActive).length} />
+        {(['held', 'shipped', 'money_pending', 'delivered', 'returned', 'cancelled'] as HeldStatus[]).map((st) => (
+          <Chip key={st} id={st} label={HELD_STATUS_LABEL[st]} count={stats.byStatus[st].count} />
+        ))}
         <Chip id="stale" label="قديمة" count={stats.stale} tone="text-red-600" />
         <div className="relative mr-auto min-w-[220px]">
           <Search className="absolute right-3 top-2.5 text-slate-400" size={16} />
@@ -258,16 +311,37 @@ export default function HeldInvoices() {
                         <Printer size={14} /> {printingId === r.id ? 'جارٍ الطباعة...' : 'طباعة إيصال الطلب'}
                       </button>
                     )}
+                    {/* تقدّم الحالة خطوة خطوة: تجهيز ← شحن ← الفلوس في الطريق.
+                        «تم التحصيل» ليه زرار التحصيل لأنه بيعمل فاتورة بيع فعلية. */}
                     {r.kind === 'online' && st === 'held' && (
                       <button onClick={() => doShip(r)} disabled={busyId === r.id}
                         className="flex items-center gap-1.5 bg-violet-600 text-white px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
                         <Truck size={14} /> تم الشحن
                       </button>
                     )}
+                    {r.kind === 'online' && st === 'shipped' && (
+                      <button onClick={() => doMoneyPending(r)} disabled={busyId === r.id}
+                        className="flex items-center gap-1.5 bg-sky-600 text-white px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
+                        <Wallet size={14} /> الفلوس في الطريق
+                      </button>
+                    )}
+                    {r.kind === 'online' && st === 'money_pending' && (
+                      <button onClick={() => doUnship(r)} disabled={busyId === r.id}
+                        className="flex items-center gap-1.5 bg-white dark:bg-slate-800 text-violet-600 border border-violet-200 px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
+                        <Undo2 size={14} /> رجوع لـ«تم الشحن»
+                      </button>
+                    )}
                     <button onClick={() => openCollect(r)} disabled={busyId === r.id}
                       className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
-                      <CheckCircle2 size={14} /> تم التسليم وتحصيل
+                      <CheckCircle2 size={14} /> {r.kind === 'online' ? 'تم التحصيل' : 'تم التسليم وتحصيل'}
                     </button>
+                    {/* المرتجع بيظهر بعد الشحن بس — قبل كده «إلغاء» هو التصرّف الصح */}
+                    {r.kind === 'online' && st !== 'held' && (
+                      <button onClick={() => openReturn(r)} disabled={busyId === r.id}
+                        className="flex items-center gap-1.5 bg-white dark:bg-slate-800 text-amber-600 border border-amber-200 px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
+                        <Undo2 size={14} /> مرتجع
+                      </button>
+                    )}
                     <button onClick={() => doCancel(r)} disabled={busyId === r.id}
                       className="flex items-center gap-1.5 bg-white dark:bg-slate-800 text-red-600 border border-red-200 px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
                       <XCircle size={14} /> إلغاء وإرجاع للمخزون
@@ -278,6 +352,15 @@ export default function HeldInvoices() {
             );
           })}
         </div>
+      )}
+
+      {/* مودال المرتجع — returnHeldItems بيشتغل على النسخة المحمّلة في الستور */}
+      {returning && (
+        <HeldReturnModal
+          held={returning}
+          onClose={() => setReturning(null)}
+          onDone={async () => { setReturning(null); await refresh(); }}
+        />
       )}
 
       {/* مودال التحصيل */}

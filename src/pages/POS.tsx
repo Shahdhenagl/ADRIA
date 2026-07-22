@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStore, HELD_STATUS_LABEL, type HeldStatus, type Product } from '../store/useStore';
+import { useStore, HELD_STATUS_LABEL, type HeldInvoice, type HeldStatus, type Product } from '../store/useStore';
+import { HeldReturnModal } from '../components/HeldReturnModal';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
 import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, Clock, PauseCircle, Undo2, Truck } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -669,6 +670,9 @@ export default function POS() {
   const [showHeldModal, setShowHeldModal] = useState(false);
   // الطلب اللي بيتطبع دلوقتي — يمنع الضغط المتكرر (الطباعة الصامتة مالهاش مؤشّر).
   const [printingHeldId, setPrintingHeldId] = useState<string | null>(null);
+  // فلتر شاشة المعلقة بالحالة + الطلب اللي بيتعمله مرتجع.
+  const [heldFilter, setHeldFilter] = useState<'all' | 'shop' | HeldStatus>('all');
+  const [returningHeld, setReturningHeld] = useState<HeldInvoice | null>(null);
   const [holdBusy, setHoldBusy] = useState(false);
   // نموذج حفظ فاتورة معلّقة مع عربون
   const [showHoldForm, setShowHoldForm] = useState(false);
@@ -1612,6 +1616,13 @@ export default function POS() {
         : '✅ تم حفظ الفاتورة في الفواتير المعلقة وحجز الكمية من المخزون.');
     }
   };
+
+  // الطلبات الظاهرة في شاشة المعلقة حسب الفلتر المختار.
+  const visibleHeld = heldInvoices.filter((h) => {
+    if (heldFilter === 'all') return true;
+    if (heldFilter === 'shop') return h.kind !== 'online';
+    return h.kind === 'online' && (h.status || 'held') === heldFilter;
+  });
 
   // تأكيد بيع فاتورة معلقة: تُحمَّل في الكاشير ليُكمل الكاشير التحصيل والطباعة.
   const handleConfirmHeld = async (id: string) => {
@@ -3793,14 +3804,30 @@ export default function POS() {
               </button>
             </div>
 
+            {/* فلتر بالحالة — نفس حالات الموديول، عشان الكاشير يشوف طلبات كل مرحلة */}
+            <div className="px-5 pt-4 flex flex-wrap gap-2">
+              {([
+                { id: 'all' as const, label: 'الكل', count: heldInvoices.length },
+                ...(['held', 'shipped', 'money_pending'] as HeldStatus[]).map((st) => ({
+                  id: st, label: HELD_STATUS_LABEL[st], count: heldInvoices.filter((h) => (h.status || 'held') === st).length,
+                })),
+                { id: 'shop' as const, label: '🏬 حجوزات المحل', count: heldInvoices.filter((h) => h.kind !== 'online').length },
+              ]).map((c) => (
+                <button key={c.id} onClick={() => setHeldFilter(c.id as typeof heldFilter)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-black border transition ${heldFilter === c.id ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}>
+                  {c.label} ({c.count})
+                </button>
+              ))}
+            </div>
+
             <div className="p-5 space-y-3 overflow-y-auto">
-              {heldInvoices.length === 0 ? (
+              {visibleHeld.length === 0 ? (
                 <div className="text-center py-16 text-slate-400">
                   <Clock size={48} className="mx-auto mb-3 opacity-30" />
-                  <p className="font-bold">لا توجد فواتير معلقة</p>
+                  <p className="font-bold">{heldInvoices.length === 0 ? 'لا توجد فواتير معلقة' : 'لا توجد طلبات في هذا الفلتر'}</p>
                 </div>
               ) : (
-                heldInvoices.map((h) => {
+                visibleHeld.map((h) => {
                   const created = new Date(h.created_at);
                   // مفيش انتهاء صلاحية: الحجز بيفضل قائم لحد ما الموظف يأكّد البيع
                   // أو يرجّعه للمخزون. بنعرض عمر الحجز بدل «يتبقى كذا يوم».
@@ -3857,20 +3884,23 @@ export default function POS() {
                           بيحرّكوا فلوس ومخزون مش مجرد حالة. */}
                       {h.kind === 'online' && (
                         <div className="space-y-2 mb-2">
-                          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 rounded-xl p-1">
-                            <span className="text-[10px] font-black text-slate-400 px-1.5 shrink-0">الحالة</span>
+                          {/* دورة الحالة: تجهيز ← شحن ← الفلوس في الطريق.
+                              «تم التحصيل» مش هنا — ليه زرار «تسليم وتحصيل» تحت
+                              لأنه بيعمل فاتورة بيع فعلية ويدخّل فلوس الخزنة. */}
+                          <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 rounded-xl p-1">
                             {([
-                              { key: 'held', label: 'قيد التجهيز', icon: Clock },
+                              { key: 'held', label: 'تم التجهيز', icon: Clock },
                               { key: 'shipped', label: 'تم الشحن', icon: Truck },
+                              { key: 'money_pending', label: 'الفلوس في الطريق', icon: Wallet },
                             ] as const).map((s) => {
                               const active = (h.status || 'held') === s.key;
                               return (
                                 <button
                                   key={s.key}
                                   onClick={async () => { if (!active) await setHeldInvoiceStatus(h.id, s.key); }}
-                                  className={`flex-1 py-1.5 rounded-lg font-black text-[11px] flex items-center justify-center gap-1 transition active:scale-95 ${active ? 'bg-violet-600 text-white shadow' : 'text-slate-500 dark:text-slate-400'}`}
+                                  className={`flex-1 py-1.5 px-1 rounded-lg font-black text-[10px] flex items-center justify-center gap-1 transition active:scale-95 ${active ? 'bg-violet-600 text-white shadow' : 'text-slate-500 dark:text-slate-400'}`}
                                 >
-                                  <s.icon size={13} /> {s.label}
+                                  <s.icon size={12} className="shrink-0" /> {s.label}
                                 </button>
                               );
                             })}
@@ -3889,6 +3919,15 @@ export default function POS() {
                           >
                             <Printer size={14} /> {printingHeldId === h.id ? 'جارٍ الطباعة...' : 'طباعة إيصال الطلب'}
                           </button>
+                          {/* المرتجع بيظهر بعد الشحن بس — قبل كده «إرجاع للمخزون» هو التصرّف الصح */}
+                          {(h.status || 'held') !== 'held' && (
+                            <button
+                              onClick={() => setReturningHeld(h)}
+                              className="w-full bg-white dark:bg-slate-800 text-amber-600 border border-amber-200 dark:border-amber-900/40 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
+                            >
+                              <Undo2 size={14} /> مرتجع (العميل مستلمش كله أو جزء منه)
+                            </button>
+                          )}
                         </div>
                       )}
                       <div className="flex gap-2">
@@ -3896,7 +3935,7 @@ export default function POS() {
                           onClick={() => handleConfirmHeld(h.id)}
                           className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1.5 transition active:scale-95"
                         >
-                          <Check size={16} /> {h.kind === 'online' ? 'تسليم وتحصيل' : 'تأكيد البيع'}
+                          <Check size={16} /> {h.kind === 'online' ? 'تم التحصيل' : 'تأكيد البيع'}
                         </button>
                         <button
                           onClick={() => handleReturnHeld(h.id)}
@@ -3912,6 +3951,15 @@ export default function POS() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* مودال مرتجع الطلب الأونلاين — نفس مودال الموديول */}
+      {returningHeld && (
+        <HeldReturnModal
+          held={returningHeld}
+          onClose={() => setReturningHeld(null)}
+          onDone={() => setReturningHeld(null)}
+        />
       )}
 
       {/* Camera Scanner Modal */}
