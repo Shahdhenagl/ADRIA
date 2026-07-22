@@ -312,7 +312,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       updatedData = { total, paid_amount: paidAmount, paid_cash: pay.cash || 0, paid_visa: pay.visa || 0, paid_wallet: pay.wallet || 0, paid_instapay: pay.instapay || 0, paid_method5: pay.method5 || 0, paid_method6: pay.method6 || 0, payment_method: paymentMethod as any, date: newDateISO };
     }
 
-    const success = await editOrder(invoice.id, updatedData, exchangeMode ? finalExchangeItems : cart, reason);
+    const success = await editOrder(invoice.id, updatedData, exchangeMode ? finalExchangeItems : cart, reason, { exchange: !!exchangeMode });
 
     if (success) {
       if (exchangeMode) {

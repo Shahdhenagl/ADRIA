@@ -611,7 +611,7 @@ interface CashierStore {
     toMainTreasury?: boolean
   ) => Promise<boolean>;
   deleteOrder: (orderId: string, reason?: string) => Promise<boolean>;
-  editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string) => Promise<boolean>;
+  editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string, opts?: { exchange?: boolean }) => Promise<boolean>;
   markOrderExchanged: (orderId: string, exchangeData: any) => Promise<boolean>;
   updateOrderRefundedAt: (orderId: string, refundedAt: string) => Promise<boolean>;
   ensureDayOpen: (value?: string | Date | null) => Promise<boolean>;
@@ -2818,11 +2818,16 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
   },
 
-  editOrder: async (orderId, updatedData, updatedItems, reason) => {
+  editOrder: async (orderId, updatedData, updatedItems, reason, opts) => {
     const state = get();
     const order = state.orders.find((o) => o.id === orderId);
     if (!order || order.is_deleted || order.isOffline) return false;
-    if (!(await ensureAccountingDayOpen(state, order.date))) return false;
+    // الاستبدال مصمَّم إنه ميلمسش يوم البيع: تقسيمة الدفع الأصلية بتفضل زي ما هي،
+    // ومبيعات يوم البيع بتتقري من exchange_data.originalTotal، وفرق الاستبدال
+    // بيتسجّل كصف مالي مستقل بتاريخ الاستبدال (اللي بيتفحص لوحده في EditInvoiceModal
+    // + markOrderExchanged). فمنع استبدال فاتورة يوم مقفول كان بيقفل عملية شرعية
+    // من غير ما يحمي أي رقم. أما التعديل العادي فبيغيّر أرقام يوم البيع فعلاً → ممنوع.
+    if (!opts?.exchange && !(await ensureAccountingDayOpen(state, order.date))) return false;
     if (updatedData.date && !(await ensureAccountingDayOpen(state, updatedData.date))) return false;
 
     const oldTotal = order.total;
@@ -2977,11 +2982,15 @@ export const useStore = create<CashierStore>((set, get) => ({
   // يسجّل بيانات الاستبدال على الفاتورة (قبل/بعد) لمنع تكراره وعرضه لاحقاً.
   markOrderExchanged: async (orderId, exchangeData) => {
     const state = get();
-    const order = state.orders.find((o) => o.id === orderId);
-    if (order && !(await ensureAccountingDayOpen(state, order.date))) return false;
     // حركة الاستبدال بتتحسب على تاريخ الاستبدال المختار (شوف computeDayBudget)،
-    // فاليوم ده لازم يكون مفتوح كمان — مش يوم الفاتورة الأصلية بس.
+    // فاليوم ده بس هو اللي لازم يكون مفتوح — يوم الفاتورة الأصلية بيفضل بأرقامه
+    // زي ما هي (شوف التعليق في editOrder).
     if (exchangeData?.date && !(await ensureAccountingDayOpen(state, exchangeData.date))) return false;
+    // استبدال قديم من غير تاريخ (بيانات قبل ما exchange_data تحمل date): نرجع ليوم الفاتورة.
+    if (!exchangeData?.date) {
+      const order = state.orders.find((o) => o.id === orderId);
+      if (order && !(await ensureAccountingDayOpen(state, order.date))) return false;
+    }
     const { error } = await supabase.from('orders').update({ exchange_data: exchangeData }).eq('id', orderId);
     if (error) { console.error('markOrderExchanged:', error); return false; }
     set((state) => ({ orders: state.orders.map((o) => (o.id === orderId ? { ...o, exchange_data: exchangeData } : o)) }));
