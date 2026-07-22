@@ -966,6 +966,25 @@ function accountingTimestampForNow(settings: StoreSettings): string {
 }
 
 /**
+ * ترتيب الفواتير: الأحدث الأول، وعند تساوي الوقت بالرقم تنازلياً.
+ *
+ * ليه محتاجين ترتيب تاني؟ لأن الحركات المحاسبية بتتختم بمنتصف اليوم المحاسبي
+ * (٣ العصر) — يعني كل فواتير اليوم ليها **نفس** الـ created_at بالظبط،
+ * والترتيب بالوقت لوحده بيرجّعها مبعثرة (٢٢٤، ٢٢٣، ٢٣٤...). رقم الفاتورة نص
+ * في الداتابيز فالترتيب عليه في SQL بيبقى أبجدي (٩ قبل ١٠) — فبنرتّب هنا رقمياً.
+ */
+function orderNumOf(id: any): number {
+  const n = parseInt(String(id ?? '').replace(/\D/g, ''), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+export function sortOrdersNewestFirst<T extends { id: string; date?: string }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => {
+    const t = new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime();
+    return t !== 0 ? t : orderNumOf(b.id) - orderNumOf(a.id);
+  });
+}
+
+/**
  * أقرب يوم محاسبي **مفتوح** ابتداءً من النهاردة ورايح قدّام.
  *
  * بيتستخدم للحركات اللي **لازم** تتسجّل حتى لو اليوم اتقفل — زي رد عربون حجز
@@ -1450,7 +1469,9 @@ export const useStore = create<CashierStore>((set, get) => ({
           average_purchase_price: p.average_purchase_price ?? p.purchase_price ?? 0
         })) as Product[],
         customers,
-        orders,
+        // الفواتير القديمة كلها متختومة بنفس الوقت (منتصف اليوم المحاسبي)،
+        // فالترتيب بالوقت لوحده بيبعثرها — نكسر التعادل برقم الفاتورة.
+        orders: sortOrdersNewestFirst(orders),
         cashiers: (cashiersRes.data ?? []) as Cashier[],
         expenses: [], // Default to empty
         invoiceCounter: counter,
@@ -1801,7 +1822,11 @@ export const useStore = create<CashierStore>((set, get) => ({
     const sp = state.salesperson;
     if (state.cart.length === 0 && type !== 'payment' && type !== 'previous_debt') return state.activeInvoiceId;
     if (!(await ensureAccountingDayOpen(state, dateISO))) return state.activeInvoiceId;
-    const orderCreatedAt = dateISO || accountingTimestampForNow(state.storeSettings);
+    // وقت البيع الحقيقي — مش منتصف اليوم المحاسبي. الوقت الحقيقي بيقع أصلاً جوه
+    // نطاق اليوم المحاسبي الحالي (اليوم بيبدأ ٣ ص وبينتهي ٣ ص اللي بعده)، فالحسابات
+    // بتقع في نفس اليوم بالظبط — وكمان بنحافظ على ساعة البيع وترتيب الفواتير.
+    // (dateISO بيتبعت لما نسجّل بأثر رجعي على يوم محدد، وساعتها بيفضل زي ما هو.)
+    const orderCreatedAt = dateISO || new Date().toISOString();
 
     const savedPaidAmount = type === 'payment' ? paidAmount : Math.min(total, paidAmount);
 
@@ -3320,7 +3345,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       };
     });
 
-    return orders;
+    return sortOrdersNewestFirst(orders);
   },
 
   // ── Cashiers ──────────────────────────────────────────────

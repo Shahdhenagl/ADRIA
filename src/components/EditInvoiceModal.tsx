@@ -306,7 +306,13 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       const base: Record<string, number> = {};
       payKeys.forEach((k) => { base[k] = (invoice as any)['paid_' + k] || 0; });
       if (payKeys.reduce((s, k) => s + base[k], 0) === 0) base[invoice.payment_method || 'cash'] = oldPaid;
-      updatedData = { total: finalExchangeTotal, paid_amount: finalExchangeTotal, paid_cash: base.cash || 0, paid_visa: base.visa || 0, paid_wallet: base.wallet || 0, paid_instapay: base.instapay || 0, paid_method5: base.method5 || 0, paid_method6: base.method6 || 0, payment_method: invoice.payment_method as any };
+      // المدفوع بعد الاستبدال = المدفوع قبله + الفرق اللي اتحصّل (أو ناقص اللي اترد).
+      // كان بيتحط = الإجمالي الجديد على طول، وده كان **بيمسح مديونية العميل**:
+      // فاتورة آجل ١٠٠٠ مدفوع منها ٤٠٠، أول استبدال كانت بتبقى «مسدّدة بالكامل»
+      // والـ ٦٠٠ الباقية تختفي من حساب العميل. (لو كانت مدفوعة بالكامل أصلاً
+      // النتيجة هي هي = الإجمالي الجديد، فالسلوك مبيتغيّرش في الحالة الشائعة.)
+      const newPaidAfterExchange = Math.min(finalExchangeTotal, Math.max(0, oldPaid + settleAmount));
+      updatedData = { total: finalExchangeTotal, paid_amount: newPaidAfterExchange, paid_cash: base.cash || 0, paid_visa: base.visa || 0, paid_wallet: base.wallet || 0, paid_instapay: base.instapay || 0, paid_method5: base.method5 || 0, paid_method6: base.method6 || 0, payment_method: invoice.payment_method as any };
     } else {
       const newDateISO = (() => { const d = new Date(orderDate); return isNaN(d.getTime()) ? invoice.date : d.toISOString(); })();
       updatedData = { total, paid_amount: paidAmount, paid_cash: pay.cash || 0, paid_visa: pay.visa || 0, paid_wallet: pay.wallet || 0, paid_instapay: pay.instapay || 0, paid_method5: pay.method5 || 0, paid_method6: pay.method6 || 0, payment_method: paymentMethod as any, date: newDateISO };

@@ -7,7 +7,8 @@ import { calculateOrderReturnValue } from '../../utils/returns';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { printDocument } from '../../utils/printWindow';
 import { buildPagesQrBlock } from '../../utils/pagesQr';
-import { EXTRA_PAYMENT_KEYS, isPaymentKeyEnabled, payLabelOf } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, EXTRA_PAYMENT_KEYS, isPaymentKeyEnabled, payLabelOf } from '../../utils/paymentMethods';
+import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal } from '../../utils/invoicePayments';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
@@ -87,6 +88,11 @@ export default function Invoices() {
     const invoiceUrl = `${window.location.origin}/view-invoice/${order.id}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(invoiceUrl)}`;
     const pagesQrBlock = buildPagesQrBlock(storeSettings);
+    // فرق الاستبدال متسجّل بره الفاتورة (بتاريخه) — نضمّه في تفاصيل الدفع
+    // عشان الأرقام المطبوعة تتوافق مع الإجمالي.
+    const paidSplit = paidSplitForDisplay(order, ALL_PAYMENT_KEYS as any);
+    const paidShown = paidForDisplay(order, ALL_PAYMENT_KEYS as any);
+    const exchangeSettled = exchangeSettledTotal(order);
 
     const customerBlock = order.customer
       ? `<div class="customer-info-grid">
@@ -191,23 +197,23 @@ export default function Invoices() {
     <div class="summary-row total"><span>الإجمالي النهائي:</span><span>${order.total.toFixed(2)} ${storeSettings.currency}</span></div>
     ` : ''}
   
-    ${(order.paid_amount !== undefined && order.paid_amount < order.total) ? `
+    ${(paidShown < order.total - 0.009) ? `
       <div class="payment-status status-debt">
-        <div>متبقي للتحصيل (آجل): ${(order.total - (order.paid_amount || 0)).toFixed(2)} ${storeSettings.currency}</div>
-        <div style="font-size:11px;opacity:0.8;margin-top:2px;">تم سداد: ${(order.paid_amount || 0).toFixed(2)} ${storeSettings.currency}</div>
+        <div>متبقي للتحصيل (آجل): ${(order.total - paidShown).toFixed(2)} ${storeSettings.currency}</div>
+        <div style="font-size:11px;opacity:0.8;margin-top:2px;">تم سداد: ${paidShown.toFixed(2)} ${storeSettings.currency}</div>
       </div>
     ` : `
       <div class="payment-status status-paid">✓ تم سداد الفاتورة بالكامل</div>
     `}
-    
+
     <div style="margin-top:10px; padding:8px; background:#f9fafb; border-radius:8px; border:1px solid #eee;">
       <div style="font-size:11px; color:#64748b; margin-bottom:4px; border-bottom:1px solid #eee; padding-bottom:2px; text-align:right;">تفاصيل الدفع:</div>
-      ${order.paid_cash > 0 ? `<div class="summary-row" style="font-size:12px;"><span>💵 كاش:</span><span>${order.paid_cash.toFixed(2)}</span></div>` : ''}
-      ${order.paid_visa > 0 ? `<div class="summary-row" style="font-size:12px;"><span>💳 فيزا:</span><span>${order.paid_visa.toFixed(2)}</span></div>` : ''}
-      ${order.paid_wallet > 0 ? `<div class="summary-row" style="font-size:12px;"><span>📱 محفظة:</span><span>${order.paid_wallet.toFixed(2)}</span></div>` : ''}
-      ${order.paid_instapay > 0 ? `<div class="summary-row" style="font-size:12px;"><span>⚡ انستا باي:</span><span>${order.paid_instapay.toFixed(2)}</span></div>` : ''}
-      ${order.paid_method5 > 0 ? `<div class="summary-row" style="font-size:12px;"><span>${escapeHtml(storeSettings.paymentLabels?.method5 || 'طريقة دفع 5')}:</span><span>${order.paid_method5.toFixed(2)}</span></div>` : ''}
-      ${order.paid_method6 > 0 ? `<div class="summary-row" style="font-size:12px;"><span>${escapeHtml(storeSettings.paymentLabels?.method6 || 'طريقة دفع 6')}:</span><span>${order.paid_method6.toFixed(2)}</span></div>` : ''}
+      ${ALL_PAYMENT_KEYS.filter((k) => Math.abs(paidSplit[k] || 0) > 0.009).map((k) =>
+        `<div class="summary-row" style="font-size:12px;"><span>${escapeHtml(payLabelOf(storeSettings as any, k))}:</span><span>${(paidSplit[k] || 0).toFixed(2)}</span></div>`
+      ).join('')}
+      ${Math.abs(exchangeSettled) > 0.009
+        ? `<div style="font-size:11px;color:#64748b;margin-top:4px;border-top:1px dashed #e2e8f0;padding-top:3px;">منها ${exchangeSettled > 0 ? 'محصّل' : 'مردود'} وقت الاستبدال: ${Math.abs(exchangeSettled).toFixed(2)} ${storeSettings.currency}</div>`
+        : ''}
     </div>
   </div>
 

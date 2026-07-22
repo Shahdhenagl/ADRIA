@@ -16,6 +16,7 @@ import { categoriesFor, withAddedCategory } from '../utils/financeCategories';
 import { buildPagesQrBlock } from '../utils/pagesQr';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../utils/treasury';
 import { calculateOrderReturnValue } from '../utils/returns';
+import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal } from '../utils/invoicePayments';
 import { printShippingLabel } from '../utils/printShippingLabel';
 
 // فئة قيد تسوية الجرد: يضبط رصيد خزنة المحل ليطابق الكاش الفعلي المعدود.
@@ -462,23 +463,27 @@ export default function POS() {
   // Reprint a past order on the thermal receipt by reconstructing its details.
   const reprintOrder = (order: any) => {
     const items = order.items || [];
+    // الفاتورة المستبدلة: فرق الاستبدال متسجّل بره الفاتورة (بتاريخه)، فلازم
+    // نضمّه هنا وإلا «طرق الدفع» متطلعش الإجمالي وتبان الفاتورة متناقضة.
+    const paidSplit = paidSplitForDisplay(order, ALL_PAYMENT_KEYS as any);
     const details = {
       cart: items,
       subtotal: items.reduce((s: number, i: any) => s + (i.sale_price * i.quantity), 0),
       discount: order.discount_amount || 0,
       tax: 0,
       total: order.total,
-      paidAmount: order.paid_amount,
-      splitPayments: { cash: order.paid_cash || 0, visa: order.paid_visa || 0, wallet: order.paid_wallet || 0, instapay: order.paid_instapay || 0, method5: (order as any).paid_method5 || 0, method6: (order as any).paid_method6 || 0 },
+      paidAmount: paidForDisplay(order, ALL_PAYMENT_KEYS as any),
+      splitPayments: paidSplit,
       customerName: order.customer?.name || '',
       customerPhone: order.customer?.phone || '',
       customId: order.customer?.custom_id || order.customer?.card_number || '',
       customerId: order.customer?.id || '',
       paymentMethod: order.payment_method,
-      totalDebt: Math.max(0, (order.total || 0) - calculateOrderReturnValue(order) - (order.paid_amount || 0)),
+      totalDebt: Math.max(0, (order.total || 0) - calculateOrderReturnValue(order) - paidForDisplay(order, ALL_PAYMENT_KEYS as any)),
       couponCode: order.coupon_code,
       couponDiscountAmount: order.discount_amount || 0,
       salesperson: order.salesperson_name || '',
+      exchangeSettled: exchangeSettledTotal(order),
     };
     printInvoice(order.id, details);
   };
@@ -1425,7 +1430,13 @@ export default function POS() {
         .map((k) => `${payLabel(k)}: ${(Number(sp[k]) || 0).toFixed(2)}`);
       if (parts.length === 0) return '';
       const cells = parts.map(p => `<div style="width:50%;font-size:11px;font-weight:700;padding:1px 0;">${p}</div>`).join('');
-      return `<div style="margin-top:4px;padding:4px 5px;border:1px solid #000;border-radius:4px;"><div style="font-size:10px;font-weight:900;margin-bottom:2px;">طرق الدفع:</div><div style="display:flex;flex-wrap:wrap;">${cells}</div></div>`;
+      // فاتورة اتعملها استبدال: نوضّح إن جزء من المبلغ اتحصّل/اترد وقت الاستبدال،
+      // عشان أرقام «طرق الدفع» تبقى مفهومة مش مجرد مجموع.
+      const xd = Number(orderDetails.exchangeSettled) || 0;
+      const xLine = Math.abs(xd) > 0.009
+        ? `<div style="font-size:10px;font-weight:700;margin-top:2px;border-top:1px dotted #999;padding-top:2px;">منها ${xd > 0 ? 'محصّل' : 'مردود'} وقت الاستبدال: ${Math.abs(xd).toFixed(2)} ${currentSettings.currency}</div>`
+        : '';
+      return `<div style="margin-top:4px;padding:4px 5px;border:1px solid #000;border-radius:4px;"><div style="font-size:10px;font-weight:900;margin-bottom:2px;">طرق الدفع:</div><div style="display:flex;flex-wrap:wrap;">${cells}</div>${xLine}</div>`;
     })()}
   </div>
 
