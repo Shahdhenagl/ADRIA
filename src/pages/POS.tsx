@@ -3783,7 +3783,7 @@ export default function POS() {
                 </div>
                 <div>
                   <h3 className="text-xl font-black text-slate-800 dark:text-white">الفواتير المعلقة</h3>
-                  <p className="text-xs text-slate-400 font-bold">الكمية محجوزة من المخزون · تُرجَّع تلقائياً بعد أسبوع</p>
+                  <p className="text-xs text-slate-400 font-bold">الكمية محجوزة من المخزون لحد تأكيد البيع أو الإرجاع</p>
                 </div>
               </div>
               <button onClick={() => setShowHeldModal(false)} className="p-2 hover:bg-red-50 hover:text-red-500 rounded-xl transition-colors">
