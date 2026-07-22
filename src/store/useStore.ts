@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf } from '../utils/paymentMethods';
-import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, newSavingsGroupId } from '../utils/treasury';
+import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
@@ -4296,7 +4296,10 @@ setupRealtime: () => {
     const createdAt = (expense as any).created_at || accountingTimestampForNow(state.storeSettings);
     const expenseDate = createdAt;
     const isClosingEntry = expense.category === DAY_CLOSING_CATEGORY;
-    if (await isAccountingDayClosed(state.storeSettings, expenseDate)) {
+    // نفس منطق الحذف: صف الخزنة الرئيسية مستبعَد من درج الكاشير، فينفع يتسجّل على
+    // يوم مقفول. (من غير كده كان صف الدفتر بيتسجّل والمصروف المقابل لأ = خلل.)
+    const skipDayCheck = !isClosingEntry && isMainTreasuryExpense(expense as any);
+    if (!skipDayCheck && await isAccountingDayClosed(state.storeSettings, expenseDate)) {
       alert(isClosingEntry
         ? 'هذا اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى.'
         : `اليوم ${businessDateStr(state.storeSettings, dateValueForAccounting(expenseDate))} تم تقفيله بالفعل. لا يمكن إضافة أو تعديل أو حذف أي حركة مالية في يوم مقفول.`);
@@ -4615,8 +4618,15 @@ setupRealtime: () => {
       alert('دي معاملة «تقفيل يوم» — لا يمكن حذفها من هنا. لازم تعيدي فتح اليوم من شاشة تقفيل اليوم.');
       return false;
     }
-    // يوم مقفول؟ لا تعديل ولا حذف.
-    if (!(await ensureAccountingDayOpen(state, tx.created_at))) return false;
+    // تقفيل اليوم بيخصّ درج الكاشير. الحركة اللي بتلمس الدرج (تحويل محل ↔ رئيسية)
+    // مينفعش تتحذف من يوم مقفول لأنها هتغيّر جرد اليوم ده. أما الحركات اللي جوه
+    // الخزنة الرئيسية بس (تحويل بين وسائلها، إيراد/مصروف رئيسية...) فمالهاش علاقة
+    // بالتقفيل — تتحذف عادي حتى لو اليوم مقفول.
+    if (savingsSourceTouchesShop(tx.source) && await isAccountingDayClosed(state.storeSettings, tx.created_at)) {
+      const day = businessDateStr(state.storeSettings, dateValueForAccounting(tx.created_at));
+      alert(`الحركة دي تحويل بين المحل والخزنة الرئيسية، ويوم ${day} مقفول.\nحذفها هيغيّر جرد اليوم ده — لازم تعيدي فتح اليوم الأول من شاشة تقفيل اليوم.`);
+      return false;
+    }
 
     // 1) صفوف العملية: بالـ group_id لو موجود، وإلا (معاملات قديمة) بالتاريخ + المصدر + الملاحظة.
     let groupRows: any[] = [];
@@ -4744,7 +4754,10 @@ setupRealtime: () => {
   deleteExpense: async (id: string) => {
     const state = get();
     const current = state.expenses.find((e) => e.id === id);
-    if (current && !(await ensureAccountingDayOpen(state, current.date))) return;
+    // صفوف الخزنة الرئيسية ([MAIN_TREASURY]) مستبعَدة أصلاً من درج الكاشير، فتقفيل
+    // اليوم مبيتأثرش بحذفها — وإلا حذف حركة رئيسية كان بيمسح صف الدفتر ويسيب
+    // المصروف معلّق لما اليوم يكون مقفول.
+    if (current && !isMainTreasuryExpense(current) && !(await ensureAccountingDayOpen(state, current.date))) return;
     await supabase.from('expenses').delete().eq('id', id);
     set((state) => ({ expenses: state.expenses.filter((e) => e.id !== id) }));
   },

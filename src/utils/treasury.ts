@@ -65,6 +65,18 @@ export function isMainTreasuryExpense(row: any): boolean {
   return String(row?.note || '').includes(MAIN_TREASURY_MARKER);
 }
 
+/**
+ * هل حركة الخزنة الرئيسية بتلمس درج الكاشير؟
+ * التحويل بين المحل والرئيسية (shop_transfer / to_shop) بيدخل/يخرج فلوس من درج
+ * المحل، فبيتأثر بتقفيل اليوم. أي حاجة تانية (تحويل بين وسائل الرئيسية، إيراد/
+ * مصروف رئيسية، مشتريات من الرئيسية...) بتتحرّك جوه الخزنة الرئيسية بس وصف
+ * المصروف بتاعها موسوم [MAIN_TREASURY] ومستبعَد من حسابات الكاشير — يعني تقفيل
+ * اليوم مالوش دعوة بيها ولا المفروض يمنع إضافتها أو حذفها.
+ */
+export function savingsSourceTouchesShop(source?: string | null): boolean {
+  return source === 'shop_transfer' || source === 'to_shop' || source === 'day_closing';
+}
+
 // ── ربط صف المصروف بمعاملة الخزنة الرئيسية (لعكس الأثر عند الحذف) ──────────
 // نخزّن معرّف المجموعة داخل نص الملاحظة كوسم مخفي: [SVG:<uuid>]
 // (نفس أسلوب MAIN_TREASURY_MARKER — بدون تعديل سكيمة جدول expenses).
