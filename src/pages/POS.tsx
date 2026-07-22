@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useStore, type Product } from '../store/useStore';
+import { useStore, HELD_STATUS_LABEL, type HeldStatus, type Product } from '../store/useStore';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
 import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, Clock, PauseCircle, Undo2, Truck } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
@@ -3812,9 +3812,9 @@ export default function POS() {
                             <span className={`text-[10px] px-1.5 py-0.5 rounded-md border shrink-0 ${h.kind === 'online' ? 'bg-sky-50 text-sky-700 border-sky-200' : 'bg-orange-50 text-orange-700 border-orange-200'}`}>
                               {h.kind === 'online' ? '🚚 أونلاين' : '🏬 حجز'}
                             </span>
-                            {h.status === 'shipped' && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded-md border bg-violet-50 text-violet-700 border-violet-200 shrink-0">تم الشحن</span>
-                            )}
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded-md border shrink-0 ${h.status === 'shipped' ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-amber-50 text-amber-700 border-amber-200'}`}>
+                              {HELD_STATUS_LABEL[(h.status || 'held') as HeldStatus]}
+                            </span>
                             <span className="truncate">{h.customer_name?.trim() || 'عميل نقدي'}</span>
                             {h.customer_phone ? <span className="text-xs font-bold text-slate-400 shrink-0">{h.customer_phone}</span> : null}
                           </div>
@@ -3831,6 +3831,14 @@ export default function POS() {
                         </div>
                       </div>
 
+                      {/* العنوان بيظهر للكاشير زي الموديول — هو أهم بيانات الطلب الأونلاين */}
+                      {h.kind === 'online' && (
+                        <div className={`text-xs font-bold mb-2 ${h.customer_address ? 'text-sky-700 dark:text-sky-400' : 'text-amber-600'}`}>
+                          📍 {h.customer_address?.trim() || 'لا يوجد عنوان مسجّل'}
+                          {h.shipping_note && <span className="block text-[11px] text-slate-400 mt-0.5">🚚 {h.shipping_note}</span>}
+                        </div>
+                      )}
+
                       <div className="text-xs text-slate-500 dark:text-slate-400 font-medium mb-2 line-clamp-2">
                         {itemsCount} قطعة · {h.items.map((i) => `${i.name}×${formatQty(i.quantity, i.unit || 'قطعة')}`).join(' ، ')}
                       </div>
@@ -3841,36 +3849,36 @@ export default function POS() {
                         </div>
                       )}
 
-                      {/* الأونلاين: طباعة بوليصة الشحن + تغيير الحالة من الكاشير */}
+                      {/* الأونلاين: طباعة الإيصال + التحكّم الكامل في حالة الطلب من الكاشير.
+                          الحالات النشطة (معلق/تم الشحن) بتتغيّر من هنا مباشرةً؛ «تم التسليم»
+                          و«ملغي» ليهم أزرارهم تحت (تسليم وتحصيل / إرجاع للمخزون) لأنهم
+                          بيحرّكوا فلوس ومخزون مش مجرد حالة. */}
                       {h.kind === 'online' && (
-                        <div className="flex gap-2 mb-2">
+                        <div className="space-y-2 mb-2">
+                          <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-900 rounded-xl p-1">
+                            <span className="text-[10px] font-black text-slate-400 px-1.5 shrink-0">الحالة</span>
+                            {([
+                              { key: 'held', label: 'قيد التجهيز', icon: Clock },
+                              { key: 'shipped', label: 'تم الشحن', icon: Truck },
+                            ] as const).map((s) => {
+                              const active = (h.status || 'held') === s.key;
+                              return (
+                                <button
+                                  key={s.key}
+                                  onClick={async () => { if (!active) await setHeldInvoiceStatus(h.id, s.key); }}
+                                  className={`flex-1 py-1.5 rounded-lg font-black text-[11px] flex items-center justify-center gap-1 transition active:scale-95 ${active ? 'bg-violet-600 text-white shadow' : 'text-slate-500 dark:text-slate-400'}`}
+                                >
+                                  <s.icon size={13} /> {s.label}
+                                </button>
+                              );
+                            })}
+                          </div>
                           <button
                             onClick={() => printShippingLabel(h as any, storeSettings)}
-                            className="flex-1 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
+                            className="w-full bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
                           >
-                            <Printer size={14} /> طباعة بوليصة الشحن
+                            <Printer size={14} /> طباعة إيصال الطلب
                           </button>
-                          {h.status !== 'shipped' ? (
-                            <button
-                              onClick={async () => {
-                                if (!confirm(`تغيير حالة الطلب إلى «تم الشحن»؟`)) return;
-                                await setHeldInvoiceStatus(h.id, 'shipped');
-                              }}
-                              className="flex-1 bg-violet-600 text-white py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
-                            >
-                              <Truck size={14} /> تم الشحن
-                            </button>
-                          ) : (
-                            <button
-                              onClick={async () => {
-                                if (!confirm('رجوع الطلب لحالة «معلق»؟')) return;
-                                await setHeldInvoiceStatus(h.id, 'held');
-                              }}
-                              className="flex-1 bg-white dark:bg-slate-800 text-violet-600 border border-violet-200 py-2 rounded-xl font-black text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
-                            >
-                              <Undo2 size={14} /> رجوع لمعلق
-                            </button>
-                          )}
                         </div>
                       )}
                       <div className="flex gap-2">
