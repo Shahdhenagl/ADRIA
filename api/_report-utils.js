@@ -77,10 +77,12 @@ export function isLastCairoDayOfMonth(date = new Date()) {
 
 export async function sendTelegramText(text) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  // جروب واحد للـ OTP والتقارير (الـ OTP بيستخدم نفس الدالة دي). لو مش متظبط
+  // بيرجع للجروب الافتراضي — فالسلوك القديم يفضل شغّال لحد ما يتحدد.
+  const chatId = process.env.TELEGRAM_CHAT_REPORTS || process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) throw new Error('Missing Telegram environment variables');
 
-  // TELEGRAM_CHAT_ID may be a comma-separated list to notify several people.
+  // قد يكون أكتر من chat id مفصولين بفاصلة لإشعار أكتر من شخص.
   const chatIds = String(chatId).split(',').map((s) => s.trim()).filter(Boolean);
   let lastResult = null;
   for (const cid of chatIds) {
