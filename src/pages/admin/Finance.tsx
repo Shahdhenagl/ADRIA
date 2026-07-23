@@ -1091,9 +1091,11 @@ export default function Finance() {
             <span className="flex-1 text-center font-black text-slate-700 tabular-nums" dir="ltr">
               {selectedDateDisplay}
             </span>
-            <input 
-              type={filterType === 'monthly' ? 'month' : (filterType === 'yearly' ? 'number' : 'date')} 
+            <input
+              type={filterType === 'monthly' ? 'month' : (filterType === 'yearly' ? 'number' : 'date')}
               value={filterType === 'yearly' ? selectedDate.split('-')[0] : (filterType === 'monthly' ? selectedDate.slice(0,7) : selectedDate)}
+              // الضغط على أي مكان في الخانة يفتح التقويم — من غير ما تصيب الأيقونة المخفية بالظبط.
+              onClick={(e) => { try { (e.currentTarget as any).showPicker?.(); } catch {} }}
               onChange={(e) => {
                 const val = e.target.value;
                 if (filterType === 'yearly') {
