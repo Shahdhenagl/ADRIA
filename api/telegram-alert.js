@@ -48,6 +48,42 @@ const TYPE_LABELS = {
   savings_convert: 'تحويل بين طرق الخزنة الرئيسية',
 };
 
+// ── توجيه الرسايل على جروبات مختلفة (نفس البوت، chat مختلف حسب نوع الحركة) ──────
+// كل نوع رسالة بينتمي لمجموعة (قناة). أي نوع مش مذكور هنا بيروح للجروب الافتراضي.
+const TYPE_CATEGORY = {
+  // مبيعات وكاشير
+  sale: 'sales', payment: 'sales', return: 'sales', transfer: 'sales',
+  cashier_expense: 'sales', cashier_income: 'sales', custom_note: 'sales',
+  // مالية حساسة (للمدير): حذف/تعديل، سحوبات، شركاء، حركات الخزنة الرئيسية والادخار
+  delete_invoice: 'finance', delete_purchase_invoice: 'finance', edit_invoice: 'finance',
+  manager_withdrawal: 'finance', partner_withdraw: 'finance', partner_deposit: 'finance',
+  savings_in: 'finance', savings_out: 'finance', savings_convert: 'finance',
+  // موردين ومشتريات
+  purchase: 'suppliers', supplier_payment: 'suppliers', supplier_collection: 'suppliers', supplier_return: 'suppliers',
+  // مخزون
+  stock_low: 'stock',
+  // تمويل وسلف
+  financing_collection: 'financing', financing_repayment: 'financing',
+};
+
+// كل مجموعة ليها متغيّر بيئة بالـ chat id بتاعها (ممكن يكون أكتر من id مفصولين بفاصلة).
+const CATEGORY_ENV = {
+  sales: 'TELEGRAM_CHAT_SALES',
+  finance: 'TELEGRAM_CHAT_FINANCE',
+  suppliers: 'TELEGRAM_CHAT_SUPPLIERS',
+  stock: 'TELEGRAM_CHAT_STOCK',
+  financing: 'TELEGRAM_CHAT_FINANCING',
+};
+
+// يحدّد الـ chat id(s) المناسبة لنوع الرسالة. لو مجموعتها مش متظبطة يرجع للافتراضي
+// (TELEGRAM_CHAT_ID) — فالسلوك القديم يفضل شغّال لو مفيش أي إعداد جديد.
+function resolveChatIds(type) {
+  const category = TYPE_CATEGORY[type];
+  const envName = category && CATEGORY_ENV[category];
+  const raw = (envName && process.env[envName]) || process.env.TELEGRAM_CHAT_ID || '';
+  return String(raw).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
 function line(label, value) {
   if (value === undefined || value === null || value === '') return null;
   return `${label}: ${value}`;
@@ -194,19 +230,24 @@ export default async function handler(req, res) {
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if (!token || !chatId) {
+  // نفس البوت بيبعت لكل الجروبات؛ الوجهة بتتحدد حسب نوع الرسالة (resolveChatIds).
+  if (!token) {
     return res.status(200).json({ ok: false, skipped: true, error: 'Telegram env vars are missing' });
   }
 
   try {
-    const text = formatMessage(req.body || {});
+    const payload = req.body || {};
+    const text = formatMessage(payload);
     if (!text) {
       return res.status(200).json({ ok: true, skipped: true, reason: 'No alertable data' });
     }
 
-    // TELEGRAM_CHAT_ID may be a comma-separated list to notify several people.
-    const chatIds = String(chatId).split(',').map((s) => s.trim()).filter(Boolean);
+    // الوجهة حسب نوع الحركة: جروب المجموعة المخصّص، وإلا الجروب الافتراضي.
+    // كل قيمة ممكن تكون أكتر من chat id مفصولين بفاصلة.
+    const chatIds = resolveChatIds(payload.type);
+    if (chatIds.length === 0) {
+      return res.status(200).json({ ok: false, skipped: true, error: 'No chat id configured' });
+    }
     let ok = true;
     const results = [];
     for (const cid of chatIds) {
