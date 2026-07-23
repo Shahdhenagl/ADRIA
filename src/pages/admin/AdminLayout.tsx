@@ -78,6 +78,7 @@ export default function AdminLayout() {
       { name: 'خزينة الكاشير', path: '/admin/finance', icon: Wallet },
       { name: 'كشوف حسابات الوسائل', path: '/admin/payment-accounts', icon: Landmark },
       { name: 'الخزنة الرئيسية', path: '/admin/savings', icon: PiggyBank },
+      { name: 'الادخار الشخصي', path: '/admin/personal-savings', icon: Wallet },
       { name: 'الميزانية العامة', path: '/admin/budget', icon: PieChart },
       { name: 'سلف وتمويل', path: '/admin/financing', icon: Building2 },
       { name: 'المدراء والسحوبات', path: '/admin/managers', icon: Briefcase },
