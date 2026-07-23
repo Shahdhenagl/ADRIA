@@ -71,7 +71,9 @@ export default async function handler(req, res) {
   }
 
   const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
+  // جروب الحضور والانصراف المخصّص، وإلا الجروب الافتراضي (TELEGRAM_CHAT_ID).
+  // ممكن يكون أكتر من chat id مفصولين بفاصلة.
+  const chatId = process.env.TELEGRAM_CHAT_ATTENDANCE || process.env.TELEGRAM_CHAT_ID;
   if (!token || !chatId) {
     return res.status(200).json({ ok: false, skipped: true, error: 'Telegram env vars are missing' });
   }
