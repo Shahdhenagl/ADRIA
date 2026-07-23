@@ -5578,7 +5578,10 @@ setupRealtime: () => {
 
   paySupplierDebt: async (supplierId, amount, splitPayments, dateISO, fromMainTreasury) => {
     const state = get();
-    if (!(await ensureAccountingDayOpen(state, dateISO || new Date()))) return;
+    // السداد من الخزنة الرئيسية ملوش علاقة بدرج المحل ولا بتقفيله: بيتخصم من دفتر
+    // الرئيسية وفاتورته معلّمة [MAIN_TREASURY] مستبعَدة من التقفيل — فينفع يتسجّل
+    // على يوم مقفول. (نفس استثناء addExpense للحركات الرئيسية.)
+    if (!fromMainTreasury && !(await ensureAccountingDayOpen(state, dateISO || new Date()))) return;
     const invoiceNumber = `PAY-${Date.now()}`;
 
     // Paying beyond the current debt is allowed: the excess is an advance, and
@@ -5858,7 +5861,8 @@ setupRealtime: () => {
 
   collectSupplierCredit: async (supplierId, amount, splitPayments, dateISO, toMainTreasury) => {
     const state = get();
-    if (!(await ensureAccountingDayOpen(state, dateISO || new Date()))) return;
+    // التحصيل للخزنة الرئيسية ملوش علاقة بدرج المحل ولا بتقفيله (نفس منطق السداد فوق).
+    if (!toMainTreasury && !(await ensureAccountingDayOpen(state, dateISO || new Date()))) return;
     const invoiceNumber = `SUP-COL-${Date.now()}`;
 
     const supplierInvoices = state.purchaseInvoices.filter(inv => inv.supplier_id === supplierId);
