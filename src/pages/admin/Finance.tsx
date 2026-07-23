@@ -53,6 +53,8 @@ export default function Finance() {
   
   const [selectedDate, setSelectedDate] = useState(businessDateStr(storeSettings as any));
   const [filterType, setFilterType] = useState<'daily' | 'monthly' | 'yearly'>('daily');
+  // فلتر وسيلة الدفع: null = كل المعاملات، أو مفتاح وسيلة (cash/visa/...) لعرض معاملاتها فقط.
+  const [methodFilter, setMethodFilter] = useState<string | null>(null);
   const selectedDateDisplay = useMemo(() => {
     const [year, month, day] = selectedDate.split('-');
     if (filterType === 'yearly') return year;
@@ -434,6 +436,20 @@ export default function Finance() {
 
     return list.sort((a, b) => new Date(b.rawDate).getTime() - new Date(a.rawDate).getTime());
   }, [periodTransactions]);
+
+  // المعاملة تخصّ وسيلة معينة لو تقسيمتها فيها قيمة على الوسيلة دي؛ ولو مفيش
+  // تقسيمة (method5/6 أو صف قديم) نرجع لوسيلة الدفع الأساسية.
+  const txMatchesMethod = (t: any, mk: string) => {
+    const s = t.split || {};
+    const hasSplit = ['cash', 'visa', 'wallet', 'instapay'].some((k) => (s[k] || 0) !== 0);
+    if (hasSplit) return (s[mk] || 0) !== 0;
+    return t.method === mk;
+  };
+
+  const visibleTransactions = useMemo(
+    () => (methodFilter ? allDailyTransactions.filter((t) => txMatchesMethod(t, methodFilter)) : allDailyTransactions),
+    [allDailyTransactions, methodFilter]
+  );
 
   // --- Handlers ---
 
@@ -1233,21 +1249,32 @@ export default function Finance() {
         {activePaymentKeys(storeSettings as any).map((mk) => {
           const iconMap: Record<string, any> = { cash: <Landmark size={18} />, visa: <CreditCard size={18} />, wallet: <Smartphone size={18} />, instapay: <Zap size={18} /> };
           const m = { id: mk, label: payLabelOf(storeSettings as any, mk), icon: iconMap[mk] || <Wallet size={18} />, color: 'slate', value: methodsBreakdown[mk] || 0 };
+          const isActive = methodFilter === m.id;
           return (
-          <div key={m.id} className="bg-white p-4 rounded-2xl border border-slate-100 flex items-center gap-4">
-            <div className={`w-10 h-10 rounded-xl bg-${m.color}-50 text-${m.color}-600 flex items-center justify-center`}>
+          <button
+            key={m.id}
+            type="button"
+            onClick={() => setMethodFilter((prev) => (prev === m.id ? null : m.id))}
+            title={isActive ? 'إلغاء الفلتر' : `عرض معاملات ${m.label} فقط`}
+            className={`bg-white p-4 rounded-2xl border flex items-center gap-4 text-right transition-all ${
+              isActive
+                ? 'border-indigo-500 ring-2 ring-indigo-200 shadow-md'
+                : 'border-slate-100 hover:border-indigo-200 hover:shadow-sm'
+            }`}
+          >
+            <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isActive ? 'bg-indigo-600 text-white' : `bg-${m.color}-50 text-${m.color}-600`}`}>
               {m.icon}
             </div>
             <div>
-              <p className="text-[10px] font-bold text-slate-400">{m.label}</p>
-              <p 
+              <p className={`text-[10px] font-bold ${isActive ? 'text-indigo-500' : 'text-slate-400'}`}>{m.label}</p>
+              <p
                 className={`text-sm font-black ${m.value < 0 ? 'text-red-600 font-bold' : 'text-slate-700'}`}
                 dir={m.value < 0 ? 'ltr' : undefined}
               >
                 {m.value < 0 ? `-${Math.abs(m.value).toLocaleString()}` : m.value.toLocaleString()}
               </p>
             </div>
-          </div>
+          </button>
           );
         })}
       </div>
@@ -1259,9 +1286,22 @@ export default function Finance() {
             <ArrowRightLeft size={20} className="text-indigo-600" />
             سجل معاملات {filterType === 'daily' ? 'اليوم' : (filterType === 'monthly' ? 'الشهر' : 'السنة')}
           </h3>
-          <span className="text-xs font-bold bg-slate-100 text-slate-500 px-3 py-1 rounded-full">
-            {allDailyTransactions.length} عملية
-          </span>
+          <div className="flex items-center gap-2">
+            {methodFilter && (
+              <button
+                type="button"
+                onClick={() => setMethodFilter(null)}
+                className="text-xs font-bold bg-indigo-50 text-indigo-600 border border-indigo-100 px-3 py-1 rounded-full flex items-center gap-1 hover:bg-indigo-100 transition"
+                title="عرض كل المعاملات"
+              >
+                {payLabelOf(storeSettings as any, methodFilter)}
+                <X size={12} />
+              </button>
+            )}
+            <span className="text-xs font-bold bg-slate-100 text-slate-500 px-3 py-1 rounded-full">
+              {visibleTransactions.length} عملية
+            </span>
+          </div>
         </div>
 
         <div className="overflow-x-auto">
@@ -1277,17 +1317,19 @@ export default function Finance() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-50">
-              {allDailyTransactions.length === 0 ? (
+              {visibleTransactions.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-20 text-center">
                     <div className="flex flex-col items-center opacity-20">
                       <Search size={64} />
-                      <p className="text-xl font-bold mt-4">لا توجد معاملات في هذا اليوم</p>
+                      <p className="text-xl font-bold mt-4">
+                        {methodFilter ? `لا توجد معاملات على ${payLabelOf(storeSettings as any, methodFilter)}` : 'لا توجد معاملات في هذا اليوم'}
+                      </p>
                     </div>
                   </td>
                 </tr>
               ) : (
-                allDailyTransactions.map((t) => (
+                visibleTransactions.map((t) => (
                   <tr key={t.id} className="hover:bg-slate-50/50 transition-colors group">
                     <td className="p-6 text-slate-400 text-xs font-bold">{t.time}</td>
                     <td className="p-6">
