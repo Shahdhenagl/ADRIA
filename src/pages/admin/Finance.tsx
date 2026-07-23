@@ -12,7 +12,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
-import { isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers } from '../../utils/treasury';
+import { isMainTreasuryExpense, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers } from '../../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
@@ -389,13 +389,23 @@ export default function Finance() {
           originType: 'expense'
         });
       } else {
+        // حركة تحويل الخزنة (تقفيل اليوم / رجوع من الرئيسية) نوضّح فيها اليوم
+        // المحاسبي اللي بتخصّه — مهم في العرض الشهري ولو اتقفل يوم فايت متأخر.
+        let displayNote = stripTreasuryMarkers(e.note);
+        if (isSavingsTransfer(e.category)) {
+          const [by, bm, bd] = businessDateStr(storeSettings as any, new Date(e.date)).split('-');
+          const bizDayLabel = `${bd}/${bm}/${by}`;
+          displayNote = isIncome
+            ? `رجوع من الخزنة الرئيسية للمحل — يوم ${bizDayLabel}`
+            : `تقفيل يوم ${bizDayLabel} — تحويل للخزنة الرئيسية`;
+        }
         list.push({
           id: e.id,
           type: isIncome ? `إيراد: ${e.category}` : `مصروف: ${e.category}`,
           amount: Math.abs(e.amount),
           method: e.payment_method,
           split: { cash, visa, wallet, instapay },
-          note: e.note,
+          note: displayNote,
           isOut: !isIncome,
           time: new Date(e.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
           rawDate: e.date,
@@ -435,7 +445,7 @@ export default function Finance() {
     });
 
     return list.sort((a, b) => new Date(b.rawDate).getTime() - new Date(a.rawDate).getTime());
-  }, [periodTransactions]);
+  }, [periodTransactions, storeSettings]);
 
   // المعاملة تخصّ وسيلة معينة لو تقسيمتها فيها قيمة على الوسيلة دي؛ ولو مفيش
   // تقسيمة (method5/6 أو صف قديم) نرجع لوسيلة الدفع الأساسية.
