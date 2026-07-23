@@ -59,6 +59,19 @@ export default function POS() {
     } catch { alert('تعذّر إرسال الرمز'); }
     setSaveXferBusy(false);
   };
+  // بعد تقفيل اليوم: يبعت التقرير اليومي لليوم اللي اتقفل على تيليجرام (بدل ما كان
+  // بيتبعت تلقائي كل يوم على الكرون). fire-and-forget — أي فشل مبيوقفش التقفيل.
+  const sendDailyReportAfterClose = async (dayStr: string) => {
+    try {
+      const t = await saveXferToken();
+      fetch('/api/daily-report', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
+        body: JSON.stringify({ date: dayStr }),
+      }).catch(() => {});
+    } catch { /* تجاهل */ }
+  };
+
   const saveXferConfirm = async () => {
     if (!saveXferValidate()) return;
     if (!saveXferOtp.trim()) { alert('أدخل رمز التأكيد'); return; }
@@ -79,7 +92,7 @@ export default function POS() {
       // عشان التقفيل يتحسب على يومه الصح مش على يوم التنفيذ الفعلي.
       const closeStamp = dayBudgetDate === todayStr() ? undefined : new Date(`${dayBudgetDate}T12:00:00`).toISOString();
       const ok = await savingsTransfer(split, 'in', 'day_closing', undefined, closeStamp);
-      if (ok) { alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
+      if (ok) { sendDailyReportAfterClose(dayBudgetDate); alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);
   };
@@ -94,7 +107,7 @@ export default function POS() {
       // عشان التقفيل يتحسب على يومه الصح مش على يوم التنفيذ الفعلي.
       const closeStamp = dayBudgetDate === todayStr() ? undefined : new Date(`${dayBudgetDate}T12:00:00`).toISOString();
       const ok = await savingsTransfer(split, 'in', 'day_closing', undefined, closeStamp);
-      if (ok) { alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
+      if (ok) { sendDailyReportAfterClose(dayBudgetDate); alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);
   };

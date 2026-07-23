@@ -1,15 +1,12 @@
 import {
   authorizeCron,
-  cairoDayRange,
   currentMonthRange,
   fetchReportData,
-  fetchOpeningBalance,
   fetchStoreSettings,
   getSupabase,
   isLastCairoDayOfMonth,
   sendTelegramText,
 } from './_report-utils.js';
-import { buildDailyMessage } from './daily-report.js';
 import { buildMonthlyMessage } from './monthly-finance-report.js';
 import { buildInventoryMessage } from './monthly-inventory-report.js';
 
@@ -98,14 +95,8 @@ export default async function handler(req, res) {
     const today = dateParam ? new Date(`${dateParam}T12:00:00+03:00`) : new Date(Date.now() - 4 * 60 * 60 * 1000);
     const sent = [];
 
-    const dayRange = cairoDayRange(today);
-    const [dayData, openingBalance] = await Promise.all([
-      fetchReportData(supabase, dayRange.start, dayRange.end),
-      fetchOpeningBalance(supabase, dayRange.start),
-    ]);
-    await sendTelegramText(buildDailyMessage(settings, dayRange, dayData, openingBalance));
-    sent.push('daily');
-
+    // التقرير اليومي **مبقاش على الكرون** — بيتبعت عند تقفيل اليوم من الـ POS
+    // (‎/api/daily-report). هنا بنسيب تنبيهات التمويل وتقرير آخر الشهر بس.
     sent.push(...await sendFinancingReminders(supabase, settings, today));
 
     if (isLastCairoDayOfMonth(today)) {

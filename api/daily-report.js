@@ -9,6 +9,7 @@ import {
   productSalesStats,
   sendTelegramText,
   fetchOpeningBalance,
+  verifyStaffToken,
 } from './_report-utils.js';
 
 export function buildDailyMessage(settings, range, data, openingBalance) {
@@ -88,25 +89,35 @@ export function buildDailyMessage(settings, range, data, openingBalance) {
 }
 
 export default async function handler(req, res) {
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return res.status(204).end();
+  }
   if (req.method !== 'GET' && req.method !== 'POST') {
     return res.status(405).json({ ok: false, error: 'Method not allowed' });
   }
-  if (!authorizeCron(req)) {
+  // يُسمح للكرون (بالسر) أو لموظف مسجّل دخول (عشان يتبعت عند تقفيل اليوم من الـ POS).
+  if (!authorizeCron(req) && !(await verifyStaffToken(req))) {
     return res.status(401).json({ ok: false, error: 'Unauthorized' });
   }
 
   try {
     const supabase = getSupabase();
-    const range = cairoDayRange(new Date());
-    
+    // date=YYYY-MM-DD (يوم القاهرة المحاسبي): يُستخدم عند التقفيل لإرسال تقرير اليوم
+    // اللي اتقفل. بدونه = اليوم الحالي (ناقص 4 ساعات لتغطية بداية اليوم 3 ص).
+    const dateParam = (req.query && (req.query.date || req.query.day)) || (req.body && req.body.date);
+    const baseDate = dateParam ? new Date(`${dateParam}T12:00:00+03:00`) : new Date(Date.now() - 4 * 60 * 60 * 1000);
+    const range = cairoDayRange(baseDate);
+
     const [settings, data, openingBalance] = await Promise.all([
       fetchStoreSettings(supabase),
       fetchReportData(supabase, range.start, range.end),
       fetchOpeningBalance(supabase, range.start)
     ]);
-    
+
     const result = await sendTelegramText(buildDailyMessage(settings, range, data, openingBalance));
-    return res.status(200).json({ ok: true, result });
+    return res.status(200).json({ ok: true, sent: 'daily', day: range.label, result });
   } catch (error) {
     return res.status(500).json({ ok: false, error: String(error) });
   }

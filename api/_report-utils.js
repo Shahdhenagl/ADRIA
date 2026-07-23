@@ -25,6 +25,26 @@ export function authorizeCron(req) {
   return header === `Bearer ${secret}`;
 }
 
+/**
+ * يتحقق من أن الطلب جاي من موظف مسجّل دخول (Bearer token صالح من Supabase).
+ * يُستخدم للسماح للـ POS باستدعاء التقرير اليومي عند تقفيل اليوم — بديل للكرون.
+ */
+export async function verifyStaffToken(req) {
+  const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+  const key = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return false;
+  const header = (req.headers && (req.headers.authorization || req.headers.Authorization)) || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!token) return false;
+  try {
+    const supabase = createClient(url, key);
+    const { data, error } = await supabase.auth.getUser(token);
+    return !error && !!data?.user;
+  } catch {
+    return false;
+  }
+}
+
 export function money(value, currency = 'ج.م') {
   return `${Number(value || 0).toFixed(2)} ${currency}`;
 }
