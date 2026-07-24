@@ -627,6 +627,15 @@ interface CashierStore {
     dateISO?: string,
     toMainTreasury?: boolean
   ) => Promise<boolean>;
+  // مرتجع مورد «حرّ» — مش مربوط بفاتورة شراء: تحدّد المنتج والكمية وسعر القطعة بنفسك.
+  createSupplierReturn: (
+    supplierId: string,
+    lines: { product_id: string; quantity: number; purchase_price: number }[],
+    settlement: 'debt' | 'cash',
+    splitPayments?: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number },
+    dateISO?: string,
+    toMainTreasury?: boolean
+  ) => Promise<boolean>;
   deleteOrder: (orderId: string, reason?: string) => Promise<boolean>;
   editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string, opts?: { exchange?: boolean }) => Promise<boolean>;
   markOrderExchanged: (orderId: string, exchangeData: any) => Promise<boolean>;
@@ -5903,6 +5912,148 @@ setupRealtime: () => {
       } else {
         alert(`حدث خطأ أثناء حفظ مرتجع المورد: ${msg}`);
       }
+      return false;
+    }
+  },
+
+  // مرتجع مورد «حرّ» — بدون فاتورة شراء مصدر: المستخدم بيحدّد المنتج والكمية وسعر
+  // القطعة بنفسه. بيتخزّن كصف purchase_invoices بإجمالي/كميات سالبة (زي المرتجع
+  // العادي) فيقلّل رصيد المورد، وبيخصم المخزون. التسوية: خصم من المديونية أو
+  // استرداد كاش (لدرج المحل أو الخزنة الرئيسية).
+  createSupplierReturn: async (supplierId, lines, settlement, splitPayments, dateISO, toMainTreasury) => {
+    const state = get();
+    const supplier = state.suppliers.find(s => s.id === supplierId);
+    if (!supplier) { alert('المورد غير موجود'); return false; }
+
+    const validLines = (lines || [])
+      .map(l => ({ product_id: l.product_id, quantity: Number(l.quantity) || 0, purchase_price: Number(l.purchase_price) || 0 }))
+      .filter(l => l.product_id && l.quantity > 0 && l.purchase_price >= 0);
+    if (validLines.length === 0) { alert('حدّد صنف وكمية وسعر للمرتجع'); return false; }
+
+    // المخزون لازم يكفي — مينفعش نرجّع بضاعة مش موجودة.
+    for (const l of validLines) {
+      const product = state.products.find(p => p.id === l.product_id);
+      if (product && (Number(product.stock_quantity) || 0) < l.quantity - 0.0001) {
+        alert(`المخزون الحالي من «${product.name}» (${Number(product.stock_quantity).toFixed(2)}) أقل من الكمية المرتجعة (${l.quantity})`);
+        return false;
+      }
+    }
+
+    const returnValue = validLines.reduce((s, l) => s + l.quantity * l.purchase_price, 0);
+    const isCash = settlement === 'cash';
+    const splits = isCash
+      ? getSplits(splitPayments, primaryMethodOf(splitPayments), returnValue)
+      : { cash: 0, visa: 0, wallet: 0, instapay: 0, method5: 0, method6: 0 };
+    const cashRefund = isCash
+      ? (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const).reduce((s, k) => s + (Number((splits as any)[k]) || 0), 0)
+      : 0;
+    if (isCash && cashRefund > returnValue + 0.01) {
+      alert(`المبلغ المسترد (${cashRefund.toFixed(2)}) أكبر من قيمة المرتجع (${returnValue.toFixed(2)})`);
+      return false;
+    }
+
+    const useMain = Boolean(isCash && cashRefund > 0 && toMainTreasury);
+    // استرداد كاش لدرج المحل بيلمس الدرج → يخضع لقفل اليوم. غير كده (خصم مديونية أو
+    // استرداد للرئيسية) ملوش علاقة بدرج الكاشير.
+    if (isCash && cashRefund > 0 && !useMain && !(await ensureAccountingDayOpen(state, dateISO || new Date()))) return false;
+
+    const invoiceNumber = `RET-${Date.now()}`;
+    const createdAt = dateISO || accountingTimestampForNow(state.storeSettings);
+    const groupId = useMain ? newGroupId() : null;
+
+    try {
+      const { data: invData, error: invError } = await supabase
+        .from('purchase_invoices')
+        .insert({
+          invoice_number: invoiceNumber,
+          supplier_id: supplierId,
+          source_invoice_id: null,
+          total: -returnValue,
+          paid_amount: -cashRefund,
+          paid_cash: -Math.abs(splits.cash || 0),
+          paid_visa: -Math.abs(splits.visa || 0),
+          paid_wallet: -Math.abs(splits.wallet || 0),
+          paid_instapay: -Math.abs(splits.instapay || 0),
+          paid_method5: -Math.abs(splits.method5 || 0),
+          paid_method6: -Math.abs(splits.method6 || 0),
+          payment_method: primaryMethodOf(splitPayments),
+          notes: useMain
+            ? markSavingsGroupNote(markMainTreasuryNote('مرتجع مورد (بدون فاتورة)'), groupId!)
+            : 'مرتجع مورد (بدون فاتورة)',
+          created_at: createdAt,
+        })
+        .select()
+        .single();
+      if (invError) throw invError;
+      const returnInvoiceId = (invData as any).id;
+
+      const itemsToInsert = validLines.map(l => ({
+        invoice_id: returnInvoiceId,
+        product_id: l.product_id,
+        quantity: -l.quantity,
+        purchase_price: l.purchase_price,
+      }));
+      const { error: itemsError } = await supabase.from('purchase_items').insert(itemsToInsert);
+      if (itemsError) throw itemsError;
+
+      // خصم المخزون وتعديل متوسط التكلفة بالسعر المُدخَل.
+      const updatedProducts = [...state.products];
+      for (const l of validLines) {
+        const productIndex = updatedProducts.findIndex(p => p.id === l.product_id);
+        if (productIndex === -1) continue;
+        const product = updatedProducts[productIndex];
+        const currentStock = Number(product.stock_quantity) || 0;
+        const currentAvg = product.average_purchase_price || product.purchase_price || 0;
+        const newStock = Math.max(0, currentStock - l.quantity);
+        const remainingValue = Math.max(0, (currentStock * currentAvg) - (l.quantity * l.purchase_price));
+        const newAvgPrice = newStock > 0 ? remainingValue / newStock : 0;
+        const newDisplay = Math.min(Number(product.display_quantity) || 0, newStock);
+        const { error: prodError } = await supabase.from('products').update({
+          stock_quantity: newStock,
+          display_quantity: newDisplay,
+          average_purchase_price: newAvgPrice,
+        }).eq('id', product.id);
+        if (prodError) throw prodError;
+        updatedProducts[productIndex] = { ...product, stock_quantity: newStock, display_quantity: newDisplay, average_purchase_price: newAvgPrice };
+      }
+
+      set({
+        purchaseInvoices: [{ ...(invData as any), items: itemsToInsert } as PurchaseInvoice, ...state.purchaseInvoices],
+        products: updatedProducts,
+      });
+      new BroadcastChannel('cashier-sync').postMessage('sync_products');
+
+      if (useMain) {
+        await get().recordMainTreasuryIn(
+          { cash: splits.cash, visa: splits.visa, wallet: splits.wallet, instapay: splits.instapay, method5: splits.method5, method6: splits.method6 },
+          'main_supplier_return',
+          `مرتجع مورد ${supplier.name || 'مورد'} - ${invoiceNumber}`,
+          createdAt,
+          groupId!,
+        );
+      }
+
+      sendTelegramAlert({
+        type: 'supplier_return',
+        actor: getActorName(state),
+        currency: state.storeSettings.currency,
+        invoiceId: invoiceNumber,
+        invoiceUrl: getPublicInvoiceUrl(returnInvoiceId),
+        supplier: supplier.name || 'مورد',
+        date: createdAt,
+        total: returnValue,
+        paid: cashRefund,
+        paymentMethod: primaryMethodOf(splitPayments),
+        items: validLines.map((l) => {
+          const product = state.products.find((p) => p.id === l.product_id);
+          return { name: product?.name || l.product_id, quantity: l.quantity, purchase_price: l.purchase_price };
+        }),
+      });
+
+      return true;
+    } catch (e: any) {
+      console.error('Supplier Return Error:', e);
+      alert(`حدث خطأ أثناء حفظ مرتجع المورد: ${String(e?.message || e)}`);
       return false;
     }
   },

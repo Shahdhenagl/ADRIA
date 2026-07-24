@@ -149,7 +149,7 @@ function ProductSearchSelect({
 }
 
 export default function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, deletePurchaseInvoice } = useStore();
+  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, deletePurchaseInvoice, createSupplierReturn } = useStore();
   const OPENING_MARK = 'رصيد افتتاحي';
   // الرصيد الافتتاحي كصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد.
   const openingBalanceOf = (supplierId: string) => {
@@ -196,6 +196,10 @@ export default function Suppliers() {
   // كل حركات الموردين (مشتريات/سداد/تحصيل) الافتراضي فيها الخزنة الرئيسية.
   // «رئيسية» = OTP للصرف + يُستبعد من تقفيل الكاشير. «محل» = من درج المحل ويظهر في التقفيل.
   const [invTreasurySource, setInvTreasurySource] = useState<'shop' | 'main'>('main');
+  // وضع المودال: فاتورة شراء عادية أو فاتورة مرتجع حرّة (بسعر قطعة مخصّص).
+  const [invMode, setInvMode] = useState<'purchase' | 'return'>('purchase');
+  // تسوية المرتجع: استرداد كاش أو خصم من مديونية المورد.
+  const [retSettlement, setRetSettlement] = useState<'cash' | 'debt'>('cash');
   const [debtPaySource, setDebtPaySource] = useState<'shop' | 'main'>('main');
   const [financialSource, setFinancialSource] = useState<'shop' | 'main'>('main');
   const invPayKeys = activePaymentKeys(storeSettings as any);
@@ -348,6 +352,38 @@ export default function Suppliers() {
     if (!invSupplierId) return alert('اختر المورد أولاً');
     const validItems = invItems.filter(i => i.product_id && parseFloat(i.quantity) > 0 && parseFloat(i.purchase_price) > 0);
     if (validItems.length === 0) return alert('أضف منتجاً واحداً على الأقل');
+
+    // ── وضع المرتجع الحرّ ──────────────────────────────────────────────────────
+    if (invMode === 'return') {
+      const lines = validItems.map(i => ({ product_id: i.product_id, quantity: parseFloat(i.quantity), purchase_price: parseFloat(i.purchase_price) }));
+      const split: Record<string, number> = {};
+      invPayKeys.forEach((k) => { split[k] = parseFloat(invPay[k] || '') || 0; });
+      try {
+        setIsSaving(true);
+        const ok = await createSupplierReturn(
+          invSupplierId,
+          lines,
+          retSettlement,
+          retSettlement === 'cash' ? (split as any) : undefined,
+          undefined,
+          retSettlement === 'cash' && invTreasurySource === 'main',
+        );
+        if (ok) {
+          alert('تم تسجيل مرتجع المورد بنجاح');
+          setShowInvoiceModal(false);
+          setInvMode('purchase');
+          setInvSupplierId('');
+          setInvPay({});
+          setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
+          setActiveTab('invoices');
+        }
+      } catch (error: any) {
+        alert(error.message || 'حدث خطأ أثناء حفظ المرتجع');
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
 
     try {
       setIsSaving(true);
@@ -790,6 +826,7 @@ export default function Suppliers() {
               setShowSupplierModal(true);
             } else {
               setEditingPurchaseInvoice(null);
+              setInvMode('purchase');
               setInvSupplierId('');
               setInvPay({});
               setInvTreasurySource('shop');
@@ -804,6 +841,24 @@ export default function Suppliers() {
           <Plus size={20} />
           {activeTab === 'suppliers' ? 'إضافة مورد جديد' : 'فاتورة مشتريات جديدة'}
         </button>
+        {activeTab === 'invoices' && (
+          <button
+            onClick={() => {
+              setEditingPurchaseInvoice(null);
+              setInvMode('return');
+              setRetSettlement('cash');
+              setInvSupplierId('');
+              setInvPay({});
+              setInvTreasurySource('shop');
+              setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
+              setAutoOpenRow(null);
+              setShowInvoiceModal(true);
+            }}
+            className="bg-amber-500 text-white px-5 py-3 rounded-2xl font-bold flex items-center gap-2 hover:opacity-90 transition shadow-lg"
+          >
+            <RotateCcw size={18} /> فاتورة مرتجع
+          </button>
+        )}
       </div>
 
       {/* Tabs */}
@@ -1267,7 +1322,7 @@ export default function Suppliers() {
         <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-100 flex flex-col max-h-[90vh]">
             <div className="p-6 bg-slate-50 border-b border-slate-100 flex justify-between items-center flex-shrink-0">
-              <h2 className="text-xl font-black text-slate-800 flex items-center gap-2"><ShoppingCart size={22} style={{ color: tc }} />{editingPurchaseInvoice ? 'تعديل فاتورة المشتريات' : 'فاتورة مشتريات جديدة'}</h2>
+              <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">{invMode === 'return' ? <RotateCcw size={22} className="text-amber-600" /> : <ShoppingCart size={22} style={{ color: tc }} />}{editingPurchaseInvoice ? 'تعديل فاتورة المشتريات' : (invMode === 'return' ? 'فاتورة مرتجع للمورد' : 'فاتورة مشتريات جديدة')}</h2>
               <button onClick={() => setShowInvoiceModal(false)} className="p-2 rounded-xl hover:bg-slate-200 transition"><X size={20} /></button>
             </div>
 
@@ -1285,10 +1340,16 @@ export default function Suppliers() {
                   </div>
                 </div>
 
+                {invMode === 'return' && (
+                  <p className="text-[12px] font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-2.5 text-center">
+                    مرتجع حرّ — حدّد المنتج والكمية وسعر القطعة بنفسك (مش لازم يكون في فاتورة شراء). المخزون هيتخصم.
+                  </p>
+                )}
+
                 {/* Items */}
                 <div>
                   <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
-                    <label className="text-sm font-bold text-slate-700">المنتجات المشتراة</label>
+                    <label className="text-sm font-bold text-slate-700">{invMode === 'return' ? 'المنتجات المرتجعة' : 'المنتجات المشتراة'}</label>
                     <div className="flex items-center gap-1 flex-wrap">
                       <input ref={invFileRef} type="file" accept=".xlsx,.xls" onChange={importInvoiceExcel} className="hidden" />
                       <button type="button" onClick={exportInvoiceTemplate} title="تحميل قالب Excel لهذا المورد (مملوء بمنتجاته لتعديل الكميات)" className="text-xs font-bold flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-slate-600 bg-slate-100 hover:bg-slate-200 transition">
@@ -1328,6 +1389,7 @@ export default function Suppliers() {
                             />
                             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-slate-400 pointer-events-none">{getUnitConfig(rowUnit).label}</span>
                           </div>
+                          {invMode !== 'return' && (
                           <div className="relative w-24 shrink-0">
                             <input
                               type="number" min="0" max={item.quantity} step={rowFractional ? '0.001' : '1'} placeholder="المحل"
@@ -1337,6 +1399,7 @@ export default function Suppliers() {
                             />
                             <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[9px] font-bold text-emerald-500 pointer-events-none">محل</span>
                           </div>
+                          )}
                           <input
                             ref={el => { priceRefs.current[idx] = el; }}
                             type="number" min="0" step="0.01" placeholder={`سعر شراء الـ${getUnitConfig(rowUnit).label}`}
@@ -1351,7 +1414,7 @@ export default function Suppliers() {
                             </button>
                           )}
                         </div>
-                        {(parseFloat(item.quantity) || 0) > 0 && (
+                        {invMode !== 'return' && (parseFloat(item.quantity) || 0) > 0 && (
                           <p className="text-[10px] text-slate-400 mt-2 pr-1">
                             التوزيع: <b className="text-emerald-600">محل {Math.max(0, Math.min(parseFloat(item.to_display) || 0, parseFloat(item.quantity) || 0))}</b>
                             {' · '}<b className="text-blue-600">مستودع {Math.max(0, (parseFloat(item.quantity) || 0) - Math.min(parseFloat(item.to_display) || 0, parseFloat(item.quantity) || 0))}</b>
@@ -1364,16 +1427,34 @@ export default function Suppliers() {
                   </div>
                 </div>
 
-                {!editingPurchaseInvoice && (
+                {/* تسوية المرتجع */}
+                {invMode === 'return' && (
                   <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
-                    <label className="block text-sm font-bold text-slate-700 mb-2">مصدر دفع المشتريات</label>
+                    <label className="block text-sm font-bold text-slate-700 mb-2">طريقة التسوية</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button type="button" onClick={() => setRetSettlement('cash')}
+                        className={`py-2.5 rounded-xl font-black text-sm ${retSettlement === 'cash' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                        استرداد نقدي<span className="block text-[10px] font-normal opacity-80">المورد رجّع فلوس</span>
+                      </button>
+                      <button type="button" onClick={() => setRetSettlement('debt')}
+                        className={`py-2.5 rounded-xl font-black text-sm ${retSettlement === 'debt' ? 'bg-emerald-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}>
+                        خصم من المديونية<span className="block text-[10px] font-normal opacity-80">مفيش فلوس بتتحرك</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* مصدر الخزنة: للشراء دايماً، وللمرتجع النقدي بس (فين تروح الفلوس) */}
+                {((invMode === 'purchase' && !editingPurchaseInvoice) || (invMode === 'return' && retSettlement === 'cash')) && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-2xl p-3">
+                    <label className="block text-sm font-bold text-slate-700 mb-2">{invMode === 'return' ? 'الفلوس ترجع لأي خزنة؟' : 'مصدر دفع المشتريات'}</label>
                     <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         onClick={() => setInvTreasurySource('shop')}
                         className={`py-2.5 rounded-xl font-black text-sm ${invTreasurySource === 'shop' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200'}`}
                       >
-                        خزنة المحل
+                        {invMode === 'return' ? 'درج المحل' : 'خزنة المحل'}
                       </button>
                       <button
                         type="button"
@@ -1383,27 +1464,43 @@ export default function Suppliers() {
                         الخزنة الرئيسية
                       </button>
                     </div>
-                    {invTreasurySource === 'main' && (
+                    {invMode === 'purchase' && invTreasurySource === 'main' && (
                       <p className="text-[11px] text-amber-700 font-bold mt-2">سيتم طلب OTP من المدير، ولن يتم خصم المدفوع من خزنة المحل.</p>
+                    )}
+                    {invMode === 'return' && invTreasurySource === 'main' && (
+                      <p className="text-[11px] text-amber-700 font-bold mt-2">هيتسجّل إيراد في الخزنة الرئيسية، ومش هيظهر في تقفيل الكاشير.</p>
                     )}
                   </div>
                 )}
 
-                {/* Paid Amount */}
-                <PaymentSplitInputs
-                  value={invPay}
-                  onChange={(k, v) => setInvPay((s) => ({ ...s, [k]: v }))}
-                  labelClassName="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right"
-                  inputClassName="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition font-bold text-right"
-                />
+                {/* المبلغ المدفوع (شراء) / المسترد (مرتجع نقدي) */}
+                {(invMode === 'purchase' || (invMode === 'return' && retSettlement === 'cash')) && (
+                  <div>
+                    {invMode === 'return' && <label className="block text-sm font-bold text-slate-700 mb-2">المبلغ المسترد وطريقة استلامه</label>}
+                    <PaymentSplitInputs
+                      value={invPay}
+                      onChange={(k, v) => setInvPay((s) => ({ ...s, [k]: v }))}
+                      labelClassName="block text-[10px] font-bold text-slate-500 mb-1 uppercase tracking-wide text-right"
+                      inputClassName="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-indigo-500 transition font-bold text-right"
+                    />
+                  </div>
+                )}
 
                 {/* Summary */}
-                <div className="rounded-2xl p-5 border shadow-inner" style={{ backgroundColor: tc + '08', borderColor: tc + '20' }}>
+                <div className="rounded-2xl p-5 border shadow-inner" style={{ backgroundColor: (invMode === 'return' ? '#f59e0b' : tc) + '10', borderColor: (invMode === 'return' ? '#f59e0b' : tc) + '30' }}>
                   <div className="flex justify-between font-black text-slate-800 text-lg mb-3 pb-3 border-b border-white">
-                    <span>إجمالي الفاتورة</span>
+                    <span>{invMode === 'return' ? 'قيمة المرتجع' : 'إجمالي الفاتورة'}</span>
                     <span>{invTotal.toLocaleString()} {storeSettings.currency}</span>
                   </div>
-                  
+
+                  {invMode === 'return' ? (
+                    <div className="flex justify-between text-sm font-bold">
+                      <span className="text-slate-500">{retSettlement === 'cash' ? 'المبلغ المسترد نقداً' : 'هيتخصم من مديونية المورد'}</span>
+                      <span className="text-emerald-600">
+                        {(retSettlement === 'cash' ? invPaidTotal : invTotal).toLocaleString()} {storeSettings.currency}
+                      </span>
+                    </div>
+                  ) : (
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm text-slate-500 font-bold">
                       <span>إجمالي المدفوع</span>
@@ -1424,12 +1521,13 @@ export default function Suppliers() {
                       </span>
                     </div>
                   </div>
+                  )}
                 </div>
               </div>
 
               <div className="p-6 border-t border-slate-100 flex gap-3 flex-shrink-0">
-                <button type="submit" disabled={isSaving} style={{ backgroundColor: tc }} className="flex-1 text-white py-3.5 rounded-xl font-bold shadow-lg hover:opacity-90 transition disabled:opacity-60">
-                  {isSaving ? 'جاري الحفظ...' : 'حفظ الفاتورة'}
+                <button type="submit" disabled={isSaving} style={{ backgroundColor: invMode === 'return' ? '#f59e0b' : tc }} className="flex-1 text-white py-3.5 rounded-xl font-bold shadow-lg hover:opacity-90 transition disabled:opacity-60">
+                  {isSaving ? 'جاري الحفظ...' : (invMode === 'return' ? 'حفظ المرتجع' : 'حفظ الفاتورة')}
                 </button>
                 <button type="button" onClick={() => setShowInvoiceModal(false)} className="flex-1 bg-slate-100 text-slate-700 py-3.5 rounded-xl font-bold hover:bg-slate-200 transition">إلغاء</button>
               </div>
