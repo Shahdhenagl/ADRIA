@@ -249,7 +249,8 @@ export default function Savings() {
         : t.source === 'main_expense' ? 'مصروف من الرئيسية'
           : t.source === 'to_savings_vault' ? 'سحب لخزينة الادخار'
             : t.source === 'from_savings_vault' ? 'إيداع من خزينة الادخار'
-              : t.direction === 'in' ? 'إيداع/تحويل للرئيسية' : 'سحب/تحويل للمحل';
+              : t.source === 'debt_collection' ? 'تحصيل آجل (للرئيسية)'
+                : t.direction === 'in' ? 'إيداع/تحويل للرئيسية' : 'سحب/تحويل للمحل';
 
   const requestDeleteOtp = async (t: any) => {
     if (t.source === 'day_closing') { alert('معاملة «تقفيل يوم» لا يمكن حذفها من هنا — أعيدي فتح اليوم من شاشة تقفيل اليوم.'); return; }

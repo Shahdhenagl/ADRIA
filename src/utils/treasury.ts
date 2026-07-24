@@ -121,6 +121,13 @@ export function isMainTreasuryPurchase(row: any): boolean {
   return String(row?.notes || '').includes(MAIN_TREASURY_MARKER);
 }
 
+// تحصيل عميل (order type='payment') اتوجّه للخزنة الرئيسية بدل درج الكاشير —
+// معلَّم [MAIN_TREASURY] في notes. لازم يتستبعد من كل حسابات درج الكاشير (زي
+// المصاريف/المشتريات الرئيسية) ويتحسب في دفتر الرئيسية بدلها.
+export function isMainTreasuryOrder(row: any): boolean {
+  return String(row?.notes || '').includes(MAIN_TREASURY_MARKER);
+}
+
 // ── رصيد خزنة المحل المتاح لكل وسيلة ────────────────────────────────────────
 // كان متكرّر في Savings (بالفلاتر الصح) وفي Managers (من غيرها)، فالصفحتين كانوا
 // بيدّوا أرقام مختلفة لنفس الخزنة. أي صفحة بتعرض «المتاح بالخزنة» لازم تنادي دي.
@@ -145,6 +152,8 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   const add = (sign: number, rec: any, field: string) => applySplit(net, rec, field, { sign });
 
   (rows.orders || []).filter((o: any) => !o.is_deleted).forEach((o: any) => {
+    // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية مش لدرج المحل — يتستبعد.
+    if (isMainTreasuryOrder(o)) return;
     if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
     const refunded = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
     if (refunded > 0) add(-1, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');

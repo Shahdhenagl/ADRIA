@@ -12,7 +12,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
-import { isMainTreasuryExpense, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers } from '../../utils/treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers } from '../../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
@@ -107,7 +107,7 @@ export default function Finance() {
     }
     
     const ordersIn = activeOrders
-      .filter(o => new Date(o.date) < startOfPeriod)
+      .filter(o => new Date(o.date) < startOfPeriod && !isMainTreasuryOrder(o))
       .reduce((sum, o) => sum + getInitialPaidAmount(o), 0);
     
     const returnsOut = activeOrders
@@ -186,7 +186,7 @@ export default function Finance() {
     }
 
     const ordersIn = activeOrders
-      .filter(o => new Date(o.date) < startOfPeriod)
+      .filter(o => new Date(o.date) < startOfPeriod && !isMainTreasuryOrder(o))
       .reduce((sum, o) => sum + getSafeMethodAmount(o, method, 'paid_amount'), 0);
     
     const returnsOut = activeOrders
@@ -219,7 +219,7 @@ export default function Finance() {
       return businessDateStr(storeSettings as any, new Date(dateVal)) === selectedDate;
     };
     return {
-      orders: activeOrders.filter(o => matchDate(o.date)),
+      orders: activeOrders.filter(o => matchDate(o.date) && !isMainTreasuryOrder(o)),
       // معاملات الخزنة الرئيسية (المعلَّمة MAIN_TREASURY: مصاريف/إيرادات/مشتريات/سداد
       // موردين من الرئيسية) تُستبعَد تماماً من خزينة الكاشير — لا في القوائم ولا في
       // الإجماليات ولا في الرصيد. مكانها الطبيعي صفحة «الخزنة الرئيسية».

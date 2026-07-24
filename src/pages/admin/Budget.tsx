@@ -11,7 +11,7 @@ import html2canvas from 'html2canvas-pro';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
-import { isMainTreasuryExpense, isMainTreasuryPurchase } from '../../utils/treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase } from '../../utils/treasury';
 
 interface UnifiedTransaction {
   id: string;
@@ -156,6 +156,8 @@ export default function Budget() {
 
     // 2. Orders (Sales revenues & Debt payments & Refunds)
     orders.filter((order) => !order.is_deleted).forEach(o => {
+      // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية — يتستبعد من كشف خزنة الكاشير.
+      if (isMainTreasuryOrder(o)) return;
       const isPaymentOrder = o.type === 'payment';
       const totalRefunded = calculateCashRefunded(o);
 

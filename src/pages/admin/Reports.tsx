@@ -5,7 +5,7 @@ import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
-import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase } from '../../utils/treasury';
+import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase } from '../../utils/treasury';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 
 export default function Reports() {
@@ -68,7 +68,7 @@ export default function Reports() {
     });
 
     orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
-      if ((o.type === 'sale' || o.type === 'payment') && pass(o.date)) {
+      if ((o.type === 'sale' || o.type === 'payment') && pass(o.date) && !isMainTreasuryOrder(o)) {
         let paid = Number(o.paid_amount) || 0;
         if (o.type === 'sale') {
           const splitSum = splitsSumAbs(o);

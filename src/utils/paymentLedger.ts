@@ -7,7 +7,7 @@
  */
 import { ALL_PAYMENT_KEYS, splitFromRow, primaryMethod, type PaymentKey } from './paymentMethods';
 import { calculateCashRefunded } from './returns';
-import { isMainTreasuryExpense, isMainTreasuryPurchase, stripTreasuryMarkers } from './treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, stripTreasuryMarkers } from './treasury';
 
 export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'income' | 'purchase' | 'purchase_return' | 'transfer';
 
@@ -59,6 +59,9 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
   }
 
   for (const o of active) {
+    // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية — يتستبعد من كشف خزنة المحل.
+    // (لسه محسوب في debtByInvoice فوق عشان صف البيع الأصلي يتصفّى صح.)
+    if (isMainTreasuryOrder(o)) continue;
     // المبلغ المحصّل فعلياً في هذا الصف وتوزيعه على الوسائل
     let paid: number;
     if (o.type === 'payment') {

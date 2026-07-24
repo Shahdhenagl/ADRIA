@@ -16,7 +16,7 @@ import PaymentSplitInputs from '../../components/PaymentSplitInputs';
 import { formToSplit, sumSplit, activePaymentKeys, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 
 export default function DeferredAccounts() {
-  const { customers, orders, suppliers, purchaseInvoices, storeSettings, checkout, payInvoiceDebt, addPurchaseInvoice, addSupplier, carSubscriptions } = useStore();
+  const { customers, orders, suppliers, purchaseInvoices, storeSettings, checkout, payInvoiceDebt, addPurchaseInvoice, paySupplierDebt, addSupplier, carSubscriptions } = useStore();
   const activeOrders = orders.filter((order) => !order.is_deleted);
   
   const [activeTab, setActiveTab] = useState<'customers' | 'suppliers'>('customers');
@@ -35,6 +35,9 @@ export default function DeferredAccounts() {
     instapay: '',
     discount: ''
   });
+  // مصدر السداد/التحصيل: خزنة الكاشير (الافتراضي) أو الخزنة الرئيسية.
+  // «الرئيسية» بيخلّي الحركة متظهرش في درج الكاشير (زي تحصيل بيع الجملة).
+  const [toMain, setToMain] = useState(false);
 
   useEffect(() => {
     if (selectedEntity) {
@@ -45,6 +48,7 @@ export default function DeferredAccounts() {
         instapay: '',
         discount: ''
       });
+      setToMain(false);
     }
   }, [selectedInvoice, selectedEntity]);
 
@@ -602,7 +606,8 @@ export default function DeferredAccounts() {
               totalPaid,
               split as any,
               primaryMethod_(split),
-              discount
+              discount,
+              toMain
             );
             alert('تم تسجيل سداد للفاتورة بنجاح!');
             
@@ -647,7 +652,8 @@ export default function DeferredAccounts() {
                     actualPaid,
                     paySplit as any,
                     primaryMethod_(paySplit),
-                    appliedDiscount
+                    appliedDiscount,
+                    toMain
                   );
                   if (paymentId) lastPaymentId = paymentId;
                 }
@@ -667,7 +673,9 @@ export default function DeferredAccounts() {
                 totalPaid,
                 'payment',
                 primaryMethod_(split),
-                split as any
+                split as any,
+                undefined, undefined, undefined, undefined, undefined, undefined,
+                toMain
               );
               alert(`تم تسجيل تحصيل عام من العميل بنجاح!\nرقم الإيصال: ${invoiceId}`);
               
@@ -679,15 +687,22 @@ export default function DeferredAccounts() {
             }
           }
         } else {
-         const invoiceNum = `PAY-DEBT-${Date.now()}`;
-         await addPurchaseInvoice({
-           invoice_number: invoiceNum,
-           supplier_id: selectedEntity.id,
-           total: 0,
-           paid_amount: totalPaid,
-           payment_method: primaryMethod_(split)
-         }, [], split as any);
-         alert(`تم تسجيل سداد للمورد بنجاح!\nرقم الإيصال: ${invoiceNum}`);
+         if (toMain) {
+           // السداد من الخزنة الرئيسية: نفس مسار صفحة الموردين (بيعلّم الفاتورة
+           // [MAIN_TREASURY] ويسجّل في دفتر الرئيسية، فميظهرش في درج الكاشير).
+           await paySupplierDebt(selectedEntity.id, totalPaid, split as any, undefined, true);
+           alert('تم تسجيل سداد للمورد من الخزنة الرئيسية بنجاح!');
+         } else {
+           const invoiceNum = `PAY-DEBT-${Date.now()}`;
+           await addPurchaseInvoice({
+             invoice_number: invoiceNum,
+             supplier_id: selectedEntity.id,
+             total: 0,
+             paid_amount: totalPaid,
+             payment_method: primaryMethod_(split)
+           }, [], split as any);
+           alert(`تم تسجيل سداد للمورد بنجاح!\nرقم الإيصال: ${invoiceNum}`);
+         }
        }
        
        setIsModalOpen(false);
@@ -907,6 +922,33 @@ export default function DeferredAccounts() {
                     labelClassName="block text-[10px] font-bold text-slate-400 mb-1 uppercase text-right"
                     inputClassName="w-full border border-slate-200 rounded-xl py-3 px-3 text-lg font-black text-center focus:ring-2 focus:ring-indigo-500"
                   />
+                </div>
+
+                {/* مصدر السداد: الكاشير (الافتراضي) أو الخزنة الرئيسية.
+                    «الرئيسية» بيخلّي التحصيل ميظهرش في درج الكاشير — زي تحصيل بيع الجملة. */}
+                <div className="sm:col-span-2 border-t border-dashed border-slate-200 pt-3">
+                  <label className="block text-[11px] font-bold text-slate-400 mb-1.5 text-right">تروح لأي خزنة؟</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setToMain(false)}
+                      className={`py-2.5 rounded-xl text-xs font-bold border transition ${!toMain ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-200'}`}
+                    >
+                      🧾 خزنة الكاشير
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setToMain(true)}
+                      className={`py-2.5 rounded-xl text-xs font-bold border transition ${toMain ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-slate-50 text-slate-600 border-slate-200 hover:border-indigo-200'}`}
+                    >
+                      🏦 الخزنة الرئيسية
+                    </button>
+                  </div>
+                  {toMain && (
+                    <p className="text-[10px] text-amber-600 font-bold mt-1.5 text-right">
+                      مش هيظهر في درج الكاشير ولا في تقفيل اليوم — هيتسجّل في الخزنة الرئيسية.
+                    </p>
+                  )}
                 </div>
                 {activeTab === 'customers' && (
                   <div className="sm:col-span-2 border-t border-dashed border-slate-200 pt-3">

@@ -606,15 +606,17 @@ interface CashierStore {
     couponCode?: string,
     discountAmount?: number,
     carId?: string,
-    dateISO?: string
+    dateISO?: string,
+    toMainTreasury?: boolean
   ) => Promise<string>;
   payInvoiceDebt: (
-    invoiceId: string, 
-    customerId: string, 
-    amount: number, 
+    invoiceId: string,
+    customerId: string,
+    amount: number,
     splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number },
     paymentMethod?: string,
-    discount?: number
+    discount?: number,
+    toMainTreasury?: boolean
   ) => Promise<string | null | void>;
   processReturn: (orderId: string, returns: { productId: string, returnQty: number, refundAmount: number, debtDeduction?: number }[], refundMethod?: string) => Promise<boolean>;
   processPurchaseReturn: (
@@ -1816,12 +1818,14 @@ export const useStore = create<CashierStore>((set, get) => ({
   })),
 
   // ── Checkout ───────────────────────────────────────────────
-  checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId, dateISO) => {
+  checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId, dateISO, toMainTreasury = false) => {
     const state = get();
     const finalCashierName = cashierName || state.activeCashier?.name || 'مدير النظام';
     const sp = state.salesperson;
     if (state.cart.length === 0 && type !== 'payment' && type !== 'previous_debt') return state.activeInvoiceId;
-    if (!(await ensureAccountingDayOpen(state, dateISO))) return state.activeInvoiceId;
+    // تحصيل عام للخزنة الرئيسية (type='payment') ملوش علاقة بدرج الكاشير ولا بقفل اليوم.
+    const isMainCollection = toMainTreasury && type === 'payment';
+    if (!isMainCollection && !(await ensureAccountingDayOpen(state, dateISO))) return state.activeInvoiceId;
     // وقت البيع الحقيقي — مش منتصف اليوم المحاسبي. الوقت الحقيقي بيقع أصلاً جوه
     // نطاق اليوم المحاسبي الحالي (اليوم بيبدأ ٣ ص وبينتهي ٣ ص اللي بعده)، فالحسابات
     // بتقع في نفس اليوم بالظبط — وكمان بنحافظ على ساعة البيع وترتيب الفواتير.
@@ -1829,6 +1833,13 @@ export const useStore = create<CashierStore>((set, get) => ({
     const orderCreatedAt = dateISO || new Date().toISOString();
 
     const savedPaidAmount = type === 'payment' ? paidAmount : Math.min(total, paidAmount);
+
+    // تحصيل عام للخزنة الرئيسية: نعلّم الصف [MAIN_TREASURY] (يتستبعد من درج الكاشير)
+    // و[SVG:groupId] (يربطه بصف دفتر الرئيسية)، ونسجّل نظيره في الدفتر بعد نجاح الحفظ.
+    const collectionGroupId = isMainCollection ? newGroupId() : null;
+    const finalNotes = collectionGroupId
+      ? markSavingsGroupNote(markMainTreasuryNote(notes || 'تحصيل من العميل'), collectionGroupId)
+      : (notes || null);
 
     const executeOfflineCheckout = () => {
       const offlineId = `OFF-${Date.now()}`;
@@ -1880,7 +1891,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         cashier_name: finalCashierName,
         salesperson_id: sp?.id || undefined,
         salesperson_name: sp?.name || undefined,
-        notes: notes || null,
+        notes: finalNotes,
         coupon_code: couponCode || null,
         discount_amount: discountAmount || 0,
         car_id: carId || undefined,
@@ -2007,7 +2018,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         cashier_name: finalCashierName,
         salesperson_id: sp?.id || null,
         salesperson_name: sp?.name || null,
-        notes: notes || null,
+        notes: finalNotes,
         coupon_code: couponCode || null,
         discount_amount: discountAmount || 0,
         car_id: carId || null,
@@ -2019,6 +2030,11 @@ export const useStore = create<CashierStore>((set, get) => ({
         // If duplicate key, it means another cashier took the number in that millisecond.
         alert(`عذراً، رقم الفاتورة مستخدم حالياً (${invoiceId}). يرجى المحاولة مرة أخرى.`);
         return invoiceId;
+      }
+
+      // تحصيل عام رايح للخزنة الرئيسية: نسجّل نظيره في دفتر الرئيسية (مربوط بالـ groupId).
+      if (collectionGroupId) {
+        await get().recordMainTreasuryIn(splits as any, 'debt_collection', `تحصيل من ${finalCustomer?.name || 'عميل'}`, orderCreatedAt, collectionGroupId);
       }
 
       // Insert order items
@@ -2062,7 +2078,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         cashier_name: finalCashierName,
         salesperson_id: sp?.id,
         salesperson_name: sp?.name,
-        notes: notes || null,
+        notes: finalNotes,
         car_id: carId || undefined
       };
 
@@ -2571,11 +2587,13 @@ export const useStore = create<CashierStore>((set, get) => ({
   // للمخزون. عمود expires_at في db/25 اتساب للتوافق لكن مبقاش بيأثر على حاجة.
 
   // ── Returns ────────────────────────────────────────────────
-  payInvoiceDebt: async (invoiceId, customerId, amount, splitPayments, paymentMethod = 'cash', discount = 0) => {
+  payInvoiceDebt: async (invoiceId, customerId, amount, splitPayments, paymentMethod = 'cash', discount = 0, toMainTreasury = false) => {
     const state = get();
     const invoice = state.orders.find(o => o.id === invoiceId);
     if (!invoice) return;
-    if (!(await ensureAccountingDayOpen(state, new Date()))) return null;
+    // التحصيل للخزنة الرئيسية ملوش علاقة بدرج الكاشير ولا بتقفيله — زي سداد المورد
+    // من الرئيسية بالظبط. أما تحصيل الكاشير العادي فبيخضع لقفل اليوم.
+    if (!toMainTreasury && !(await ensureAccountingDayOpen(state, new Date()))) return null;
 
     // Validate: don't accept more than what's owed
     const currentDebt = invoice.total - (invoice.paid_amount || 0);
@@ -2608,6 +2626,10 @@ export const useStore = create<CashierStore>((set, get) => ({
       const remainingDebt = invoice.total - newPaidAmount;
       const debtBefore = remainingDebt + totalReduction;
       const note = `سداد أجل للفاتورة رقم #${invoiceId}${invoice.notes ? ` | الوصف: ${invoice.notes}` : ''} | المديونية قبل: ${debtBefore.toFixed(2)} | المتبقي: ${remainingDebt.toFixed(2)}${discount > 0 ? ` | خصم/إكرامية: ${discount.toFixed(2)}` : ''}`;
+      // لو التحصيل رايح للخزنة الرئيسية: نعلّم صف السداد [MAIN_TREASURY] (يتستبعد من
+      // درج الكاشير) و[SVG:groupId] (يربطه بصف دفتر الرئيسية للحذف/العكس).
+      const collectGroupId = toMainTreasury ? newGroupId() : null;
+      const finalNote = collectGroupId ? markSavingsGroupNote(markMainTreasuryNote(note), collectGroupId) : note;
 
       const splits = getSplits(splitPayments, paymentMethod, amount);
       const paymentOrder = {
@@ -2624,12 +2646,18 @@ export const useStore = create<CashierStore>((set, get) => ({
         customer_id: customerId,
         payment_method: paymentMethod,
         cashier_name: cashierName,
-        notes: note,
+        notes: finalNote,
         created_at: paymentCreatedAt
       };
 
       const { error: insertError } = await supabase.from('orders').insert(paymentOrder);
       if (insertError) throw insertError;
+
+      // صف دفتر الخزنة الرئيسية: الفلوس دخلت الرئيسية مش درج الكاشير.
+      if (collectGroupId) {
+        const customerName = state.customers.find(c => c.id === customerId)?.name || 'عميل';
+        await get().recordMainTreasuryIn(splits as any, 'debt_collection', `تحصيل آجل من ${customerName} - فاتورة #${invoiceId}`, paymentCreatedAt, collectGroupId);
+      }
 
       // Update local state
       const customer = state.customers.find(c => c.id === customerId);
@@ -2893,6 +2921,13 @@ export const useStore = create<CashierStore>((set, get) => ({
         .eq('id', orderId);
 
       if (orderError) throw orderError;
+
+      // لو ده تحصيل كان رايح للخزنة الرئيسية (معلَّم [SVG:]): نعكس صف دفتر الرئيسية
+      // المربوط بيه عشان رصيد الرئيسية يرجع صح — نفس منطق حذف فاتورة سداد المورد.
+      const collectionGroupId = savingsGroupIdOf((order as any)?.notes);
+      if (collectionGroupId) {
+        await supabase.from('savings_transactions').delete().eq('group_id', collectionGroupId);
+      }
 
       const updatedProducts = [...state.products];
       for (const item of stockRestores) {
@@ -4809,6 +4844,12 @@ setupRealtime: () => {
     // عشان الطرفين يتعكسوا مع بعض.
     if (tx.source === 'to_savings_vault' || tx.source === 'from_savings_vault') {
       alert('دي حركة تخص «الادخار الشخصي» — احذفيها من صفحة الادخار الشخصي عشان الطرفين يتعكسوا مع بعض.');
+      return false;
+    }
+    // تحصيل آجل رايح للرئيسية: مربوط بصف order (type=payment). حذفه من هنا هيسيب
+    // التحصيل قايم ومديونية العميل متصفّية — لازم يتحذف من صفحة الفواتير/الآجل.
+    if (tx.source === 'debt_collection') {
+      alert('دي حركة «تحصيل آجل» راحت للخزنة الرئيسية — احذفي صف التحصيل نفسه من صفحة الفواتير/الآجل، وهو بيعكس أثره على الرئيسية تلقائياً.');
       return false;
     }
     // تقفيل اليوم بيخصّ درج الكاشير. الحركة اللي بتلمس الدرج (تحويل محل ↔ رئيسية)

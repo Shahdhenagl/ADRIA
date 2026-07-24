@@ -14,7 +14,7 @@ import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../utils/financeCategories';
 import { buildPagesQrBlock } from '../utils/pagesQr';
-import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../utils/treasury';
+import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../utils/treasury';
 import { calculateOrderReturnValue } from '../utils/returns';
 import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal } from '../utils/invoicePayments';
 import { printShippingLabel } from '../utils/printShippingLabel';
@@ -550,6 +550,8 @@ export default function POS() {
         const inDay = d >= start && d < end;
         const before = d < start;
         if (!inDay && !before) return;
+        // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية — يتستبعد من درج الكاشير وتقفيله.
+        if (isMainTreasuryOrder(o)) return;
         if ((o.type === 'sale' || o.type === 'payment')) addM(inDay ? dayIn : befIn, o, 'paid_amount');
         // المرتجع بيقلّل paid_amount (مش تقسيمة paid_cash)، فبنرجّعه للتحصيل عشان
         // «التحصيل» يعرض المحصّل الإجمالي يوم البيع، والمرتجع يبان في بنده لوحده
