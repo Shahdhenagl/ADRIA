@@ -59,15 +59,56 @@ export default function POS() {
     } catch { alert('تعذّر إرسال الرمز'); }
     setSaveXferBusy(false);
   };
-  // بعد تقفيل اليوم: يبعت التقرير اليومي لليوم اللي اتقفل على تيليجرام (بدل ما كان
-  // بيتبعت تلقائي كل يوم على الكرون). fire-and-forget — أي فشل مبيوقفش التقفيل.
-  const sendDailyReportAfterClose = async (dayStr: string) => {
+  // نص تقرير التقفيل — مبني من **نفس أرقام شاشة التقفيل** (bd) عشان يطابقها بالظبط.
+  const buildDayCloseReportText = (dayStr: string, snap: any): string => {
+    const cur = storeSettings.currency;
+    const m = (n: number) => `${(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
+    const [y, mo, da] = dayStr.split('-');
+    const bd = snap?.breakdown || {};
+    const keys = activePaymentKeys(storeSettings as any);
+    const L: string[] = [];
+    L.push(`🧾 تقرير تقفيل يوم ${da}/${mo}/${y} — ${storeSettings.name}`);
+    L.push('');
+    L.push('💰 حركة الخزينة:');
+    L.push(`الرصيد الافتتاحي: ${m(snap?.opening)}`);
+    L.push(`إجمالي الداخل: ${m(snap?.totalIn)}`);
+    L.push(`إجمالي الخارج: ${m(snap?.totalOut)}`);
+    L.push(`رصيد الإغلاق: ${m(snap?.closing)}`);
+    L.push('');
+    L.push('📊 تفاصيل اليوم:');
+    L.push(`مبيعات: ${bd.salesCount || 0} فاتورة بإجمالي ${m(bd.salesTotal)}`);
+    L.push(`المحصّل: ${m(bd.collected)}`);
+    if ((bd.refundsTotal || 0) > 0) L.push(`مرتجعات عملاء: ${m(bd.refundsTotal)}`);
+    if ((bd.otherIncome || 0) > 0) L.push(`إيرادات أخرى: ${m(bd.otherIncome)}`);
+    if ((bd.reservationsNet || 0) !== 0) L.push(`صافي الحجوزات: ${m(bd.reservationsNet)}`);
+    if ((bd.expensesTotal || 0) > 0) L.push(`مصروفات: ${m(bd.expensesTotal)}`);
+    if ((bd.purchasesTotal || 0) > 0) L.push(`مشتريات وسداد موردين: ${m(bd.purchasesTotal)}`);
+    if ((bd.salariesTotal || 0) > 0) L.push(`رواتب/سلف موظفين: ${m(bd.salariesTotal)}`);
+    if ((bd.exchangeNet || 0) !== 0) L.push(`صافي فرق الاستبدال: ${m(bd.exchangeNet)}`);
+    if ((bd.reconcileIn || 0) > 0) L.push(`تسوية جرد (زيادة): ${m(bd.reconcileIn)}`);
+    if ((bd.reconcileOut || 0) > 0) L.push(`تسوية جرد (عجز): ${m(bd.reconcileOut)}`);
+    L.push('');
+    L.push('💳 الداخل / الخارج حسب الوسيلة:');
+    keys.forEach((k) => {
+      const inV = snap?.dayIn?.[k] || 0, outV = snap?.dayOut?.[k] || 0;
+      if (inV || outV) L.push(`${payLabelOf(storeSettings as any, k)}: +${m(inV)} / -${m(outV)}`);
+    });
+    L.push('');
+    L.push('🏦 المتاح بالدرج حسب الوسيلة:');
+    keys.forEach((k) => { L.push(`${payLabelOf(storeSettings as any, k)}: ${m(snap?.shopAvail?.[k])}`); });
+    return L.join('\n');
+  };
+
+  // بعد تقفيل اليوم: يبعت تقرير التقفيل (بنفس أرقام الشاشة) لجروب التقارير على تيليجرام
+  // (بدل التقرير التلقائي القديم على الكرون). fire-and-forget — أي فشل مبيوقفش التقفيل.
+  const sendDailyReportAfterClose = async (dayStr: string, snap: any) => {
     try {
       const t = await saveXferToken();
+      const text = snap ? buildDayCloseReportText(dayStr, snap) : undefined;
       fetch('/api/daily-report', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(t ? { Authorization: `Bearer ${t}` } : {}) },
-        body: JSON.stringify({ date: dayStr }),
+        body: JSON.stringify(text ? { text } : { date: dayStr }),
       }).catch(() => {});
     } catch { /* تجاهل */ }
   };
@@ -92,7 +133,7 @@ export default function POS() {
       // عشان التقفيل يتحسب على يومه الصح مش على يوم التنفيذ الفعلي.
       const closeStamp = dayBudgetDate === todayStr() ? undefined : new Date(`${dayBudgetDate}T12:00:00`).toISOString();
       const ok = await savingsTransfer(split, 'in', 'day_closing', undefined, closeStamp);
-      if (ok) { sendDailyReportAfterClose(dayBudgetDate); alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
+      if (ok) { sendDailyReportAfterClose(dayBudgetDate, dayBudget); alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);
   };
@@ -107,7 +148,7 @@ export default function POS() {
       // عشان التقفيل يتحسب على يومه الصح مش على يوم التنفيذ الفعلي.
       const closeStamp = dayBudgetDate === todayStr() ? undefined : new Date(`${dayBudgetDate}T12:00:00`).toISOString();
       const ok = await savingsTransfer(split, 'in', 'day_closing', undefined, closeStamp);
-      if (ok) { sendDailyReportAfterClose(dayBudgetDate); alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
+      if (ok) { sendDailyReportAfterClose(dayBudgetDate, dayBudget); alert('تم تحويل المبلغ للخزنة الرئيسية ✅'); setSaveXfer({ cash: '', visa: '', wallet: '', instapay: '' }); setSaveXferOtp(''); setSaveXferSent(false); setShowSaveXfer(false); computeDayBudget(dayBudgetDate); }
     } catch { alert('تعذّر تنفيذ التحويل'); }
     setSaveXferBusy(false);
   };

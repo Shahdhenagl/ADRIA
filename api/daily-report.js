@@ -103,6 +103,14 @@ export default async function handler(req, res) {
   }
 
   try {
+    // لو الـ POS بعت نص جاهز (محسوب بنفس منطق شاشة التقفيل) نبعته زي ما هو —
+    // ده بيضمن إن أرقام التقرير تطابق شاشة التقفيل بالظبط بدل ما السيرفر يعيد الحساب.
+    const clientText = req.body && typeof req.body.text === 'string' ? req.body.text.trim() : '';
+    if (clientText) {
+      const result = await sendTelegramText(clientText.slice(0, 3900));
+      return res.status(200).json({ ok: true, sent: 'daily_client', result });
+    }
+
     const supabase = getSupabase();
     // date=YYYY-MM-DD (يوم القاهرة المحاسبي): يُستخدم عند التقفيل لإرسال تقرير اليوم
     // اللي اتقفل. بدونه = اليوم الحالي (ناقص 4 ساعات لتغطية بداية اليوم 3 ص).
