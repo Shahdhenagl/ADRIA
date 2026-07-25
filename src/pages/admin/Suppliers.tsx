@@ -1969,8 +1969,8 @@ export default function Suppliers() {
 
               {showSupplierFinancialModal && (
                 <div className="fixed inset-0 z-[60] bg-slate-950/50 backdrop-blur-sm flex items-center justify-center p-4">
-                  <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg border border-slate-100 overflow-hidden">
-                    <div className="p-6 border-b border-slate-100 flex items-center justify-between">
+                  <div className="bg-white rounded-[32px] shadow-2xl w-full max-w-lg border border-slate-100 overflow-hidden flex flex-col max-h-[90vh]">
+                    <div className="p-6 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
                       <div>
                         <h3 className="text-xl font-black text-slate-800">إضافة معاملة مالية</h3>
                         <p className="text-sm font-bold text-slate-400 mt-1">{selectedSupplierProfile.name}</p>
@@ -1978,7 +1978,7 @@ export default function Suppliers() {
                       <button onClick={() => setShowSupplierFinancialModal(false)} className="p-2 rounded-2xl hover:bg-slate-100 transition"><X size={22} /></button>
                     </div>
 
-                    <div className="p-6 space-y-5">
+                    <div className="p-6 space-y-5 overflow-y-auto flex-1">
                       <div className="grid grid-cols-2 gap-3">
                         <button
                           type="button"
@@ -2057,7 +2057,7 @@ export default function Suppliers() {
                       </div>
                     </div>
 
-                    <div className="p-6 border-t border-slate-100 flex gap-3">
+                    <div className="p-6 border-t border-slate-100 flex gap-3 flex-shrink-0">
                       <button
                         onClick={handleSupplierFinancialTransaction}
                         disabled={isPayingDebt}
