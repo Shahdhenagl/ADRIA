@@ -214,8 +214,17 @@ export default function POS() {
   const [historyToday, setHistoryToday] = useState(true);
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const [viewExchange, setViewExchange] = useState<any>(null);
+  // فاتورة كل أصنافها اترجعت مافيش فيها حاجة تتستبدل.
+  const canExchangeAgain = (o: any) => {
+    const items = (o?.items || []) as any[];
+    const fullyReturned = items.length > 0 && items.every((it: any) => (it.returned_quantity || 0) >= (it.quantity || 0));
+    return { blocked: fullyReturned, reason: fullyReturned ? 'مرتجعة بالكامل' : '' };
+  };
+  // فتح شاشة الاستبدال. فاتورة اتستبدلت قبل كده بتتفتح عادي (استبدال تاني):
+  // بعد الاستبدال الأول الفاتورة بقت شايلة القطع الجديدة، فالجولة الجاية بتشتغل
+  // عليها زي أي فاتورة. (قبل كده كان الزرار بيودّي على شاشة «التفاصيل» بس.)
   const openEditOrder = (o: any) => {
-    if (o.exchange_data) { setViewExchange(o); return; }
+    setViewExchange(null);
     setEditingOrder(o); setShowHistory(false);
   };
 
@@ -2664,6 +2673,10 @@ export default function POS() {
                           <div className="flex items-center gap-1.5">
                             <button onClick={() => setViewExchange(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-200 text-slate-700 hover:bg-slate-300 flex items-center gap-1"><Eye size={14} /> تفاصيل</button>
                             <button onClick={() => reprintOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200 flex items-center gap-1"><Printer size={14} /> طباعة</button>
+                            {/* استبدال تاني من صف الاستبدال نفسه — من غير ما نرجع لصف الفاتورة */}
+                            {perm('editDelete') && !canExchangeAgain(o).blocked && (
+                              <button onClick={() => openEditOrder(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-100 text-amber-700 hover:bg-amber-200 flex items-center gap-1"><RefreshCcw size={14} /> استبدال تاني</button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -2682,9 +2695,7 @@ export default function POS() {
                           <button onClick={() => sendOrderWhatsApp(o)} className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-[#25D366] text-white hover:bg-[#1da851]">واتساب</button>
                           {(() => {
                             // فاتورة اترجعت بالكامل = كل أصنافها مرتجعة → مايصحّش نستبدل فيها.
-                            const items = o.items || [];
-                            const fullyReturned = items.length > 0 && items.every((it: any) => (it.returned_quantity || 0) >= (it.quantity || 0));
-                            if (fullyReturned) return <span className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 flex items-center gap-1"><RefreshCcw size={14} /> مرتجعة بالكامل</span>;
+                            if (canExchangeAgain(o).blocked) return <span className="text-xs font-bold px-2.5 py-1.5 rounded-lg bg-slate-100 text-slate-400 flex items-center gap-1"><RefreshCcw size={14} /> مرتجعة بالكامل</span>;
                             // فاتورة متستبدلة قبل كده: بنعرض زرار العرض *و* زرار
                             // استبدال تاني — الفاتورة دلوقتي شايلة القطع الحالية،
                             // فالاستبدال التاني بيشتغل عليها عادي.
@@ -2780,6 +2791,11 @@ export default function POS() {
                   })()}
                   {ex.date ? <div className="text-[11px] font-bold text-slate-500 mt-1">{new Date(ex.date).toLocaleString('ar-EG')}</div> : null}
                 </div>
+                {/* استبدال تاني من جوه شاشة التفاصيل — الفاتورة دلوقتي شايلة القطع
+                    الحالية، فالجولة الجاية بتشتغل عليها زي أي فاتورة. */}
+                {perm('editDelete') && !canExchangeAgain(viewExchange).blocked && (
+                  <button onClick={() => openEditOrder(viewExchange)} className="w-full bg-amber-500 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2"><RefreshCcw size={16} /> استبدال تاني على الفاتورة دي</button>
+                )}
                 <button onClick={() => reprintOrder(viewExchange)} className="w-full bg-indigo-600 text-white font-bold py-2.5 rounded-xl flex items-center justify-center gap-2"><Printer size={16} /> طباعة الفاتورة الحالية</button>
               </div>
             </div>
