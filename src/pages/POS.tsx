@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useStore, HELD_STATUS_LABEL, type HeldInvoice, type HeldStatus, type Product } from '../store/useStore';
 import { HeldReturnModal } from '../components/HeldReturnModal';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, Clock, PauseCircle, Undo2, Truck } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Truck } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { printBarcodeLabels, generateBarcode } from '../utils/printBarcodeLabels';
@@ -24,7 +24,7 @@ import { printShippingLabel } from '../utils/printShippingLabel';
 const RECONCILE_CAT = 'تسوية جرد الخزنة';
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -919,6 +919,82 @@ export default function POS() {
       alert('حدث خطأ أثناء صرف السلفة');
     } finally {
       setIsSubmittingAdvance(false);
+    }
+  };
+
+  // ── خصم موظف من الكاشير (تسجيل بس — مفيش فلوس بتخرج من الخزنة) ──
+  // بيتكتب في employee_deductions (db/42) بالشهر المأخوذ من تاريخ الخصم، فبيظهر
+  // على طول في بروفايل الموظف تحت خصومات الشهر ده وبيتخصم من المتبقي وقت الراتب.
+  // مقصود إنه ما يعدّيش على أي حساب خزنة — عشان كده مش بيكتب مصروف ولا معاملة موظف.
+  const [showDeductionModal, setShowDeductionModal] = useState(false);
+  const [dedEmpId, setDedEmpId] = useState('');
+  const [dedDays, setDedDays] = useState('');
+  const [dedAmount, setDedAmount] = useState('');
+  const [dedReason, setDedReason] = useState('');
+  const [dedDate, setDedDate] = useState(() => businessDateStr(storeSettings));
+  const [isSubmittingDeduction, setIsSubmittingDeduction] = useState(false);
+  const canEmployeeDeduction = perm('employeeDeduction');
+  const dedEmp = employees.find((e: any) => e.id === dedEmpId) || null;
+  // نفس حسبة شاشة الموظفين: سعر اليوم = الراتب / 30، والأيام بتقبل نص يوم.
+  const dedDailyRate = dedEmp ? (Number((dedEmp as any).monthly_salary) || 0) / 30 : 0;
+  const dedTotal = Math.round(((parseFloat(dedDays) || 0) * dedDailyRate + (parseFloat(dedAmount) || 0)) * 100) / 100;
+  const dedMonth = dedDate.slice(0, 7);
+  // خصومات يدوية متسجّلة على نفس الموظف في نفس الشهر (للعرض قبل التأكيد).
+  const dedMonthSoFar = (employeeDeductions || [])
+    .filter((d: any) => d.employee_id === dedEmpId && d.month === dedMonth)
+    .reduce((s: number, d: any) => s + (Number(d.amount) || 0), 0);
+
+  const resetDeductionForm = () => {
+    setDedEmpId(''); setDedDays(''); setDedAmount(''); setDedReason(''); setDedDate(businessDateStr(storeSettings));
+  };
+
+  const handleDeductionSubmit = async () => {
+    if (!dedEmpId) { alert('يرجى اختيار الموظف'); return; }
+    if (dedTotal <= 0) { alert('حدّد عدد الأيام أو المبلغ'); return; }
+    const days = parseFloat(dedDays) || 0;
+    const actorName = activeCashier?.name || 'كاشير';
+    const daysText = days > 0 ? `${days} يوم × ${dedDailyRate.toLocaleString(undefined, { maximumFractionDigits: 2 })}\n` : '';
+    const ok = window.confirm(
+      `خصم ${dedTotal.toLocaleString()} ${storeSettings.currency} على ${(dedEmp as any)?.name || ''} عن شهر ${dedMonth}.\n` +
+      daysText +
+      `خصومات الشهر قبل ده: ${dedMonthSoFar.toLocaleString()} → بعده: ${(dedMonthSoFar + dedTotal).toLocaleString()}\n\n` +
+      `الخصم مش بيطلّع فلوس من الخزنة — بس بيقلّل المستحق للموظف وقت صرف الراتب.\n\nتأكيد؟`
+    );
+    if (!ok) return;
+
+    setIsSubmittingDeduction(true);
+    try {
+      await addEmployeeDeduction({
+        employee_id: dedEmpId,
+        amount: dedTotal,
+        days,
+        // اسم الكاشير جوه السبب عشان يبان في سجل حركات الموظف مين سجّل الخصم.
+        reason: (dedReason.trim() ? `${dedReason.trim()} - ` : '') + `بواسطة ${actorName}`,
+        month: dedMonth,
+        date: dedDate,
+      } as any);
+
+      fetch('/api/telegram-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'employee_deduction',
+          actor: actorName,
+          date: new Date().toISOString(),
+          amount: dedTotal,
+          description: `خصم على ${(dedEmp as any)?.name || ''} — شهر ${dedMonth}${days > 0 ? ` (${days} يوم)` : ''}`,
+          noteText: dedReason.trim(),
+        })
+      }).catch(() => {});
+
+      alert('تم تسجيل الخصم ✅ (هيظهر في خصومات شهر ' + dedMonth + ' في بروفايل الموظف)');
+      setShowDeductionModal(false);
+      resetDeductionForm();
+    } catch (e) {
+      // أشيع سبب: جدول db/42 لسه ماتعملش على الداتابيز.
+      alert('فشل حفظ الخصم: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setIsSubmittingDeduction(false);
     }
   };
 
@@ -2313,6 +2389,102 @@ export default function POS() {
         </div>
       )}
 
+      {showDeductionModal && canEmployeeDeduction && (
+        <div className="fixed inset-0 z-[150] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-gray-200 dark:border-slate-700 max-h-[90vh]">
+            <div className="p-6 bg-gradient-to-r from-rose-500 to-red-600 text-white flex justify-between items-center shrink-0">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <UserMinus size={24} /> تسجيل خصم لموظف
+              </h2>
+              <button onClick={() => { setShowDeductionModal(false); resetDeductionForm(); }} className="hover:bg-white/20 p-2 rounded-full transition">
+                <X size={24} />
+              </button>
+            </div>
+            <div className="p-6 flex flex-col gap-4 overflow-y-auto" dir="rtl">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">الموظف</label>
+                <select
+                  className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-rose-500 font-bold"
+                  value={dedEmpId}
+                  onChange={(e) => setDedEmpId(e.target.value)}
+                >
+                  <option value="">— اختر الموظف —</option>
+                  {employees.filter((emp: any) => emp.is_active !== false).map((emp: any) => (
+                    <option key={emp.id} value={emp.id}>{emp.name}{emp.job_title ? ` (${emp.job_title})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">بعدد الأيام</label>
+                  <input type="number" dir="ltr" min="0" step="0.5" placeholder="0"
+                    className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-rose-500 font-bold text-right"
+                    value={dedDays} onChange={(e) => setDedDays(e.target.value)}
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">بيقبل نص يوم (0.5) — سعر اليوم {dedDailyRate.toLocaleString(undefined, { maximumFractionDigits: 2 })}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">بمبلغ محدد</label>
+                  <input type="number" dir="ltr" min="0" step="0.01" placeholder="0.00"
+                    className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-rose-500 font-bold text-right"
+                    value={dedAmount} onChange={(e) => setDedAmount(e.target.value)}
+                  />
+                  <p className="text-[10px] text-slate-400 mt-1">تقدر تستخدم الاتنين مع بعض</p>
+                </div>
+              </div>
+
+              <div className="bg-gray-100 dark:bg-slate-700 rounded-xl p-3 space-y-1">
+                <div className="flex justify-between items-center">
+                  <span className="text-sm font-bold text-slate-500 dark:text-slate-400">إجمالي الخصم:</span>
+                  <span className="text-xl font-black text-rose-600">{dedTotal.toLocaleString()} {storeSettings.currency}</span>
+                </div>
+                {dedEmpId && (
+                  <div className="flex justify-between items-center text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                    <span>خصومات شهر {dedMonth} المسجّلة:</span>
+                    <span>{dedMonthSoFar.toLocaleString()} → {(dedMonthSoFar + dedTotal).toLocaleString()}</span>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">تاريخ الخصم</label>
+                <input
+                  type="date"
+                  value={dedDate}
+                  max={businessDateStr(storeSettings)}
+                  onChange={(e) => setDedDate(e.target.value)}
+                  className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-rose-500 font-bold"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">الخصم بيقع على راتب شهر {dedMonth}.</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">سبب الخصم</label>
+                <textarea
+                  value={dedReason}
+                  onChange={(e) => setDedReason(e.target.value)}
+                  placeholder="مثال: تأخير / غياب / كسر..."
+                  className="w-full h-20 bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-rose-500 resize-none font-bold placeholder-gray-400"
+                />
+              </div>
+
+              <p className="text-[11px] text-rose-700 dark:text-rose-400 font-bold bg-rose-50 dark:bg-rose-900/20 rounded-xl px-3 py-2 text-center">
+                الخصم مش بيطلّع فلوس من الخزنة — بس بيتسجّل على الموظف وبيتخصم من راتب الشهر.
+              </p>
+
+              <button
+                onClick={handleDeductionSubmit}
+                disabled={isSubmittingDeduction || dedTotal <= 0 || !dedEmpId}
+                className="w-full font-black py-4 rounded-2xl transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-white bg-rose-600 hover:bg-rose-700"
+              >
+                {isSubmittingDeduction ? 'جاري الحفظ...' : <><UserMinus size={20} /> تسجيل الخصم</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showBarcodeModal && canBarcodePrint && (
         <div className="fixed inset-0 z-[150] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-gray-200 dark:border-slate-700 max-h-[90vh]">
@@ -3093,6 +3265,15 @@ export default function POS() {
                   title="صرف سلفة لموظف"
                 >
                   <HandCoins size={20} />
+                </button>
+              )}
+              {canEmployeeDeduction && (
+                <button
+                  onClick={() => { resetDeductionForm(); setShowDeductionModal(true); }}
+                  className="w-12 h-12 flex items-center justify-center rounded-xl bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-400 hover:bg-rose-100 dark:hover:bg-rose-900/50 transition-colors shadow-sm border border-rose-100 dark:border-rose-800/50"
+                  title="تسجيل خصم لموظف"
+                >
+                  <UserMinus size={20} />
                 </button>
               )}
               {canBarcodePrint && (

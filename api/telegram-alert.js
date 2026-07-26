@@ -46,6 +46,7 @@ const TYPE_LABELS = {
   savings_in: 'تحويل لخزنة الادخار',
   savings_out: 'تحويل من خزنة الادخار',
   savings_convert: 'تحويل بين طرق الخزنة الرئيسية',
+  employee_deduction: 'خصم على موظف (بدون صرف من الخزنة)',
 };
 
 // ── توجيه الرسايل على جروبات مختلفة (نفس البوت، chat مختلف حسب نوع الحركة) ──────
@@ -58,6 +59,7 @@ const TYPE_CATEGORY = {
   delete_invoice: 'finance', delete_purchase_invoice: 'finance', edit_invoice: 'finance',
   manager_withdrawal: 'finance', partner_withdraw: 'finance', partner_deposit: 'finance',
   savings_in: 'finance', savings_out: 'finance', savings_convert: 'finance',
+  employee_deduction: 'finance',
   // موردين ومشتريات
   purchase: 'suppliers', supplier_payment: 'suppliers', supplier_collection: 'suppliers', supplier_return: 'suppliers',
   // مخزون

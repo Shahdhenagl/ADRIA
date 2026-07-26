@@ -359,6 +359,7 @@ export default function Settings() {
               ['wholesale', 'أسعار الجملة / نص الجملة'],
               ['savings', 'تحويل للخزنة الرئيسية'],
               ['barcodePrint', 'طباعة باركود المنتجات'],
+              ['employeeDeduction', 'تسجيل خصم لموظف (بدون فلوس من الخزنة)'],
             ] as const).map(([k, label]) => {
               const perms = formData.cashierPermissions || {};
               const enabled = perms[k] !== false; // الافتراضي مسموح
