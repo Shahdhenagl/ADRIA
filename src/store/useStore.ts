@@ -431,6 +431,10 @@ export interface Employee {
   shift_start?: string; // بداية الدوام 'HH:MM' لحساب التأخير
   shift_end?: string; // نهاية الدوام 'HH:MM' لحساب طول يوم العمل
   late_grace_minutes?: number; // دقائق سماح قبل احتساب التأخير
+  // شفت الجمعة المستقل (db/60) — فاضي = يستخدم الشفت العادي.
+  friday_shift_start?: string | null;
+  friday_shift_end?: string | null;
+  friday_is_off?: boolean; // الجمعة راحة أسبوعية: مفيش دوام ولا تأخير ولا خصم
   hire_date: string;
   is_active: boolean;
   created_at: string;
@@ -463,7 +467,9 @@ export interface EmployeeLeave {
   start_date: string;
   end_date: string;
   days_count: number;
-  leave_type: 'paid' | 'unpaid';
+  // paid = من الرصيد الشهري | unpaid = بخصم من المرتب
+  // granted = إجازة إدارية بدون خصم وبدون استهلاك الرصيد (db/60)
+  leave_type: 'paid' | 'unpaid' | 'granted';
   deduction_amount: number;
   month: string;
   note: string;

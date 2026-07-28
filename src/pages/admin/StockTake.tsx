@@ -14,6 +14,25 @@ const LOCATION_LABEL: Record<Location, string> = { all: 'كل المخزن', war
 // لو بتجردي كذا قطعة بنفس الباركود استني اللمبة تولّع تاني بين القطعة والتانية.
 const RESCAN_MS = 900;
 
+/**
+ * وقف الماسح وتفضية الحاوية — بيبلع كل الأخطاء عن قصد.
+ * html5-qrcode بيحقن عناصره جوه الـ div بنفسه، ولو رمى استثناء وهو بيشيلها
+ * (كاميرا اتقفلت مرتين، أو الحاوية اتشالت من React) الاستثناء بيطلع لريأكت
+ * ويوقّع الشجرة كلها — ودي كانت «الشاشة البيضا» بعد الخروج من الكاميرا.
+ */
+const stopScanner = (scanner: Html5Qrcode | null) => {
+  if (!scanner) return Promise.resolve();
+  const safeClear = () => { try { scanner.clear(); } catch { /* الحاوية اتفضّت خلاص */ } };
+  try {
+    const state = scanner.getState();
+    if (state === 2 || state === 3) { // 2 = SCANNING, 3 = PAUSED
+      return scanner.stop().then(safeClear).catch(() => {});
+    }
+  } catch { /* المكتبة بترمي لو لسه بتقوم */ }
+  safeClear();
+  return Promise.resolve();
+};
+
 export default function StockTake() {
   const { products, storeSettings, adjustStock } = useStore();
   const cur = storeSettings.currency;
@@ -149,22 +168,21 @@ export default function StockTake() {
       setTorchOn(false);
       setTorchSupported(false);
       scannerRef.current = null;
-      // stop() بيرمي لو الكاميرا لسه بتقوم — مش مشكلة، الكومبوننت بيتقفل بره.
-      scanner?.stop().then(() => scanner?.clear()).catch(() => {});
+      // الحاوية #stocktake-reader بتفضل في الـ DOM دايماً (مخفية بـ CSS)، فالتنضيف
+      // هنا بيلاقي عناصره مكانها. stop() بيرمي لو الكاميرا لسه بتقوم — بنبلعه.
+      stopScanner(scanner);
     };
   }, [scanOpen]);
 
-  // بنوقّف الكاميرا *قبل* ما الشاشة تتشال من الـ DOM — لو سبناها لتنظيف الـ effect
-  // بيبقى الـ div اتشال خلاص وممكن تفضل لمبة الكاميرا شغّالة على بعض الأجهزة.
+  // وقف الكاميرا لو المستخدم خرج من الصفحة والماسح مفتوح.
+  useEffect(() => () => { stopScanner(scannerRef.current); }, []);
+
+  // بنوقّف الكاميرا *قبل* ما الشاشة تتخفي — لو سبناها لتنظيف الـ effect ممكن
+  // تفضل لمبة الكاميرا شغّالة على بعض الأجهزة.
   const closeScanner = async () => {
     const s = scannerRef.current;
     scannerRef.current = null;
-    try {
-      if (s && s.getState() === 2) await s.stop(); // 2 = SCANNING
-      s?.clear();
-    } catch {
-      // لو وقفت لوحدها مفيش مشكلة
-    }
+    await stopScanner(s);
     setTorchOn(false);
     setScanOpen(false);
   };
@@ -338,9 +356,11 @@ export default function StockTake() {
         {stockLocation === 'warehouse' && ' — جرد المستودع بيعدّل كمية المستودع فقط، والمعروض في المحل بيفضل زي ما هو.'}
       </p>
 
-      {/* ── ماسح الكاميرا: مسح مستمر، كل قراءة بتزوّد قطعة ─────────────────── */}
-      {scanOpen && (
-        <div className="fixed inset-0 z-[200] bg-black flex flex-col" dir="rtl">
+      {/* ── ماسح الكاميرا: مسح مستمر، كل قراءة بتزوّد قطعة ───────────────────
+          الشاشة دي بتفضل موجودة في الـ DOM وبتتخفي بـ CSS بدل ما تتشال: مكتبة
+          الكاميرا بتحقن عناصرها جوه #stocktake-reader، ولو React شال الحاوية
+          والمكتبة لسه بتنضّف بتحصل «الشاشة البيضا» بعد الخروج. */}
+      <div className={`fixed inset-0 z-[200] bg-black flex-col ${scanOpen ? 'flex' : 'hidden'}`} dir="rtl">
           <div className="flex items-center justify-between px-4 py-3 bg-slate-900 text-white shrink-0">
             <div>
               <h2 className="font-black flex items-center gap-2"><Camera size={20} /> جرد بالمسح</h2>
@@ -396,8 +416,7 @@ export default function StockTake() {
               </div>
             )}
           </div>
-        </div>
-      )}
+      </div>
     </div>
   );
 }

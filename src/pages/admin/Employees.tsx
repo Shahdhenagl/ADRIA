@@ -9,6 +9,7 @@ import {
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
 import { markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../../utils/treasury';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
+import { computeLatenessOn, shiftForDate, shiftLabel } from '../../utils/shifts';
 
 // شكل مبسّط للفاتورة/الصنف لحساب مبيعات الموظف وعمولته. متساهل عن قصد عشان
 // يستوعب الشكلين: فواتير الستور (الأصناف متسطّحة) وصفوف الداتابيز الخام
@@ -181,6 +182,9 @@ export default function Employees() {
     shift_start: '',
     shift_end: '',
     late_grace_minutes: '0',
+    friday_shift_start: '',
+    friday_shift_end: '',
+    friday_is_off: false,
     hire_date: todayBusiness,
     is_active: true,
     attendance_pin: ''
@@ -205,7 +209,7 @@ export default function Employees() {
   const [leaveFormData, setLeaveFormData] = useState({
     start_date: todayBusiness,
     end_date: todayBusiness,
-    leave_type: 'paid' as 'paid' | 'unpaid',
+    leave_type: 'paid' as 'paid' | 'unpaid' | 'granted',
     note: ''
   });
 
@@ -305,16 +309,26 @@ export default function Employees() {
     emp: Employee,
     start: string,
     end: string,
-    leaveType: 'paid' | 'unpaid',
+    leaveType: 'paid' | 'unpaid' | 'granted',
     excludeLeaveId?: string
   ) => {
     const dailyRate = emp.monthly_salary / 30;
     const ranges = splitDateRangeByMonth(start, end);
     const records: {
       start_date: string; end_date: string; days_count: number;
-      leave_type: 'paid' | 'unpaid'; deduction_amount: number; month: string;
+      leave_type: 'paid' | 'unpaid' | 'granted'; deduction_amount: number; month: string;
     }[] = [];
-    let totalPaid = 0, totalUnpaid = 0, totalDeduction = 0;
+    let totalPaid = 0, totalUnpaid = 0, totalDeduction = 0, totalGranted = 0;
+
+    // إجازة إدارية (granted): بدون خصم وبدون استهلاك الرصيد الشهري — فمش داخلة
+    // في توزيع الرصيد أصلاً (db/60).
+    if (leaveType === 'granted') {
+      for (const r of ranges) {
+        records.push({ start_date: r.start, end_date: r.end, days_count: r.days, leave_type: 'granted', deduction_amount: 0, month: r.start.slice(0, 7) });
+        totalGranted += r.days;
+      }
+      return { records, totalPaid: 0, totalUnpaid: 0, totalDeduction: 0, totalGranted };
+    }
 
     for (const r of ranges) {
       const month = r.start.slice(0, 7);
@@ -336,7 +350,7 @@ export default function Employees() {
         totalDeduction += ded;
       }
     }
-    return { records, totalPaid, totalUnpaid, totalDeduction };
+    return { records, totalPaid, totalUnpaid, totalDeduction, totalGranted };
   };
 
   // خصومات الحضور (التأخير) لموظف في شهر معيّن.
@@ -345,32 +359,16 @@ export default function Employees() {
       .filter(a => a.employee_id === empId && (a.month === month || a.date.slice(0, 7) === month))
       .reduce((sum, a) => sum + Number(a.deduction_amount || 0), 0);
 
-  // حساب التأخير لحظة تسجيل الحضور.
-  const computeLateness = (emp: Employee, now: Date) => {
-    if (!emp.shift_start) return { lateMinutes: 0, deduction: 0 };
-    // بداية الدوام بتترّبط باليوم المحاسبي مش التقويمي، عشان وردية بتعدّي منتصف
-    // الليل تفضل محسوبة على يوم بدايتها.
-    const dateStr = businessDateStr(storeSettings as any, now);
-    const [sh, sm] = emp.shift_start.slice(0, 5).split(':').map((x) => parseInt(x, 10));
-    const expected = new Date(`${dateStr}T00:00:00`);
-    expected.setHours(sh || 0, sm || 0, 0, 0);
-    const grace = Number(emp.late_grace_minutes ?? 0);
-    const rawLate = Math.round((now.getTime() - expected.getTime()) / 60000);
-    const lateMinutes = Math.max(0, rawLate - grace);
-    if (lateMinutes <= 0) return { lateMinutes: 0, deduction: 0 };
+  // هل اليوم ده عليه إجازة مسجّلة للموظف (بأي نوع)؟ يوم الإجازة مالوش تأخير ولا خصم.
+  const hasLeaveOn = (empId: string, dateStr: string) =>
+    employeeLeaves.some(l => l.employee_id === empId && dateStr >= l.start_date && dateStr <= l.end_date);
 
-    // طول يوم العمل بالدقائق (لتحديد سعر الدقيقة). fallback 8 ساعات.
-    let workdayMinutes = 480;
-    if (emp.shift_end) {
-      const [eh, em] = emp.shift_end.slice(0, 5).split(':').map((x) => parseInt(x, 10));
-      let mins = ((eh || 0) * 60 + (em || 0)) - ((sh || 0) * 60 + (sm || 0));
-      if (mins <= 0) mins += 24 * 60; // وردية تعدّي منتصف الليل
-      workdayMinutes = mins || 480;
-    }
-    const dailyRate = emp.monthly_salary / 30;
-    const deduction = Math.min(dailyRate, (lateMinutes / workdayMinutes) * dailyRate);
-    return { lateMinutes, deduction: Math.round(deduction * 100) / 100 };
-  };
+  // حساب التأخير لحضور في يوم معيّن (اليوم المحاسبي مش التقويمي، عشان وردية بتعدّي
+  // منتصف الليل تفضل محسوبة على يوم بدايتها). الشفت بييجي من shiftForDate عشان
+  // الجمعة ليها مواعيدها المستقلة — نفس منطق record_attendance في db/60.
+  const computeLatenessForDay = (emp: Employee, dateStr: string, at: Date) =>
+    computeLatenessOn(emp, dateStr, at, hasLeaveOn(emp.id, dateStr));
+
 
   const getLeaveMonthDeductions = (empId: string, month: string, excludeLeaveId?: string) =>
     employeeLeaves
@@ -502,7 +500,7 @@ export default function Employees() {
   // سجل الحضور يوماً بيوم: كل يوم إمّا «حاضر» (بسجل حضور/انصراف وتأخير) أو «إجازة»
   // (يوم مُجاز) أو «غائب» (لا يوجد تسجيل). الأيام قبل التعيين أو بعد اليوم تُستبعَد.
   const profileAttendance = useMemo(() => {
-    const empty = { days: [] as any[], records: [] as any[], present: 0, absent: 0, leave: 0, lateDays: 0, lateMinutes: 0, attDeductions: 0 };
+    const empty = { days: [] as any[], records: [] as any[], present: 0, absent: 0, leave: 0, off: 0, lateDays: 0, lateMinutes: 0, attDeductions: 0 };
     if (!profileEmployee) return empty;
     const todayStr = todayBusiness;
     const hireStr = profileEmployee.hire_date || profileEmployee.created_at?.slice(0, 10) || '2000-01-01';
@@ -532,7 +530,7 @@ export default function Employees() {
     const isLeaveDay = (d: string) => leaves.some(l => d >= l.start_date && d <= l.end_date);
 
     const days: any[] = [];
-    let present = 0, absent = 0, leave = 0, lateDays = 0, lateMinutes = 0, attDeductions = 0;
+    let present = 0, absent = 0, leave = 0, off = 0, lateDays = 0, lateMinutes = 0, attDeductions = 0;
     let cursor = new Date(`${start}T00:00:00`);
     const endDate = new Date(`${end}T00:00:00`);
     let guard = 0;
@@ -540,19 +538,22 @@ export default function Employees() {
       guard++;
       const d = formatDateInput(cursor);
       const record = rowByDate.get(d);
-      let status: 'present' | 'absent' | 'leave';
+      // الراحة الأسبوعية (الجمعة لو متحددة راحة للموظف) مش غياب — يوم مش مطلوب فيه دوام.
+      const shift = shiftForDate(profileEmployee, d);
+      let status: 'present' | 'absent' | 'leave' | 'off';
       if (record) {
         status = 'present'; present++;
         lateMinutes += Number(record.late_minutes || 0);
         if (Number(record.late_minutes || 0) > 0) lateDays++;
         attDeductions += Number(record.deduction_amount || 0);
       } else if (isLeaveDay(d)) { status = 'leave'; leave++; }
+      else if (shift.isWeeklyOff) { status = 'off'; off++; }
       else { status = 'absent'; absent++; }
-      days.push({ date: d, record: record || null, status });
+      days.push({ date: d, record: record || null, status, shift: shiftLabel(profileEmployee, d) });
       cursor.setDate(cursor.getDate() + 1);
     }
     days.reverse();
-    return { days, records: rows, present, absent, leave, lateDays, lateMinutes, attDeductions };
+    return { days, records: rows, present, absent, leave, off, lateDays, lateMinutes, attDeductions };
   }, [profileEmployee, employeeAttendance, employeeLeaves, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
   // الخصومات اليدوية للموظف في الفترة المختارة — نفس فلترة الإجازات.
@@ -660,13 +661,16 @@ export default function Employees() {
         shift_start: (emp.shift_start || '').slice(0, 5),
         shift_end: (emp.shift_end || '').slice(0, 5),
         late_grace_minutes: String(Number(emp.late_grace_minutes ?? 0)),
+        friday_shift_start: (emp.friday_shift_start || '').slice(0, 5),
+        friday_shift_end: (emp.friday_shift_end || '').slice(0, 5),
+        friday_is_off: !!emp.friday_is_off,
         hire_date: emp.hire_date || emp.created_at?.slice(0, 10) || today,
         is_active: emp.is_active ?? true,
         attendance_pin: emp.attendance_pin || ''
       });
     } else {
       setEditingEmployee(null);
-      setEmpFormData({ name: '', phone: '', job_title: '', working_hours: '', monthly_salary: '', monthly_leave_days: String(DEFAULT_MONTHLY_LEAVE), shift_start: '', shift_end: '', late_grace_minutes: '0', hire_date: today, is_active: true, attendance_pin: '' });
+      setEmpFormData({ name: '', phone: '', job_title: '', working_hours: '', monthly_salary: '', monthly_leave_days: String(DEFAULT_MONTHLY_LEAVE), shift_start: '', shift_end: '', late_grace_minutes: '0', friday_shift_start: '', friday_shift_end: '', friday_is_off: false, hire_date: today, is_active: true, attendance_pin: '' });
     }
     setShowEmpModal(true);
   };
@@ -685,6 +689,10 @@ export default function Employees() {
       shift_start: empFormData.shift_start || null,
       shift_end: empFormData.shift_end || null,
       late_grace_minutes: parseFloat(empFormData.late_grace_minutes) || 0,
+      // شفت الجمعة (db/60): فاضي = يرجع للشفت العادي. لو الجمعة راحة مالوش لازمة أصلاً.
+      friday_shift_start: empFormData.friday_is_off ? null : (empFormData.friday_shift_start || null),
+      friday_shift_end: empFormData.friday_is_off ? null : (empFormData.friday_shift_end || null),
+      friday_is_off: empFormData.friday_is_off,
       hire_date: empFormData.hire_date || today,
       is_active: empFormData.is_active,
       attendance_pin: empFormData.attendance_pin.trim() || null
@@ -939,7 +947,11 @@ export default function Employees() {
         leave_type: rec.leave_type,
         deduction_amount: rec.deduction_amount,
         month: rec.month,
-        note: leaveFormData.note || (rec.leave_type === 'paid' ? 'إجازة من الرصيد الشهري' : 'إجازة بخصم من المرتب')
+        note: leaveFormData.note || (
+          rec.leave_type === 'paid' ? 'إجازة من الرصيد الشهري'
+          : rec.leave_type === 'granted' ? 'إجازة بقرار الإدارة — بدون خصم'
+          : 'إجازة بخصم من المرتب'
+        )
       });
     }
 
@@ -952,38 +964,131 @@ export default function Employees() {
   };
 
   const handleCheckIn = async (emp: Employee) => {
-    if (!emp.shift_start) {
-      return alert('حدّد "بداية الدوام" لهذا الموظف أولاً من تعديل بياناته حتى يُحسب التأخير.');
-    }
     const now = new Date();
     // اليوم المحاسبي (day_start_hour، افتراضي ٣ ص) مش تاريخ التقويم — لازم يطابق
     // دالة attendance_business_date في db/51 اللي بتستخدمها صفحة الحضور الذاتي،
     // وإلا تسجيل بعد نص الليل من اللوحة بيكتب صف بتاريخ تاني عن اللي بتدوّر عليه.
     const dateStr = businessDateStr(storeSettings as any, now);
+    const shift = shiftForDate(emp, dateStr);
+    if (!shift.start && !shift.isWeeklyOff) {
+      return alert('حدّد "بداية الدوام" لهذا الموظف أولاً من تعديل بياناته حتى يُحسب التأخير.');
+    }
     const already = employeeAttendance.find(a => a.employee_id === emp.id && a.date === dateStr);
     if (already) {
       return alert('تم تسجيل حضور هذا الموظف اليوم بالفعل.');
     }
-    const { lateMinutes, deduction } = computeLateness(emp, now);
+    const offDay = shift.isWeeklyOff || hasLeaveOn(emp.id, dateStr);
+    const { lateMinutes, deduction } = computeLatenessForDay(emp, dateStr, now);
     const timeStr = now.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' });
-    const confirmMsg = lateMinutes > 0
-      ? `تسجيل حضور ${emp.name} الساعة ${timeStr}.\nتأخير ${lateMinutes} دقيقة${deduction > 0 ? ` — خصم ${deduction.toLocaleString()} ${storeSettings.currency}` : ''}.\nمتابعة؟`
-      : `تسجيل حضور ${emp.name} الساعة ${timeStr} — في الميعاد ✅. متابعة؟`;
+    const confirmMsg = offDay
+      ? `تسجيل حضور ${emp.name} الساعة ${timeStr} في يوم راحة/إجازة — بدون حساب تأخير. متابعة؟`
+      : lateMinutes > 0
+        ? `تسجيل حضور ${emp.name} الساعة ${timeStr}.\nتأخير ${lateMinutes} دقيقة${deduction > 0 ? ` — خصم ${deduction.toLocaleString()} ${storeSettings.currency}` : ''}.\nمتابعة؟`
+        : `تسجيل حضور ${emp.name} الساعة ${timeStr} — في الميعاد ✅. متابعة؟`;
     if (!confirm(confirmMsg)) return;
     try {
       await addEmployeeAttendance({
         employee_id: emp.id,
         date: dateStr,
         check_in: now.toISOString(),
-        shift_start: emp.shift_start.slice(0, 5),
+        shift_start: (shift.start || '').slice(0, 5),
         late_minutes: lateMinutes,
         deduction_amount: deduction,
         month: dateStr.slice(0, 7),
-        note: ''
+        note: offDay ? 'دوام في يوم راحة/إجازة' : ''
       });
     } catch (err) {
       alert((err as Error)?.message || 'تعذّر تسجيل الحضور');
     }
+  };
+
+  // ── تعديل/إضافة حضور يدوياً من الأدمن (db/60) ─────────────────────────────
+  // الموظف بينسى يسجّل، أو بيسجّل بالغلط — الأدمن لازم يقدر يظبط اليوم بنفسه.
+  // التأخير والخصم بيتحسبوا من جديد على أساس شفت اليوم ده (الجمعة ليها شفتها).
+  const [attModal, setAttModal] = useState<{
+    employee: Employee; date: string; record: EmployeeAttendance | null;
+    checkIn: string; checkOut: string; note: string;
+  } | null>(null);
+
+  const openAttendanceModal = (emp: Employee, date: string, record: EmployeeAttendance | null) => {
+    const hhmm = (iso?: string | null) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    };
+    const shift = shiftForDate(emp, date);
+    setAttModal({
+      employee: emp,
+      date,
+      record,
+      checkIn: record ? hhmm(record.check_in) : (shift.start || '').slice(0, 5),
+      checkOut: record ? hhmm(record.check_out) : (shift.end || '').slice(0, 5),
+      note: record?.note || '',
+    });
+  };
+
+  // 'HH:MM' على تاريخ اليوم المحاسبي ⇒ ISO. الانصراف اللي قبل الحضور بيتحسب
+  // على اليوم اللي بعده (وردية بتعدّي منتصف الليل).
+  const timeOnDate = (dateStr: string, hhmm: string, afterMs?: number) => {
+    const [h, m] = hhmm.split(':').map((x) => parseInt(x, 10));
+    const d = new Date(`${dateStr}T00:00:00`);
+    d.setHours(h || 0, m || 0, 0, 0);
+    if (afterMs !== undefined && d.getTime() < afterMs) d.setDate(d.getDate() + 1);
+    return d;
+  };
+
+  const submitAttendanceModal = async () => {
+    if (!attModal) return;
+    const { employee: emp, date, record, checkIn, checkOut, note } = attModal;
+    if (!checkIn) return alert('أدخل وقت الحضور.');
+    const inDate = timeOnDate(date, checkIn);
+    const outDate = checkOut ? timeOnDate(date, checkOut, inDate.getTime()) : null;
+    const { lateMinutes, deduction } = computeLatenessForDay(emp, date, inDate);
+    const shift = shiftForDate(emp, date);
+    try {
+      if (record) {
+        await updateEmployeeAttendance(record.id, {
+          check_in: inDate.toISOString(),
+          check_out: outDate ? outDate.toISOString() : null,
+          shift_start: (shift.start || '').slice(0, 5),
+          late_minutes: lateMinutes,
+          deduction_amount: deduction,
+          note,
+        } as any);
+      } else {
+        await addEmployeeAttendance({
+          employee_id: emp.id,
+          date,
+          check_in: inDate.toISOString(),
+          check_out: outDate ? outDate.toISOString() : null,
+          shift_start: (shift.start || '').slice(0, 5),
+          late_minutes: lateMinutes,
+          deduction_amount: deduction,
+          month: date.slice(0, 7),
+          note: note || 'تسجيل يدوي من الإدارة',
+        } as any);
+      }
+      setAttModal(null);
+    } catch (err) {
+      alert((err as Error)?.message || 'تعذّر حفظ سجل الحضور');
+    }
+  };
+
+  // إجازة إدارية بدون خصم ليوم واحد: مش بتاكل من الرصيد الشهري ومفيهاش خصم (db/60).
+  const grantDayOff = async (emp: Employee, date: string) => {
+    if (hasLeaveOn(emp.id, date)) return alert('هذا اليوم مسجّل كإجازة بالفعل.');
+    const note = window.prompt(`إجازة بدون خصم لـ${emp.name} يوم ${date}.\nالسبب (اختياري):`, '');
+    if (note === null) return;
+    await addEmployeeLeave({
+      employee_id: emp.id,
+      start_date: date,
+      end_date: date,
+      days_count: 1,
+      leave_type: 'granted',
+      deduction_amount: 0,
+      month: date.slice(0, 7),
+      note: note.trim() || 'إجازة بقرار الإدارة — بدون خصم',
+    } as any);
   };
 
   const handleDeleteAttendance = async (attId: string) => {
@@ -1371,9 +1476,11 @@ export default function Employees() {
                       <td className="p-6 text-slate-800 font-black">{leave.days_count} يوم</td>
                       <td className="p-6">
                         <span className={`px-2.5 py-1 rounded-lg font-bold text-[10px] ${
-                          leave.leave_type === 'paid' ? 'bg-sky-50 text-sky-600 border border-sky-100' : 'bg-red-50 text-red-600 border border-red-100'
+                          leave.leave_type === 'paid' ? 'bg-sky-50 text-sky-600 border border-sky-100'
+                          : leave.leave_type === 'granted' ? 'bg-emerald-50 text-emerald-600 border border-emerald-100'
+                          : 'bg-red-50 text-red-600 border border-red-100'
                         }`}>
-                          {leave.leave_type === 'paid' ? 'من الرصيد' : 'بخصم مرتب'}
+                          {leave.leave_type === 'paid' ? 'من الرصيد' : leave.leave_type === 'granted' ? 'بدون خصم' : 'بخصم مرتب'}
                         </span>
                       </td>
                       <td className="p-6 font-black text-red-600">
@@ -1521,6 +1628,7 @@ export default function Employees() {
               <div className="flex items-center gap-2 text-[11px] font-black flex-wrap">
                 <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">حضور: {profileAttendance.present}</span>
                 <span className="px-3 py-1.5 rounded-lg bg-sky-50 text-sky-600 border border-sky-100">إجازة: {profileAttendance.leave}</span>
+                <span className="px-3 py-1.5 rounded-lg bg-slate-100 text-slate-600 border border-slate-200">راحة: {profileAttendance.off}</span>
                 <span className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 border border-red-100">غياب: {profileAttendance.absent}</span>
                 <span className="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-600 border border-amber-100">تأخير: {profileStats.lateDays} يوم / {profileStats.lateMinutes} د</span>
               </div>
@@ -1531,6 +1639,7 @@ export default function Employees() {
                   <tr className="bg-white text-slate-400 text-[10px] font-black uppercase tracking-widest border-b border-slate-100">
                     <th className="p-5">اليوم</th>
                     <th className="p-5">التاريخ</th>
+                    <th className="p-5">الشفت</th>
                     <th className="p-5">الحضور</th>
                     <th className="p-5">الانصراف</th>
                     <th className="p-5">التأخير</th>
@@ -1550,6 +1659,7 @@ export default function Employees() {
                       <tr key={d.date} className="hover:bg-slate-50/50 transition-colors">
                         <td className="p-5 text-slate-500 font-bold">{dayName}</td>
                         <td className="p-5 text-slate-400 text-xs font-bold tabular-nums">{d.date}</td>
+                        <td className="p-5 text-slate-400 text-xs font-bold tabular-nums" dir="ltr">{d.shift}</td>
                         <td className="p-5 text-emerald-600 font-black tabular-nums">{rec ? fmt(rec.check_in) : '—'}</td>
                         <td className="p-5 text-rose-600 font-black tabular-nums">{rec ? fmt(rec.check_out || null) : '—'}</td>
                         <td className="p-5">
@@ -1581,13 +1691,30 @@ export default function Employees() {
                           <span className={`px-2.5 py-1 rounded-lg font-black text-[10px] border ${
                             d.status === 'present' ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
                             : d.status === 'leave' ? 'bg-sky-50 text-sky-600 border-sky-100'
+                            : d.status === 'off' ? 'bg-slate-100 text-slate-600 border-slate-200'
                             : 'bg-red-50 text-red-600 border-red-100'
                           }`}>
-                            {d.status === 'present' ? 'حاضر' : d.status === 'leave' ? 'إجازة' : 'غائب'}
+                            {d.status === 'present' ? 'حاضر' : d.status === 'leave' ? 'إجازة' : d.status === 'off' ? 'راحة' : 'غائب'}
                           </span>
                         </td>
                         <td className="p-5">
-                          <div className="flex items-center justify-end gap-2">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => openAttendanceModal(profileEmployee!, d.date, rec)}
+                              className="p-2 text-slate-400 hover:text-indigo-600 transition"
+                              title={rec ? 'تعديل مواعيد الحضور والانصراف' : 'تسجيل حضور يدوي لهذا اليوم'}
+                            >
+                              {rec ? <Edit3 size={16} /> : <PlusCircle size={16} />}
+                            </button>
+                            {d.status !== 'leave' && (
+                              <button
+                                onClick={() => grantDayOff(profileEmployee!, d.date)}
+                                className="p-2 text-slate-400 hover:text-sky-600 transition"
+                                title="إجازة بدون خصم"
+                              >
+                                <CalendarDays size={16} />
+                              </button>
+                            )}
                             {rec && (
                               <button onClick={() => handleDeleteAttendance(rec.id)} className="p-2 text-slate-400 hover:text-red-500 transition" title="حذف">
                                 <Trash2 size={16} />
@@ -1600,7 +1727,7 @@ export default function Employees() {
                   })}
                   {profileAttendance.days.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="py-12 text-center text-slate-400 font-bold">لا توجد أيام في هذه الفترة</td>
+                      <td colSpan={9} className="py-12 text-center text-slate-400 font-bold">لا توجد أيام في هذه الفترة</td>
                     </tr>
                   )}
                 </tbody>
@@ -1937,6 +2064,51 @@ export default function Employees() {
                   </div>
                 </div>
                 <p className="text-[10px] text-slate-400">التأخير = وقت الحضور − بداية الدوام − دقائق السماح, ويُخصم من الراتب بالتناسب مع طول يوم العمل.</p>
+
+                {/* شفت الجمعة المستقل (db/60) */}
+                <div className="border-t border-sky-100 pt-3 space-y-3">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <p className="text-xs font-black text-sky-700">دوام يوم الجمعة</p>
+                    <button
+                      type="button"
+                      onClick={() => setEmpFormData({ ...empFormData, friday_is_off: !empFormData.friday_is_off })}
+                      className={`px-3 py-1.5 rounded-xl text-[11px] font-black border transition ${
+                        empFormData.friday_is_off
+                          ? 'bg-slate-800 text-white border-slate-800'
+                          : 'bg-white text-slate-600 border-slate-200'
+                      }`}
+                    >
+                      {empFormData.friday_is_off ? '✓ الجمعة راحة' : 'اجعل الجمعة راحة'}
+                    </button>
+                  </div>
+                  {!empFormData.friday_is_off && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">بداية الدوام (الجمعة)</label>
+                        <input
+                          type="time"
+                          className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none font-bold"
+                          value={empFormData.friday_shift_start}
+                          onChange={e => setEmpFormData({ ...empFormData, friday_shift_start: e.target.value })}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-slate-600 mb-1">نهاية الدوام (الجمعة)</label>
+                        <input
+                          type="time"
+                          className="w-full bg-white border border-slate-200 rounded-xl p-3 outline-none font-bold"
+                          value={empFormData.friday_shift_end}
+                          onChange={e => setEmpFormData({ ...empFormData, friday_shift_end: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-[10px] text-slate-400">
+                    {empFormData.friday_is_off
+                      ? 'الجمعة لن تُحتسب غياباً ولن يُحسب عليها تأخير أو خصم.'
+                      : 'اتركها فارغة ليستخدم الموظف نفس مواعيد باقي الأيام يوم الجمعة.'}
+                  </p>
+                </div>
               </div>
 
               <div className="bg-indigo-50/60 border border-indigo-100 rounded-2xl p-4 space-y-2">
@@ -2270,20 +2442,33 @@ export default function Employees() {
 
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-2">نوع الإجازة</label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-3 gap-3">
                   <button
                     onClick={() => setLeaveFormData({...leaveFormData, leave_type: 'paid'})}
-                    className={`py-4 rounded-2xl font-black border transition ${leaveFormData.leave_type === 'paid' ? 'bg-sky-600 text-white border-sky-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}
+                    className={`py-4 rounded-2xl font-black text-sm border transition ${leaveFormData.leave_type === 'paid' ? 'bg-sky-600 text-white border-sky-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}
                   >
                     من الرصيد
                   </button>
                   <button
+                    onClick={() => setLeaveFormData({...leaveFormData, leave_type: 'granted'})}
+                    className={`py-4 rounded-2xl font-black text-sm border transition ${leaveFormData.leave_type === 'granted' ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}
+                  >
+                    بدون خصم
+                  </button>
+                  <button
                     onClick={() => setLeaveFormData({...leaveFormData, leave_type: 'unpaid'})}
-                    className={`py-4 rounded-2xl font-black border transition ${leaveFormData.leave_type === 'unpaid' ? 'bg-red-600 text-white border-red-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}
+                    className={`py-4 rounded-2xl font-black text-sm border transition ${leaveFormData.leave_type === 'unpaid' ? 'bg-red-600 text-white border-red-600' : 'bg-slate-50 text-slate-600 border-slate-200'}`}
                   >
                     بخصم مرتب
                   </button>
                 </div>
+                <p className="text-[11px] text-slate-400 mt-2">
+                  {leaveFormData.leave_type === 'granted'
+                    ? 'إجازة بقرار الإدارة: لا تُخصم من المرتب ولا تستهلك الرصيد الشهري.'
+                    : leaveFormData.leave_type === 'paid'
+                      ? 'تُخصم من رصيد الإجازات الشهري، والزيادة عن الرصيد تتحوّل تلقائياً لخصم من المرتب.'
+                      : 'كل الأيام تُخصم من المرتب بسعر اليوم (الراتب ÷ 30).'}
+                </p>
               </div>
 
               <div>
@@ -2298,6 +2483,85 @@ export default function Employees() {
 
               <button onClick={handleLeaveSubmit} className="w-full text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:opacity-90 transition-all bg-sky-600">
                 {editingLeave ? 'حفظ التعديلات' : 'تسجيل الإجازة'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Attendance Edit / Manual Entry Modal (db/60) */}
+      {attModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+            <div className="p-8 text-white flex justify-between items-center shrink-0 bg-indigo-600">
+              <div>
+                <h2 className="text-2xl font-black">{attModal.record ? 'تعديل الحضور والانصراف' : 'تسجيل حضور يدوي'}</h2>
+                <p className="text-white/70 text-sm mt-1">{attModal.employee.name} — {attModal.date}</p>
+              </div>
+              <button onClick={() => setAttModal(null)} className="bg-white/10 p-2 rounded-full hover:bg-white/20 transition text-white"><X size={24} /></button>
+            </div>
+            <div className="p-8 space-y-5 overflow-y-auto">
+              {(() => {
+                const shift = shiftForDate(attModal.employee, attModal.date);
+                const off = shift.isWeeklyOff || hasLeaveOn(attModal.employee.id, attModal.date);
+                const preview = attModal.checkIn
+                  ? computeLatenessForDay(attModal.employee, attModal.date, timeOnDate(attModal.date, attModal.checkIn))
+                  : { lateMinutes: 0, deduction: 0 };
+                return (
+                  <div className="bg-indigo-50 rounded-2xl p-4 border border-indigo-100 grid grid-cols-3 gap-3">
+                    <div>
+                      <p className="text-[10px] font-bold text-indigo-500">شفت اليوم</p>
+                      <p className="text-sm font-black text-indigo-700" dir="ltr">{shiftLabel(attModal.employee, attModal.date)}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500">التأخير المحسوب</p>
+                      <p className="text-sm font-black text-slate-800">{off ? '—' : `${preview.lateMinutes} دقيقة`}</p>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-red-500">الخصم</p>
+                      <p className="text-sm font-black text-red-600">{off ? 'يوم راحة' : `${preview.deduction.toLocaleString()} ${storeSettings.currency}`}</p>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">وقت الحضور</label>
+                  <input
+                    type="time"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-black"
+                    value={attModal.checkIn}
+                    onChange={e => setAttModal({ ...attModal, checkIn: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">وقت الانصراف</label>
+                  <input
+                    type="time"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-black"
+                    value={attModal.checkOut}
+                    onChange={e => setAttModal({ ...attModal, checkOut: e.target.value })}
+                  />
+                </div>
+              </div>
+              <p className="text-[11px] text-slate-400">
+                الانصراف قبل الحضور معناه وردية بتعدّي منتصف الليل — بيتسجّل على اليوم اللي بعده تلقائياً.
+                الخصم بيتحسب من جديد على أساس وقت الحضور ده، وتقدر تعدّله بعد الحفظ من عمود «الخصم».
+              </p>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-2">ملاحظة</label>
+                <input
+                  className="w-full bg-slate-50 border border-slate-200 rounded-2xl p-4 outline-none font-medium"
+                  value={attModal.note}
+                  onChange={e => setAttModal({ ...attModal, note: e.target.value })}
+                  placeholder="سبب التعديل أو التسجيل اليدوي"
+                />
+              </div>
+
+              <button onClick={submitAttendanceModal} className="w-full text-white py-5 rounded-2xl font-black text-lg shadow-xl hover:opacity-90 transition-all bg-indigo-600">
+                {attModal.record ? 'حفظ التعديلات' : 'تسجيل الحضور'}
               </button>
             </div>
           </div>

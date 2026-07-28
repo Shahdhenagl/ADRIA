@@ -47,13 +47,17 @@ export function printBarcodeLabels(opts: {
     : `<span class="new">${price} ${escapeHtml(currency)}</span>`;
 
   const n = Math.max(1, Math.floor(count) || 1);
+  // كود القطعة بيتكتب على جنب الليبل بالطول (زي ليبلات المحلات) — أوضح وأسهل
+  // في القراءة من غير ما ياخد سطر من الارتفاع المحدود.
   const oneLabel = `
     <div class="label">
-      ${storeName ? `<div class="store">${escapeHtml(storeName)}</div>` : ''}
-      <div class="name">${escapeHtml(name)}</div>
-      <img class="bc" src="${img}" />
-      <div class="code">${escapeHtml(code)}</div>
-      <div class="price">${priceHtml}</div>
+      <div class="main">
+        ${storeName ? `<div class="store">${escapeHtml(storeName)}</div>` : ''}
+        <div class="name">${escapeHtml(name)}</div>
+        <img class="bc" src="${img}" />
+        <div class="price">${priceHtml}</div>
+      </div>
+      <div class="side">${escapeHtml(code)}</div>
     </div>`;
   const labels = Array.from({ length: n }).map(() => oneLabel).join('');
 
@@ -63,14 +67,21 @@ export function printBarcodeLabels(opts: {
     @page { size: 38mm 25mm; margin: 0; }
     * { box-sizing: border-box; }
     body { margin: 0; font-family: Tahoma, Arial, sans-serif; }
-    .label { width: 38mm; height: 25mm; padding: 0.5mm 1mm; text-align: center; page-break-after: always;
-             display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden; line-height: 1.1; }
-    .store { font-size: 8px; font-weight: 900; white-space: nowrap; overflow: hidden; max-width: 100%; }
-    .name { font-size: 7px; font-weight: bold; white-space: nowrap; overflow: hidden; max-width: 100%; }
-    .bc { width: 35mm; height: 8mm; object-fit: contain; }
-    .code { font-size: 7px; letter-spacing: 0.5px; }
-    .price .old { text-decoration: line-through; color: #777; font-size: 7px; margin-left: 3px; }
-    .price .new { font-size: 9px; font-weight: 900; }
+    .label { width: 38mm; height: 25mm; padding: 0.5mm 0.8mm; page-break-after: always; direction: ltr;
+             display: flex; flex-direction: row; align-items: stretch; overflow: hidden; line-height: 1.15; }
+    .main { flex: 1; min-width: 0; text-align: center; display: flex; flex-direction: column;
+            align-items: center; justify-content: center; overflow: hidden; }
+    .store { font-size: 13px; font-weight: 900; letter-spacing: 0.5px; white-space: nowrap; overflow: hidden; max-width: 100%; }
+    .name { font-size: 8px; font-weight: bold; white-space: nowrap; overflow: hidden; max-width: 100%; }
+    /* الباركود أضيق من عرض الليبل عشان يفضل مسافة للكود اللي على الجنب */
+    .bc { width: 27mm; height: 7.5mm; object-fit: contain; margin: 0.3mm 0; }
+    .price { direction: rtl; }
+    .price .old { text-decoration: line-through; color: #777; font-size: 8px; margin-left: 3px; }
+    .price .new { font-size: 14px; font-weight: 900; }
+    /* كود القطعة بالطول على جنب الليبل — يتقرا من تحت لفوق */
+    .side { width: 5mm; flex: 0 0 5mm; display: flex; align-items: center; justify-content: center;
+            font-size: 13px; font-weight: 900; letter-spacing: 0.5px; white-space: nowrap; overflow: hidden;
+            writing-mode: vertical-rl; transform: rotate(180deg); }
   </style></head><body>${labels}
   <script>window.onload=function(){window.print();setTimeout(function(){window.close();},400);};<\/script>
   </body></html>`;
