@@ -8,7 +8,7 @@ export default function POSLogin() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState(false);
   const navigate = useNavigate();
-  const { loginPOS, storeSettings, cashiers, loadPosLoginData } = useStore();
+  const { loginPOS, storeSettings, cashiers, loadPosLoginData, isOfflineMode, offlineSnapshotAt, posLoginError } = useStore();
 
   useEffect(() => {
     loadPosLoginData();
@@ -45,7 +45,19 @@ export default function POSLogin() {
           </div>
 
           <h2 className="text-2xl font-black text-center text-slate-800 dark:text-white mb-2">تسجيل الدخول</h2>
-          <p className="text-center text-slate-400 text-sm mb-8 font-bold">يرجى إدخال كلمة المرور للبدء</p>
+          <p className="text-center text-slate-400 text-sm mb-4 font-bold">يرجى إدخال كلمة المرور للبدء</p>
+
+          {/* وضع أوفلاين: الدخول بيتم من النسخة المحفوظة على الجهاز */}
+          {isOfflineMode && (
+            <div className="mb-6 bg-amber-50 dark:bg-amber-900/20 border-2 border-amber-200 dark:border-amber-800 rounded-2xl p-4 text-center">
+              <p className="text-amber-800 dark:text-amber-300 font-black text-sm">📴 مفيش نت — وضع أوفلاين</p>
+              <p className="text-amber-700 dark:text-amber-400/80 text-[11px] font-bold mt-1 leading-relaxed">
+                هتشتغل بالأسعار والمخزون المحفوظين على الجهاز
+                {offlineSnapshotAt ? ` (آخر تحديث: ${new Date(offlineSnapshotAt).toLocaleString('ar-EG')})` : ''}.
+                الفواتير هتتحفظ وترتفع لوحدها أول ما النت يرجع.
+              </p>
+            </div>
+          )}
           
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-1.5">
@@ -80,7 +92,7 @@ export default function POSLogin() {
 
             {error && (
               <div className="text-center pt-2">
-                <p className="text-red-500 text-xs font-bold">الاسم أو كلمة المرور غير صحيحة، حاول مرة أخرى</p>
+                <p className="text-red-500 text-xs font-bold">{posLoginError || 'الاسم أو كلمة المرور غير صحيحة، حاول مرة أخرى'}</p>
               </div>
             )}
 

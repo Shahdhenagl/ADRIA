@@ -4,6 +4,7 @@ import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf } from '../utils/paymentMethods';
 import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
+import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassword, hasOfflinePassword } from '../utils/offlineCache';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -604,6 +605,8 @@ interface CashierStore {
 
   // Data loading
   loadAll: (silent?: boolean) => Promise<void>;
+  /** تشغيل الشاشة من نسخة الأوفلاين المحفوظة على الجهاز. false = مفيش نسخة. */
+  hydrateFromCache: () => Promise<boolean>;
   loadSettingsOnly: () => Promise<void>;
   loadProductsOnly: () => Promise<void>;
 
@@ -858,6 +861,12 @@ interface CashierStore {
   offlineReturnsQueue: any[];
   isOnline: boolean;
   isSyncing: boolean;
+  /** الشاشة شغّالة من النسخة المحفوظة على الجهاز (النت كان مقطوع وقت الفتح). */
+  isOfflineMode: boolean;
+  /** تاريخ آخر نسخة اتحفظت — بيتعرض للكاشير عشان يعرف الأسعار بتاريخ إمتى. */
+  offlineSnapshotAt: string | null;
+  /** سبب فشل دخول الكاشير (بيتعرض في شاشة الدخول). */
+  posLoginError: string | null;
   syncOfflineQueue: () => Promise<void>;
   syncOfflineReturnsQueue: () => Promise<void>;
 
@@ -953,6 +962,9 @@ function dateValueForAccounting(value?: string | Date | null): Date {
 }
 
 async function isAccountingDayClosed(settings: StoreSettings, value?: string | Date | null): Promise<boolean> {
+  // من غير نت مفيش طريقة نتأكد، والانتظار لحد ما الطلب يفشل بيعطّل كل بيعة.
+  // بنعتبر اليوم مفتوح — الفاتورة بتتحفظ محلياً وبتتزامن لما النت يرجع.
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
   const day = businessDateStr(settings, dateValueForAccounting(value));
   const { start, end } = businessDayRange(day, settings);
   const { data, error } = await supabase
@@ -1286,6 +1298,9 @@ export const useStore = create<CashierStore>((set, get) => ({
   offlineQueue: typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('cashier_offline_queue') || '[]') : [],
   offlineReturnsQueue: typeof window !== 'undefined' ? JSON.parse(localStorage.getItem('cashier_offline_returns_queue') || '[]') : [],
   isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+  isOfflineMode: false,
+  offlineSnapshotAt: null,
+  posLoginError: null,
   isSyncing: false,
   activeCashier: null,
   isAdminAuthenticated: !!sessionStorage.getItem('cashier_admin_auth'),
@@ -1369,14 +1384,54 @@ export const useStore = create<CashierStore>((set, get) => ({
   loginPOS: async (name, password) => {
     const { cashiers } = get();
     const cashier = cashiers.find(c => c.name === name);
-    if (!cashier || !cashier.email) return false;
-    const { error } = await supabase.auth.signInWithPassword({ email: cashier.email, password: password ?? '' });
-    if (error) return false;
-    sessionStorage.setItem('cashier_pos_auth', 'true');
-    sessionStorage.setItem('active_cashier_name', cashier.name);
-    set({ isPOSAuthenticated: true, activeCashier: cashier });
-    // Reload data now that we have an authenticated session.
-    await get().loadAll(true);
+    set({ posLoginError: null });
+    if (!cashier) { set({ posLoginError: 'الكاشير غير موجود' }); return false; }
+
+    const openSession = async (offline: boolean) => {
+      sessionStorage.setItem('cashier_pos_auth', 'true');
+      sessionStorage.setItem('active_cashier_name', cashier.name);
+      set({ isPOSAuthenticated: true, activeCashier: cashier });
+      if (offline) {
+        if (!get().products.length) await get().hydrateFromCache();
+      } else {
+        // Reload data now that we have an authenticated session.
+        await get().loadAll(true);
+      }
+    };
+
+    // دخول أوفلاين: بنتحقق من بصمة كلمة السر المحفوظة على الجهاز من آخر دخول
+    // ناجح والنت شغّال (شوف utils/offlineCache).
+    const offlineLogin = async () => {
+      if (!hasOfflinePassword(cashier.id)) {
+        set({ posLoginError: 'الدخول بدون نت متاح فقط بعد أول دخول ناجح لهذا الكاشير على هذا الجهاز.' });
+        return false;
+      }
+      if (!(await verifyOfflinePassword(cashier.id, password ?? ''))) {
+        set({ posLoginError: 'كلمة السر غير صحيحة' });
+        return false;
+      }
+      await openSession(true);
+      return true;
+    };
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return offlineLogin();
+
+    if (!cashier.email) { set({ posLoginError: 'هذا الكاشير غير مربوط بحساب دخول' }); return false; }
+    try {
+      const { error } = await supabase.auth.signInWithPassword({ email: cashier.email, password: password ?? '' });
+      if (error) {
+        // خطأ شبكة (مش كلمة سر غلط) — نجرّب الأوفلاين قبل ما نرفض.
+        const isNetwork = /fetch|network|failed to fetch|timeout/i.test(error.message || '');
+        if (isNetwork) return offlineLogin();
+        set({ posLoginError: 'كلمة السر غير صحيحة' });
+        return false;
+      }
+    } catch {
+      return offlineLogin();
+    }
+    // بصمة كلمة السر عشان الدخول الأوفلاين المرة الجاية.
+    void rememberOfflinePassword(cashier.id, password ?? '');
+    await openSession(false);
     return true;
   },
 
@@ -1384,8 +1439,33 @@ export const useStore = create<CashierStore>((set, get) => ({
   // names/emails) via a SECURITY DEFINER RPC, since the anon key can no longer
   // read the tables directly after the RLS lockdown.
   loadPosLoginData: async () => {
+    // النت مقطوع: قايمة الكاشيرية واسم/لوجو المحل بييجوا من النسخة المحفوظة،
+    // وإلا شاشة الدخول بتفضل فاضية ومش هينفع حد يفتح الصبح.
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const snap = await loadSnapshot();
+      if (snap) {
+        set((state) => ({
+          cashiers: (snap.cashiers || []) as Cashier[],
+          storeSettings: snap.settings || state.storeSettings,
+          isOfflineMode: true,
+          offlineSnapshotAt: snap.savedAt || null,
+        }));
+      }
+      return;
+    }
     const { data, error } = await supabase.rpc('get_pos_login_data');
-    if (error || !data) return;
+    if (error || !data) {
+      const snap = await loadSnapshot();
+      if (snap) {
+        set((state) => ({
+          cashiers: (snap.cashiers || []) as Cashier[],
+          storeSettings: snap.settings || state.storeSettings,
+          isOfflineMode: true,
+          offlineSnapshotAt: snap.savedAt || null,
+        }));
+      }
+      return;
+    }
     const s = (data as any).settings || {};
     set((state) => ({
       cashiers: ((data as any).cashiers || []) as Cashier[],
@@ -1412,6 +1492,12 @@ export const useStore = create<CashierStore>((set, get) => ({
     // loader (which would unmount the Router and drop a pending navigate, e.g.
     // right after login). Used by login()/loginPOS().
     if (!silent) set({ isLoading: true, dbError: null });
+    // النت مقطوع من الأصل: مفيش لازمة نستنى الطلبات تفشل واحد واحد — نفتح من
+    // النسخة المحفوظة على طول (وضع أوفلاين).
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      const ok = await get().hydrateFromCache();
+      if (ok) return;
+    }
     try {
       const [settingsRes, categoriesRes, productsRes, customersRes, ordersRes, counterRes, cashiersRes, employeesRes, employeeTransactionsRes, employeeLeavesRes, employeeAttendanceRes] =
         await Promise.all([
@@ -1623,9 +1709,54 @@ export const useStore = create<CashierStore>((set, get) => ({
           get().loadSettingsOnly();
         }
       };
+
+      // نسخة أوفلاين محدّثة بعد كل تحميل ناجح — دي اللي بيفتح منها الكاشير
+      // الصبح لو النت لسه مجاش.
+      const st = get();
+      set({ isOfflineMode: false });
+      void saveSnapshot({
+        settings: st.storeSettings,
+        categories: st.categories,
+        products: st.products,
+        customers: st.customers,
+        cashiers: st.cashiers,
+        invoiceCounter: st.invoiceCounter,
+      });
     } catch (err) {
-      set({ isLoading: false, dbError: String(err) });
+      // فشل الاتصال (نت واقع أو Supabase مش راد): نفتح من النسخة المحفوظة بدل
+      // شاشة الخطأ، والكاشير يكمّل بيع والفواتير تترفع لما النت يرجع.
+      const ok = await get().hydrateFromCache();
+      if (!ok) set({ isLoading: false, dbError: String(err) });
     }
+  },
+
+  /**
+   * تشغيل الشاشة من النسخة المحفوظة على الجهاز. بيرجّع false لو مفيش نسخة
+   * (يعني الجهاز ده عمره ما فتح السيستم وهو أونلاين).
+   */
+  hydrateFromCache: async () => {
+    const snap = await loadSnapshot();
+    if (!snap || !Array.isArray(snap.products) || snap.products.length === 0) {
+      set({ isLoading: false });
+      return false;
+    }
+    const cashiers = (snap.cashiers || []) as Cashier[];
+    const activeName = sessionStorage.getItem('active_cashier_name');
+    set({
+      storeSettings: snap.settings || get().storeSettings,
+      categories: (snap.categories || []) as Category[],
+      products: (snap.products || []) as Product[],
+      customers: (snap.customers || []) as Customer[],
+      cashiers,
+      invoiceCounter: snap.invoiceCounter || 1,
+      activeInvoiceId: String(snap.invoiceCounter || 1),
+      activeCashier: activeName ? (cashiers.find((c) => c.name === activeName) || null) : get().activeCashier,
+      isLoading: false,
+      dbError: null,
+      isOfflineMode: true,
+      offlineSnapshotAt: snap.savedAt || null,
+    });
+    return true;
   },
 
   loadSettingsOnly: async () => {

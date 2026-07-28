@@ -96,9 +96,26 @@ function ThemeInjector() {
 
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAdminAuthenticated } = useStore();
+  const { isAdminAuthenticated, isOfflineMode } = useStore();
   if (!isAdminAuthenticated) {
     return <Navigate to="/login" replace />;
+  }
+  // وضع الأوفلاين مخصّص للكاشير فقط: لوحة التحكم بتكتب على السيرفر (خزنة،
+  // موردين، رواتب) وأي كتابة من غير نت ممكن تتعارض مع جهاز تاني.
+  if (isOfflineMode) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-amber-50 gap-4 p-8 text-center" dir="rtl">
+        <div className="text-5xl">📴</div>
+        <h2 className="text-2xl font-black text-amber-800">لوحة التحكم مش متاحة بدون نت</h2>
+        <p className="text-amber-700 font-bold max-w-md">
+          السيستم شغّال دلوقتي من النسخة المحفوظة على الجهاز — الكاشير بيبيع عادي والفواتير بتتحفظ
+          وترتفع أول ما النت يرجع. لوحة التحكم بتحتاج اتصال.
+        </p>
+        <a href="/" className="bg-amber-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-amber-700 transition">
+          الرجوع لشاشة الكاشير
+        </a>
+      </div>
+    );
   }
   return <>{children}</>;
 }
@@ -123,6 +140,13 @@ function App() {
 
     loadAll();
 
+    // رجوع النت بعد ما فتحنا من النسخة المحفوظة: نعيد التحميل الكامل عشان
+    // الأسعار والمخزون يتحدّثوا ونخرج من وضع الأوفلاين.
+    const handleBackOnline = () => {
+      if (useStore.getState().isOfflineMode) loadAll(true);
+    };
+    window.addEventListener('online', handleBackOnline);
+
     const channel = new BroadcastChannel('cashier-sync');
     channel.onmessage = (event) => {
       if (event.data === 'sync_settings') {
@@ -131,7 +155,10 @@ function App() {
         loadProductsOnly();
       }
     };
-    return () => channel.close();
+    return () => {
+      window.removeEventListener('online', handleBackOnline);
+      channel.close();
+    };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isStandaloneRoute]);
 
