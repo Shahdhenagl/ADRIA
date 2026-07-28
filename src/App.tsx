@@ -147,6 +147,21 @@ function App() {
     };
     window.addEventListener('online', handleBackOnline);
 
+    // النت الضعيف مابيرفعش حدث online أصلاً (الجهاز «متصل» طول الوقت)، فبنعيد
+    // المحاولة كل دقيقة طول ما إحنا شغّالين من النسخة المحفوظة — وأول محاولة
+    // تنجح بترفع الفواتير المحلية كمان.
+    const retry = setInterval(() => {
+      const s = useStore.getState();
+      if (s.isOfflineMode && !s.isRefreshing && navigator.onLine) {
+        loadAll(true).then(() => {
+          if (!useStore.getState().isOfflineMode) {
+            useStore.getState().syncOfflineQueue();
+            useStore.getState().syncOfflineReturnsQueue();
+          }
+        });
+      }
+    }, 60_000);
+
     const channel = new BroadcastChannel('cashier-sync');
     channel.onmessage = (event) => {
       if (event.data === 'sync_settings') {
@@ -157,6 +172,7 @@ function App() {
     };
     return () => {
       window.removeEventListener('online', handleBackOnline);
+      clearInterval(retry);
       channel.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

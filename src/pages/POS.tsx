@@ -24,7 +24,7 @@ import { printShippingLabel } from '../utils/printShippingLabel';
 const RECONCILE_CAT = 'تسوية جرد الخزنة';
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -3295,8 +3295,13 @@ export default function POS() {
                 </h1>
                 
                 {/* Offline Status Badge */}
-                {!isOnline ? (
-                  <span className="bg-red-500 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse shadow-sm">
+                {/* isOfflineMode = شغّالين من النسخة المحفوظة. بيحصل كمان والنت
+                    «متصل» بس ضعيف/مش راد، فلازم يبان مش نعرض «متصل» بالغلط. */}
+                {!isOnline || isOfflineMode ? (
+                  <span
+                    className="bg-red-500 text-white text-[10px] font-extrabold px-2 py-0.5 rounded-full flex items-center gap-1 animate-pulse shadow-sm"
+                    title={offlineSnapshotAt ? `بيانات محفوظة بتاريخ ${new Date(offlineSnapshotAt).toLocaleString('ar-EG')}` : undefined}
+                  >
                     🔴 أوفلاين ({offlineQueue.length + offlineReturnsQueue.length} محلياً)
                   </span>
                 ) : isSyncing ? (

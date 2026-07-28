@@ -5,6 +5,7 @@ import { payLabelOf } from '../utils/paymentMethods';
 import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassword, hasOfflinePassword } from '../utils/offlineCache';
+import { withTimeout, isNetworkError, NET_TIMEOUT } from '../utils/net';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -606,7 +607,7 @@ interface CashierStore {
   // Data loading
   loadAll: (silent?: boolean) => Promise<void>;
   /** تشغيل الشاشة من نسخة الأوفلاين المحفوظة على الجهاز. false = مفيش نسخة. */
-  hydrateFromCache: () => Promise<boolean>;
+  hydrateFromCache: (offline?: boolean) => Promise<boolean>;
   loadSettingsOnly: () => Promise<void>;
   loadProductsOnly: () => Promise<void>;
 
@@ -867,6 +868,8 @@ interface CashierStore {
   offlineSnapshotAt: string | null;
   /** سبب فشل دخول الكاشير (بيتعرض في شاشة الدخول). */
   posLoginError: string | null;
+  /** بيتم تحديث البيانات من السيرفر في الخلفية (بعد بداية سريعة من النسخة). */
+  isRefreshing: boolean;
   syncOfflineQueue: () => Promise<void>;
   syncOfflineReturnsQueue: () => Promise<void>;
 
@@ -967,18 +970,28 @@ async function isAccountingDayClosed(settings: StoreSettings, value?: string | D
   if (typeof navigator !== 'undefined' && !navigator.onLine) return false;
   const day = businessDateStr(settings, dateValueForAccounting(value));
   const { start, end } = businessDayRange(day, settings);
-  const { data, error } = await supabase
-    .from('expenses')
-    .select('id')
-    .eq('category', DAY_CLOSING_CATEGORY)
-    .gte('created_at', start.toISOString())
-    .lt('created_at', end.toISOString())
-    .limit(1);
-  if (error) {
-    console.warn('Could not check closed accounting day:', error.message);
+  try {
+    // مهلة قصيرة: الفحص ده بيتنفّذ قبل كل بيعة، فمينفعش يعلّق على نت ضعيف.
+    const { data, error } = await withTimeout(
+      supabase
+        .from('expenses')
+        .select('id')
+        .eq('category', DAY_CLOSING_CATEGORY)
+        .gte('created_at', start.toISOString())
+        .lt('created_at', end.toISOString())
+        .limit(1),
+      NET_TIMEOUT.quickCheck,
+      'فحص قفل اليوم'
+    );
+    if (error) {
+      console.warn('Could not check closed accounting day:', error.message);
+      return false;
+    }
+    return !!data?.length;
+  } catch (e) {
+    console.warn('Could not check closed accounting day:', e);
     return false;
   }
-  return !!data?.length;
 }
 
 async function ensureAccountingDayOpen(state: CashierStore, value?: string | Date | null): Promise<boolean> {
@@ -1301,6 +1314,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   isOfflineMode: false,
   offlineSnapshotAt: null,
   posLoginError: null,
+  isRefreshing: false,
   isSyncing: false,
   activeCashier: null,
   isAdminAuthenticated: !!sessionStorage.getItem('cashier_admin_auth'),
@@ -1418,15 +1432,21 @@ export const useStore = create<CashierStore>((set, get) => ({
 
     if (!cashier.email) { set({ posLoginError: 'هذا الكاشير غير مربوط بحساب دخول' }); return false; }
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email: cashier.email, password: password ?? '' });
+      // مهلة قصيرة: على النت الضعيف الطلب ممكن يفضل معلّق نص دقيقة والكاشير
+      // مستني. بعد المهلة بندخل بالتحقق المحلي بدل الانتظار.
+      const { error } = await withTimeout(
+        supabase.auth.signInWithPassword({ email: cashier.email, password: password ?? '' }),
+        NET_TIMEOUT.login,
+        'تسجيل الدخول'
+      );
       if (error) {
         // خطأ شبكة (مش كلمة سر غلط) — نجرّب الأوفلاين قبل ما نرفض.
-        const isNetwork = /fetch|network|failed to fetch|timeout/i.test(error.message || '');
-        if (isNetwork) return offlineLogin();
+        if (isNetworkError(error)) return offlineLogin();
         set({ posLoginError: 'كلمة السر غير صحيحة' });
         return false;
       }
-    } catch {
+    } catch (err) {
+      if (!isNetworkError(err)) { set({ posLoginError: 'تعذّر تسجيل الدخول' }); return false; }
       return offlineLogin();
     }
     // بصمة كلمة السر عشان الدخول الأوفلاين المرة الجاية.
@@ -1453,7 +1473,15 @@ export const useStore = create<CashierStore>((set, get) => ({
       }
       return;
     }
-    const { data, error } = await supabase.rpc('get_pos_login_data');
+    // مهلة قصيرة عشان شاشة الدخول ماتفضلش فاضية على نت بطيء.
+    let data: any = null;
+    let error: any = null;
+    try {
+      const res = await withTimeout(supabase.rpc('get_pos_login_data'), NET_TIMEOUT.loginScreen, 'شاشة الدخول');
+      data = res.data; error = res.error;
+    } catch (e) {
+      error = e;
+    }
     if (error || !data) {
       const snap = await loadSnapshot();
       if (snap) {
@@ -1491,16 +1519,27 @@ export const useStore = create<CashierStore>((set, get) => ({
     // silent = reload data in the background without toggling the full-screen
     // loader (which would unmount the Router and drop a pending navigate, e.g.
     // right after login). Used by login()/loginPOS().
-    if (!silent) set({ isLoading: true, dbError: null });
-    // النت مقطوع من الأصل: مفيش لازمة نستنى الطلبات تفشل واحد واحد — نفتح من
-    // النسخة المحفوظة على طول (وضع أوفلاين).
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      const ok = await get().hydrateFromCache();
-      if (ok) return;
+    const offlineNow = typeof navigator !== 'undefined' && !navigator.onLine;
+
+    // بداية فورية: لو في نسخة محفوظة بنفتح منها على طول من غير ما نستنى الشبكة
+    // خالص، وبعدين بنحدّث في الخلفية. كده الشاشة بتفتح في أقل من ثانية سواء
+    // النت شغّال، بطيء، أو مقطوع.
+    if (!silent && get().products.length === 0) {
+      await get().hydrateFromCache(offlineNow);
     }
+    const bootedFromCache = get().products.length > 0;
+
+    if (offlineNow) {
+      if (bootedFromCache) return;
+      set({ isLoading: false, dbError: 'لا يوجد اتصال بالإنترنت ولا توجد نسخة محفوظة على هذا الجهاز.' });
+      return;
+    }
+    if (!silent) set({ isLoading: !bootedFromCache, dbError: null });
+    set({ isRefreshing: true });
+
     try {
       const [settingsRes, categoriesRes, productsRes, customersRes, ordersRes, counterRes, cashiersRes, employeesRes, employeeTransactionsRes, employeeLeavesRes, employeeAttendanceRes] =
-        await Promise.all([
+        await withTimeout(Promise.all([
           supabase.from('store_settings').select('*').limit(1).maybeSingle(),
           supabase.from('categories').select('*').order('name'),
           supabase.from('products').select('*').order('name'),
@@ -1516,7 +1555,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           supabase.from('employee_transactions').select('*').order('created_at', { ascending: false }),
           supabase.from('employee_leaves').select('*').order('created_at', { ascending: false }),
           supabase.from('employee_attendance').select('*').order('created_at', { ascending: false }),
-        ]);
+        ]), NET_TIMEOUT.fullLoad, 'تحميل البيانات');
 
       const settings = settingsRes.data ? mapSettings(settingsRes.data as Record<string, unknown>) : get().storeSettings;
 
@@ -1713,7 +1752,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       // نسخة أوفلاين محدّثة بعد كل تحميل ناجح — دي اللي بيفتح منها الكاشير
       // الصبح لو النت لسه مجاش.
       const st = get();
-      set({ isOfflineMode: false });
+      set({ isOfflineMode: false, isRefreshing: false });
       void saveSnapshot({
         settings: st.storeSettings,
         categories: st.categories,
@@ -1723,18 +1762,28 @@ export const useStore = create<CashierStore>((set, get) => ({
         invoiceCounter: st.invoiceCounter,
       });
     } catch (err) {
-      // فشل الاتصال (نت واقع أو Supabase مش راد): نفتح من النسخة المحفوظة بدل
-      // شاشة الخطأ، والكاشير يكمّل بيع والفواتير تترفع لما النت يرجع.
-      const ok = await get().hydrateFromCache();
-      if (!ok) set({ isLoading: false, dbError: String(err) });
+      set({ isRefreshing: false });
+      // نت واقع أو بطيء أو Supabase مش راد: نكمّل من النسخة المحفوظة بدل شاشة
+      // الخطأ. الطلب الأصلي بيفضل ماشي في الخلفية، ولو رجع الاتصال حدث online
+      // بيعيد التحميل ويطلّعنا من وضع الأوفلاين.
+      const ok = get().products.length > 0 || await get().hydrateFromCache(true);
+      if (ok) {
+        const snap = await loadSnapshot();
+        set({ isLoading: false, dbError: null, isOfflineMode: true, offlineSnapshotAt: snap?.savedAt || get().offlineSnapshotAt });
+        if (!isNetworkError(err)) console.error('loadAll failed:', err);
+      } else {
+        set({ isLoading: false, dbError: String(err) });
+      }
     }
   },
 
   /**
    * تشغيل الشاشة من النسخة المحفوظة على الجهاز. بيرجّع false لو مفيش نسخة
    * (يعني الجهاز ده عمره ما فتح السيستم وهو أونلاين).
+   * offline=false معناها بداية سريعة والنت شغّال — البيانات هتتحدّث بعد ثواني،
+   * فمابنقفلش لوحة التحكم.
    */
-  hydrateFromCache: async () => {
+  hydrateFromCache: async (offline = true) => {
     const snap = await loadSnapshot();
     if (!snap || !Array.isArray(snap.products) || snap.products.length === 0) {
       set({ isLoading: false });
@@ -1753,7 +1802,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       activeCashier: activeName ? (cashiers.find((c) => c.name === activeName) || null) : get().activeCashier,
       isLoading: false,
       dbError: null,
-      isOfflineMode: true,
+      isOfflineMode: offline,
       offlineSnapshotAt: snap.savedAt || null,
     });
     return true;
