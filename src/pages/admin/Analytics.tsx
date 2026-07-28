@@ -3,11 +3,12 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList
 } from 'recharts';
 import { 
-  TrendingUp, TrendingDown, DollarSign, Package, Users, 
-  FileText, Table as TableIcon, RefreshCw
+  TrendingUp, TrendingDown, DollarSign, Package, Users,
+  FileText, Table as TableIcon, RefreshCw, Layers
 } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
+import { splitStockValueBySource, totalIntakeValue } from '../../utils/stockIntake';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -27,7 +28,7 @@ declare module 'jspdf' {
 }
 
 export default function Analytics() {
-  const { storeSettings, loadAnalyticsData, purchaseInvoices, products, expenses, orders: globalOrders } = useStore();
+  const { storeSettings, loadAnalyticsData, purchaseInvoices, products, expenses, orders: globalOrders, stockIntakes } = useStore();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<'today' | '7d' | '30d' | 'thisMonth' | 'thisYear' | 'all'>('30d');
@@ -167,6 +168,13 @@ export default function Analytics() {
       .slice(0, 10);
 
     const totalInventoryValue = products.reduce((sum, p) => sum + (p.stock_quantity * (p.average_purchase_price || p.purchase_price || 0)), 0);
+    // رأس مال البضاعة اللي دخلت بدون فاتورة شراء (db/59): تراكمي + نصيبه من المخزون الحالي.
+    const noPurchaseCapital = totalIntakeValue(stockIntakes);
+    const inventorySplit = splitStockValueBySource(
+      products.map(p => ({ product_id: p.id, value: (Number(p.stock_quantity) || 0) * (p.average_purchase_price || p.purchase_price || 0) })),
+      purchaseInvoices,
+      stockIntakes
+    );
 
     // Calculate time-filtered expenses
     let startLimit: Date | null = null;
@@ -247,6 +255,8 @@ export default function Analytics() {
       topCustomers,
       procurementCost: supplierPaidTotal,
       totalInventoryValue,
+      noPurchaseCapital,
+      inventorySplit,
       totalExpenses,
       finalNetProfit,
       collectedFromInvoices,
@@ -254,7 +264,7 @@ export default function Analytics() {
       totalCustomerDebt,
       totalSupplierDebt
     };
-  }, [orders, expenses, purchaseInvoices, products, timeRange, customDay, globalOrders]);
+  }, [orders, expenses, purchaseInvoices, products, timeRange, customDay, globalOrders, stockIntakes]);
 
   // ── Export Logic ─────────────────────────────────────────────
   const exportExcel = () => {
@@ -480,12 +490,21 @@ export default function Analytics() {
           icon={DollarSign} 
           color="amber" 
         />
-        <StatCard 
-          title="قيمة بضاعة المخزن" 
-          value={stats.totalInventoryValue} 
+        <StatCard
+          title="قيمة بضاعة المخزن"
+          value={stats.totalInventoryValue}
           unit={storeSettings.currency}
-          icon={Package} 
-          color="indigo" 
+          icon={Package}
+          color="indigo"
+          hint={`مشتراة: ${Math.round(stats.inventorySplit.purchased).toLocaleString()} • بدون شراء: ${Math.round(stats.inventorySplit.noPurchase).toLocaleString()}`}
+        />
+        <StatCard
+          title="رأس مال بضاعة بدون شراء"
+          value={Math.round(stats.noPurchaseCapital)}
+          unit={storeSettings.currency}
+          icon={Layers}
+          color="amber"
+          hint="بضاعة دخلت المخزون بدون فاتورة مورد (تراكمي)"
         />
       </div>
 
@@ -614,7 +633,7 @@ export default function Analytics() {
   );
 }
 
-function StatCard({ title, value, unit, icon: Icon, color, increase }: any) {
+function StatCard({ title, value, unit, icon: Icon, color, increase, hint }: any) {
   const colors: any = {
     indigo: 'bg-indigo-600',
     emerald: 'bg-emerald-600',
@@ -646,6 +665,7 @@ function StatCard({ title, value, unit, icon: Icon, color, increase }: any) {
             <span className="text-2xl font-black text-slate-900">{typeof value === 'number' ? value.toLocaleString() : value}</span>
             {unit && <span className="text-xs font-bold text-slate-400">{unit}</span>}
           </div>
+          {hint && <p className="text-[11px] font-bold text-slate-400 mt-1">{hint}</p>}
         </div>
       </div>
     </div>

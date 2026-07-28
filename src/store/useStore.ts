@@ -186,6 +186,23 @@ export interface PurchaseInvoice {
   items?: PurchaseItem[];
 }
 
+/**
+ * قيد «مخزون دخل بدون شراء» (db/59) — كمية دخلت المخزون من غير فاتورة مورد
+ * (كمية ابتدائية عند إنشاء المنتج، تعديل يدوي، استيراد Excel، زيادة جرد).
+ * قيمتها = رأس مال بضاعة بادئين بيه، لأن مفيش فاتورة ولا مصروف بيمثّلها.
+ */
+export interface StockIntake {
+  id: string;
+  product_id: string;
+  product_name: string;
+  quantity: number;
+  unit_cost: number;
+  total_value: number;
+  source: 'product_created' | 'manual_edit' | 'excel_import' | 'stocktake' | 'opening' | string;
+  note?: string | null;
+  created_at: string;
+}
+
 export interface Order {
   id: string;
   items: OrderItem[];
@@ -577,6 +594,7 @@ interface CashierStore {
   maintenanceAppointments: MaintenanceAppointment[];
   devoItems: DevoItem[];
   writeOffs: WriteOff[];
+  stockIntakes: StockIntake[];
 
   // Data loading
   loadAll: (silent?: boolean) => Promise<void>;
@@ -673,9 +691,18 @@ interface CashierStore {
   loadAnalyticsData: (startDate?: string, endDate?: string) => Promise<Order[]>;
   updateSettings: (settings: Partial<StoreSettings>) => Promise<void>;
   addProduct: (product: Omit<Product, 'id'>) => Promise<Product | undefined>;
-  updateProduct: (id: string, product: Partial<Product>) => Promise<void>;
+  /**
+   * opts.skipIntakeLog: يمنع تقييد الزيادة كـ«مخزون بدون شراء» (للحالات اللي مش دخول
+   * حقيقي زي استبدال المخزون — نقل كمية من منتج لآخر). opts.intakeSource: مصدر القيد.
+   */
+  updateProduct: (id: string, product: Partial<Product>, opts?: { skipIntakeLog?: boolean; intakeSource?: StockIntake['source'] }) => Promise<void>;
   adjustStock: (items: { product_id: string; counted_qty: number; location?: 'all' | 'display' | 'warehouse' }[], note?: string) => Promise<number>;
   deleteProduct: (id: string) => Promise<void>;
+
+  // مخزون دخل بدون فاتورة شراء (db/59)
+  loadStockIntakes: () => Promise<void>;
+  logStockIntake: (rows: Array<{ product_id: string; product_name: string; quantity: number; unit_cost: number; source: StockIntake['source']; note?: string | null }>) => Promise<void>;
+  deleteStockIntake: (id: string) => Promise<void>;
 
   // الديڤو والإهلاك
   _shiftProductStock: (productId: string, delta: number) => Promise<void>;
@@ -1244,6 +1271,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   maintenanceAppointments: [],
   devoItems: [],
   writeOffs: [],
+  stockIntakes: [],
   heldInvoices: [],
   invoiceCounter: 1,
   activeInvoiceId: '1',
@@ -1577,6 +1605,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       get().loadCoupons();
       get().loadHeldInvoices();
       get().loadDevoAndWriteOffs();
+      get().loadStockIntakes();
 
       // Setup Realtime subscriptions
       get().setupRealtime();
@@ -4361,12 +4390,75 @@ setupRealtime: () => {
         }
         return state;
       });
+      // كمية ابتدائية عند إنشاء المنتج = مخزون دخل بدون فاتورة شراء (db/59).
+      const initialQty = Number((data as any).stock_quantity) || 0;
+      if (initialQty > 0) {
+        get().logStockIntake([{
+          product_id: data.id,
+          product_name: (data as any).name || '',
+          quantity: initialQty,
+          unit_cost: Number((data as any).average_purchase_price || (data as any).purchase_price) || 0,
+          source: 'product_created',
+        }]);
+      }
       return data as Product;
     }
   },
-  updateProduct: async (id, updated) => {
+  updateProduct: async (id, updated, opts) => {
+    const before = get().products.find(p => p.id === id);
     // Realtime subscription handles the live UPDATE — no need to broadcast
     set((state) => ({ products: state.products.map(p => p.id === id ? { ...p, ...updated } : p) })); await supabase.from('products').update(updated).eq('id', id);
+    // أي زيادة يدوية في الكمية = مخزون دخل بدون فاتورة شراء (db/59). فواتير الشراء
+    // والبيع بتعدّل products مباشرة (مش عن طريق updateProduct) فمفيش ازدواج.
+    if (!opts?.skipIntakeLog && before && updated.stock_quantity !== undefined) {
+      const delta = (Number(updated.stock_quantity) || 0) - (Number(before.stock_quantity) || 0);
+      if (delta > 0) {
+        get().logStockIntake([{
+          product_id: id,
+          product_name: updated.name || before.name,
+          quantity: delta,
+          unit_cost: Number(
+            updated.average_purchase_price ?? updated.purchase_price ??
+            before.average_purchase_price ?? before.purchase_price
+          ) || 0,
+          source: opts?.intakeSource || 'manual_edit',
+        }]);
+      }
+    }
+  },
+
+  // ── مخزون دخل بدون فاتورة شراء (db/59) ────────────────────
+  loadStockIntakes: async () => {
+    try {
+      const { data } = await supabase.from('stock_intakes').select('*').order('created_at', { ascending: false });
+      if (data) set({ stockIntakes: data as StockIntake[] });
+    } catch (e) {
+      console.error('Stock intakes table might not exist yet:', e);
+    }
+  },
+
+  logStockIntake: async (rows) => {
+    const payload = rows
+      .map((r) => ({
+        product_id: r.product_id,
+        product_name: r.product_name || '',
+        quantity: Number(r.quantity) || 0,
+        unit_cost: Number(r.unit_cost) || 0,
+        source: r.source,
+        note: r.note || null,
+      }))
+      .filter((r) => r.quantity > 0)
+      .map((r) => ({ ...r, total_value: r.quantity * r.unit_cost }));
+    if (!payload.length) return;
+    const { data, error } = await supabase.from('stock_intakes').insert(payload).select();
+    if (error) { console.error('logStockIntake error:', error); return; }
+    if (data) set((s) => ({ stockIntakes: [...(data as StockIntake[]), ...s.stockIntakes] }));
+  },
+
+  deleteStockIntake: async (id) => {
+    const { error } = await supabase.from('stock_intakes').delete().eq('id', id);
+    if (error) { console.error('deleteStockIntake error:', error); alert('تعذّر حذف القيد'); return; }
+    set((s) => ({ stockIntakes: s.stockIntakes.filter((i) => i.id !== id) }));
   },
 
   deleteProduct: async (id) => {
@@ -4406,6 +4498,17 @@ setupRealtime: () => {
       if (idx >= 0) updatedProducts[idx] = { ...updatedProducts[idx], ...patch };
     }
     if (rows.length) await supabase.from('stock_adjustments').insert(rows);
+    // زيادة الجرد = بضاعة دخلت المخزون من غير فاتورة شراء (db/59). العجز مالوش قيد هنا
+    // لأنه نقص مخزون مش دخول — بيظهر في سجل تسويات الجرد.
+    const surplus = rows.filter((r) => Number(r.diff) > 0).map((r) => ({
+      product_id: r.product_id,
+      product_name: r.product_name,
+      quantity: Number(r.diff),
+      unit_cost: Number(r.cost) || 0,
+      source: 'stocktake' as const,
+      note: r.note || 'زيادة جرد',
+    }));
+    if (surplus.length) await get().logStockIntake(surplus);
     set({ products: updatedProducts });
     new BroadcastChannel('cashier-sync').postMessage('sync_products');
     return rows.length;

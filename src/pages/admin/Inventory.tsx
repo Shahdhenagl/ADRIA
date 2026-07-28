@@ -1,7 +1,8 @@
 import { useState, useMemo, useRef } from 'react';
 import { useStore, type Product } from '../../store/useStore';
-import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight } from 'lucide-react';
+import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight, Layers, Trash2 } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
+import { splitStockValueBySource, totalIntakeValue, intakeSourceLabel } from '../../utils/stockIntake';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { generateBarcode, printBarcodeLabels } from '../../utils/printBarcodeLabels';
 import * as XLSX from 'xlsx';
@@ -10,7 +11,8 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 
 export default function Inventory() {
-  const { products, categories, storeSettings, addProduct, updateProduct, orders, suppliers, addSupplier } = useStore();
+  const { products, categories, storeSettings, addProduct, updateProduct, orders, suppliers, addSupplier,
+    stockIntakes, purchaseInvoices, logStockIntake, deleteStockIntake } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [stockLocation, setStockLocation] = useState<'all' | 'warehouse' | 'display'>('all');
   const [seasonFilter, setSeasonFilter] = useState<'all' | 'summer' | 'winter' | 'annual'>('all');
@@ -118,6 +120,54 @@ export default function Inventory() {
   const totalStockValue = statsBase.reduce((acc, p) => acc + (qtyOf(p) * (p.average_purchase_price || p.purchase_price || 0)), 0);
   const lowStockCount = statsBase.filter(p => qtyOf(p) < 5).length;
   const totalItems = statsBase.reduce((acc, p) => acc + qtyOf(p), 0);
+
+  // ── مخزون دخل بدون فاتورة شراء (db/59) ──────────────────────────────
+  // القيمة دي رأس مال بضاعة بادئين بيه: مالهاش فاتورة مورد ولا مصروف ولا حركة خزنة،
+  // ومع ذلك بتتخصم كتكلفة وقت البيع — فلازم تكون مقيّدة عشان الربح يبقى مقابل رأس مال.
+  const [showIntakeModal, setShowIntakeModal] = useState(false);
+  const [intakeProductId, setIntakeProductId] = useState('');
+  const [intakeQty, setIntakeQty] = useState('');
+  const [intakeCost, setIntakeCost] = useState('');
+  const [intakeNote, setIntakeNote] = useState('');
+
+  const statsFilterActive = selectedCategory !== 'all' || seasonFilter !== 'all';
+  const statsBaseIds = useMemo(() => new Set(statsBase.map(p => p.id)), [statsBase]);
+  // مع فلتر تصنيف/موسم نعرض قيود منتجات الفلتر فقط؛ من غير فلتر نعرض السجل كامل
+  // (بما فيه قيود منتجات اتحذفت — قيمتها اتصرفت فعلاً ولازم تفضل محسوبة).
+  const visibleIntakes = useMemo(
+    () => (statsFilterActive ? stockIntakes.filter(i => statsBaseIds.has(i.product_id)) : stockIntakes),
+    [stockIntakes, statsFilterActive, statsBaseIds]
+  );
+  const noPurchaseTotal = useMemo(() => totalIntakeValue(visibleIntakes), [visibleIntakes]);
+  // تقسيم قيمة المخزون الحالي (المعروضة فوق) على المصدر بنفس منطق المتوسط المرجّح.
+  const stockValueSplit = useMemo(
+    () => splitStockValueBySource(
+      statsBase.map(p => ({ product_id: p.id, value: qtyOf(p) * (p.average_purchase_price || p.purchase_price || 0) })),
+      purchaseInvoices,
+      stockIntakes
+    ),
+    [statsBase, purchaseInvoices, stockIntakes, stockLocation]
+  );
+
+  const fmtMoney = (n: number) => Math.round(n).toLocaleString();
+
+  const submitManualIntake = async () => {
+    const qty = parseFloat(intakeQty);
+    const cost = parseFloat(intakeCost);
+    if (!intakeProductId) return alert('اختر المنتج.');
+    if (isNaN(qty) || qty <= 0) return alert('أدخل كمية صحيحة.');
+    if (isNaN(cost) || cost < 0) return alert('أدخل تكلفة وحدة صحيحة.');
+    const prod = products.find(p => p.id === intakeProductId);
+    await logStockIntake([{
+      product_id: intakeProductId,
+      product_name: prod?.name || '',
+      quantity: qty,
+      unit_cost: cost,
+      source: 'manual',
+      note: intakeNote.trim() || null,
+    }]);
+    setIntakeProductId(''); setIntakeQty(''); setIntakeCost(''); setIntakeNote('');
+  };
 
   const handleToggleHide = (product: Product) => {
     const action = product.is_hidden ? 'إظهار' : 'إخفاء';
@@ -435,7 +485,7 @@ export default function Inventory() {
           const rawBarcode = String(pick(row, 'الباركود', 'barcode')).trim();
           const existing = rawBarcode ? byBarcode.get(rawBarcode) : undefined;
           if (existing) {
-            await updateProduct(existing.id, payload);
+            await updateProduct(existing.id, payload, { intakeSource: 'excel_import' });
             updated++;
           } else {
             let barcode = rawBarcode;
@@ -482,8 +532,9 @@ export default function Inventory() {
       const fromNewStock = (Number(from.stock_quantity) || 0) - qty;
       const fromNewDisplay = Math.min(Number(from.display_quantity) || 0, fromNewStock);
       const toNewStock = (Number(to.stock_quantity) || 0) + qty;
-      await updateProduct(from.id, { stock_quantity: fromNewStock, display_quantity: fromNewDisplay });
-      await updateProduct(to.id, { stock_quantity: toNewStock });
+      // skipIntakeLog: الاستبدال نقل بين منتجين — مش دخول مخزون جديد، فمايتقيّدش في سجل «بدون شراء».
+      await updateProduct(from.id, { stock_quantity: fromNewStock, display_quantity: fromNewDisplay }, { skipIntakeLog: true });
+      await updateProduct(to.id, { stock_quantity: toNewStock }, { skipIntakeLog: true });
       // تسجيل الحركة في تعديلات المخزون (للمتابعة)
       try {
         const { supabase } = await import('../../lib/supabase');
@@ -559,7 +610,7 @@ export default function Inventory() {
     <div className="p-4 md:p-8 relative">
 
       {/* STATS CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6 mb-8">
         <div className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-100 flex items-center gap-6 group hover:border-indigo-200 transition-all">
           <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600 group-hover:scale-110 transition-transform">
             <TrendingUp size={32} />
@@ -569,6 +620,27 @@ export default function Inventory() {
             <h3 className="text-2xl font-black text-slate-800">
               {totalStockValue.toLocaleString()} <span className="text-sm font-normal text-slate-400">{storeSettings.currency}</span>
             </h3>
+            <p className="text-[11px] font-bold text-slate-400 mt-1">
+              مشتراة بفواتير: <span className="text-slate-600">{fmtMoney(stockValueSplit.purchased)}</span>
+              {' • '}
+              بدون شراء: <span className="text-amber-600">{fmtMoney(stockValueSplit.noPurchase)}</span>
+            </p>
+          </div>
+        </div>
+
+        <div
+          onClick={() => setShowIntakeModal(true)}
+          className="bg-white rounded-[32px] p-6 shadow-sm border border-slate-100 flex items-center gap-6 group hover:border-amber-200 transition-all cursor-pointer"
+        >
+          <div className="w-16 h-16 bg-amber-50 rounded-2xl flex items-center justify-center text-amber-600 group-hover:scale-110 transition-transform">
+            <Layers size={32} />
+          </div>
+          <div>
+            <p className="text-slate-400 font-bold text-sm">مخزون دخل بدون شراء</p>
+            <h3 className="text-2xl font-black text-slate-800">
+              {fmtMoney(noPurchaseTotal)} <span className="text-sm font-normal text-slate-400">{storeSettings.currency}</span>
+            </h3>
+            <p className="text-[11px] font-bold text-slate-400 mt-1">رأس مال بضاعة بادئين بيه — {visibleIntakes.length} قيد (اضغط للتفاصيل)</p>
           </div>
         </div>
 
@@ -771,6 +843,93 @@ export default function Inventory() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* NO-PURCHASE STOCK INTAKE MODAL — سجل رأس مال البضاعة اللي دخلت بدون فاتورة شراء */}
+      {showIntakeModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b flex justify-between items-center bg-amber-50 shrink-0">
+              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Layers size={22} className="text-amber-500" /> مخزون دخل بدون شراء</h2>
+              <button onClick={() => setShowIntakeModal(false)} className="text-slate-400 hover:text-slate-600 bg-white p-2 rounded-xl shadow-sm border border-slate-200"><X size={20} /></button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto">
+              <p className="text-xs text-slate-500 bg-slate-50 border border-slate-100 rounded-xl p-3 leading-relaxed">
+                كل كمية بتدخل المخزون من غير فاتورة مورد (كمية ابتدائية عند إضافة منتج، تعديل كمية يدوي، استيراد Excel، زيادة جرد)
+                بتتقيّد هنا بقيمتها. القيمة دي <b>رأس مال بضاعة بادئين بيه</b> — مش بتمسّ الخزنة ولا حساب المورد،
+                لكنها بتوضّح إن جزء من الربح مقابله بضاعة مدفوعش تمنها من خلال النظام.
+              </p>
+
+              {/* إضافة قيد يدوي — لتصحيح قيمة البضاعة الافتتاحية */}
+              <div className="bg-white border border-slate-200 rounded-2xl p-4">
+                <p className="text-sm font-bold text-slate-700 mb-1">إضافة قيد يدوي</p>
+                <p className="text-[11px] text-slate-400 mb-3">بيسجّل <b>قيمة</b> بضاعة دخلت بدون شراء فقط — مش بيغيّر كمية المخزون.</p>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                  <select value={intakeProductId} onChange={(e) => {
+                    setIntakeProductId(e.target.value);
+                    const p = products.find(x => x.id === e.target.value);
+                    if (p && !intakeCost) setIntakeCost(String(p.average_purchase_price || p.purchase_price || 0));
+                  }} className="md:col-span-2 p-3 border border-slate-200 rounded-xl text-sm bg-slate-50">
+                    <option value="">اختر المنتج…</option>
+                    {products.filter(p => !p.is_hidden).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                  <input type="number" step="any" placeholder="الكمية" value={intakeQty} onChange={(e) => setIntakeQty(e.target.value)}
+                    className="p-3 border border-slate-200 rounded-xl text-sm bg-slate-50" />
+                  <input type="number" step="any" placeholder="تكلفة الوحدة" value={intakeCost} onChange={(e) => setIntakeCost(e.target.value)}
+                    className="p-3 border border-slate-200 rounded-xl text-sm bg-slate-50" />
+                  <button onClick={submitManualIntake} className="bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-bold px-4 py-3">إضافة</button>
+                </div>
+                <input placeholder="ملاحظة (اختياري)" value={intakeNote} onChange={(e) => setIntakeNote(e.target.value)}
+                  className="w-full mt-2 p-3 border border-slate-200 rounded-xl text-sm bg-slate-50" />
+              </div>
+
+              <div className="flex items-center justify-between bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3">
+                <span className="text-sm font-bold text-amber-800">الإجمالي المقيّد</span>
+                <span className="text-xl font-black text-amber-700">{fmtMoney(noPurchaseTotal)} {storeSettings.currency}</span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="p-3 text-right font-bold">التاريخ</th>
+                      <th className="p-3 text-right font-bold">المنتج</th>
+                      <th className="p-3 text-right font-bold">الكمية</th>
+                      <th className="p-3 text-right font-bold">تكلفة الوحدة</th>
+                      <th className="p-3 text-right font-bold">القيمة</th>
+                      <th className="p-3 text-right font-bold">المصدر</th>
+                      <th className="p-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleIntakes.length === 0 && (
+                      <tr><td colSpan={7} className="p-6 text-center text-slate-400 font-bold">لا توجد قيود.</td></tr>
+                    )}
+                    {visibleIntakes.map(i => (
+                      <tr key={i.id} className="border-b border-slate-100">
+                        <td className="p-3 text-slate-500">{new Date(i.created_at).toLocaleDateString()}</td>
+                        <td className="p-3 font-bold text-slate-700">
+                          {i.product_name || '—'}
+                          {i.note && <span className="block text-[11px] font-normal text-slate-400">{i.note}</span>}
+                        </td>
+                        <td className="p-3 text-slate-600">{formatQty(Number(i.quantity), products.find(p => p.id === i.product_id)?.unit)}</td>
+                        <td className="p-3 text-slate-600">{Number(i.unit_cost).toLocaleString()}</td>
+                        <td className="p-3 font-black text-amber-600">{fmtMoney(Number(i.total_value))}</td>
+                        <td className="p-3"><span className="text-[11px] font-bold bg-slate-100 text-slate-600 rounded-lg px-2 py-1">{intakeSourceLabel(i.source)}</span></td>
+                        <td className="p-3">
+                          <button
+                            onClick={() => { if (confirm('حذف القيد؟ ده بيشيل قيمته من رأس مال البضاعة فقط — المخزون مش هيتأثر.')) deleteStockIntake(i.id); }}
+                            className="text-red-500 hover:bg-red-50 p-2 rounded-lg"><Trash2 size={16} /></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
       )}
