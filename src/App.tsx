@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import POS from './pages/POS';
 import FaviconSwitcher from './components/FaviconSwitcher';
@@ -95,6 +95,50 @@ function ThemeInjector() {
 }
 
 
+/**
+ * شاشة التحميل — بعد ٨ ثواني بتدّي مخرج بدل ما المستخدم يفضل قاعد قدام الدايرة
+ * بتلف. النت الضعيف كان بيخلّيها تعلّق من غير أي زرار.
+ */
+function LoadingScreen() {
+  const [slow, setSlow] = useState(false);
+  const { hydrateFromCache, loadAll } = useStore();
+
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 8000);
+    return () => clearTimeout(t);
+  }, []);
+
+  return (
+    <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-4 p-8 text-center" dir="rtl">
+      <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+      <p className="text-slate-500 font-bold text-lg">جاري تحميل البيانات...</p>
+      {slow && (
+        <div className="mt-4 space-y-3 max-w-sm">
+          <p className="text-amber-700 font-bold text-sm">النت بطيء أو مش راد.</p>
+          <div className="flex gap-2 justify-center flex-wrap">
+            <button
+              onClick={async () => {
+                // الفتح بالبيانات المحفوظة على الجهاز (لو الجهاز فتح السيستم قبل كده أونلاين)
+                const ok = await hydrateFromCache(true);
+                if (!ok) alert('مفيش نسخة محفوظة على الجهاز ده. لازم تفتح السيستم مرة والنت شغّال.');
+              }}
+              className="bg-amber-600 text-white px-5 py-3 rounded-xl font-bold hover:bg-amber-700 transition"
+            >
+              افتح بالبيانات المحفوظة
+            </button>
+            <button
+              onClick={() => loadAll()}
+              className="bg-slate-200 text-slate-700 px-5 py-3 rounded-xl font-bold hover:bg-slate-300 transition"
+            >
+              إعادة المحاولة
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAdminAuthenticated, isOfflineMode } = useStore();
   if (!isAdminAuthenticated) {
@@ -179,12 +223,7 @@ function App() {
   }, [isStandaloneRoute]);
 
   if (isLoading && !isStandaloneRoute) {
-    return (
-      <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-4">
-        <div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
-        <p className="text-slate-500 font-bold text-lg">جاري تحميل البيانات...</p>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (dbError && !isStandaloneRoute) {

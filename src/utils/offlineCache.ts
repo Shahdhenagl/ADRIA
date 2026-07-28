@@ -26,13 +26,18 @@ export interface OfflineSnapshot {
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
+    // indexedDB.open ممكن يتعلّق للأبد لو تبويب تاني ماسك نسخة أقدم من الداتابيز
+    // (onblocked)، فبنحط مهلة عشان مايوقّفش فتح الشاشة أبداً.
+    const timer = setTimeout(() => reject(new Error('indexedDB open timeout')), 3000);
+    const done = (fn: () => void) => { clearTimeout(timer); fn(); };
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
       if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
     };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
+    req.onsuccess = () => done(() => resolve(req.result));
+    req.onerror = () => done(() => reject(req.error));
+    req.onblocked = () => done(() => reject(new Error('indexedDB blocked')));
   });
 }
 

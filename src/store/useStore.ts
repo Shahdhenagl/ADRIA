@@ -1774,6 +1774,9 @@ export const useStore = create<CashierStore>((set, get) => ({
       } else {
         set({ isLoading: false, dbError: String(err) });
       }
+    } finally {
+      // ضمان أخير: مهما حصل، شاشة «جاري تحميل البيانات» مش هتفضل معلّقة.
+      if (get().isLoading || get().isRefreshing) set({ isLoading: false, isRefreshing: false });
     }
   },
 
