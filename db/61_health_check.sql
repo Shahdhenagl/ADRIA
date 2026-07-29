@@ -193,29 +193,33 @@ order by "عدد" desc, "#";
 --                   where st.group_id::text = substring(e.note from '\[SVG:([0-9a-fA-F-]{6,})\]'))
 -- order by e.created_at desc;
 
--- (4) فواتير بيع تقسيمتها مش مظبوطة (بعد استبعاد سدادات الأجل والاستبدال).
--- select o.id, o.total, o.paid_amount,
---        coalesce((select sum(coalesce(p.paid_amount,0)) from orders p
---                  where coalesce(p.is_deleted,false)=false and p.type='payment'
---                    and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'), 0) as debt_payments,
+-- (4) فواتير بيع تقسيمتها مش مظبوطة — بيعرض مكوّنات الفرق عشان تشوف مصدره.
+--     residual = المحصّل − سدادات الأجل − خصومات السداد − تقسيمة الوسائل.
+--     موجب  ⇒ فلوس متسجّلة على الفاتورة من غير ما تتوزّع على وسيلة دفع.
+--     سالب  ⇒ التقسيمة أكبر من المحصّل (غالباً مرتجع اتصرف من فاتورة قديمة).
+-- with pay as (
+--   select o.id as order_id,
+--          coalesce(sum(coalesce(p.paid_amount,0)), 0) as debt_payments,
+--          coalesce(sum(coalesce(nullif(substring(p.notes from 'خصم/إكرامية: ([0-9.]+)'), '')::numeric, 0)), 0) as debt_discounts
+--   from orders o
+--   left join orders p on coalesce(p.is_deleted,false) = false and p.type = 'payment'
+--                     and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'
+--   group by o.id)
+-- select o.id, o.type, o.total, o.paid_amount, pay.debt_payments, pay.debt_discounts,
 --        (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --        +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) as sum_splits,
---        o.payment_method, o.created_at
--- from orders o
+--        round((coalesce(o.paid_amount,0) - pay.debt_payments - pay.debt_discounts
+--        - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
+--          +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)))::numeric, 2) as residual,
+--        o.payment_method, o.notes, o.created_at
+-- from orders o join pay on pay.order_id = o.id
 -- where coalesce(o.is_deleted,false) = false and o.exchange_data is null
 --   and (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --       +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) <> 0
---   and abs(coalesce(o.paid_amount,0)
---       - coalesce((select sum(coalesce(p.paid_amount,0)) from orders p
---                   where coalesce(p.is_deleted,false)=false and p.type='payment'
---                     and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'), 0)
+--   and abs(coalesce(o.paid_amount,0) - pay.debt_payments - pay.debt_discounts
 --       - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --         +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0))) > 0.01
 -- order by o.created_at desc;
---
--- ملاحظة: الفرق الموجب اللي فاضل بعد كده معناه «محصّل مش موزّع على وسيلة» —
--- راجع الفاتورة من صفحة الفواتير. والسالب معناه التقسيمة أكبر من المحصّل
--- (غالباً مرتجع اتصرف كاش من فاتورة قديمة).
 
 -- (5) معاملات موردين تقسيمتها مش مظبوطة.
 -- select pi.id, pi.invoice_number, pi.total, pi.paid_amount,
