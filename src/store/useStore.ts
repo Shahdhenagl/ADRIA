@@ -234,6 +234,8 @@ export interface Order {
   discount_amount?: number;
   car_id?: string;
   exchange_data?: any; // بيانات الاستبدال: { before, after, oldTotal, newTotal, diff, method, date }
+  /** بصمة البيعة من الجهاز — بتمنع تسجيل نفس الفاتورة مرتين لو النت فصل (db/63). */
+  client_ref?: string | null;
 }
 
 // فاتورة معلقة / محجوزة: تحجز الكمية من المخزون دون تسجيل بيع، ويمكن لاحقاً
@@ -1866,8 +1868,31 @@ export const useStore = create<CashierStore>((set, get) => ({
     const queue = [...state.offlineQueue];
     const failedOrders = [];
 
+    const alreadySynced: string[] = [];
+
     for (const offlineOrder of queue) {
       try {
+        // ── حماية من التكرار (db/63) ───────────────────────────────────────
+        // الفاتورة ممكن تكون اتسجّلت على السيرفر فعلاً والنت فصل قبل ما الرد
+        // يوصل، فوقعت في الطابور بالغلط. البصمة بتكشف ده قبل ما نكتبها تاني.
+        if (offlineOrder.client_ref) {
+          const { data: existing } = await supabase
+            .from('orders')
+            .select('id')
+            .eq('client_ref', offlineOrder.client_ref)
+            .maybeSingle();
+          if (existing) {
+            console.warn('Offline order already on server, skipping:', offlineOrder.id, (existing as any).id);
+            alreadySynced.push(offlineOrder.id);
+            // نصحّح النسخة المحلية لرقم الفاتورة الحقيقي بدل رقم الأوفلاين.
+            set((s) => ({
+              orders: s.orders.map((o) =>
+                o.id === offlineOrder.id ? { ...o, id: (existing as any).id, isOffline: false } : o),
+            }));
+            continue;
+          }
+        }
+
         const { data: counterData, error: counterError } = await supabase
           .from('invoice_counter')
           .select('current_value')
@@ -1958,9 +1983,17 @@ export const useStore = create<CashierStore>((set, get) => ({
           salesperson_name: offlineOrder.salesperson_name || null,
           coupon_code: offlineOrder.coupon_code || null,
           discount_amount: offlineOrder.discount_amount || 0,
-          created_at: offlineOrder.date
+          created_at: offlineOrder.date,
+          client_ref: offlineOrder.client_ref || null
         });
 
+        // 23505 = تصادم فهرس فريد. لو حصل على البصمة يبقى الفاتورة اتسجّلت
+        // قبل كده — ده نجاح مش فشل، فبنشيلها من الطابور بدل ما نعيد المحاولة.
+        if (orderError && (orderError as any).code === '23505' && offlineOrder.client_ref) {
+          console.warn('Duplicate client_ref on insert, order already recorded:', offlineOrder.id);
+          alreadySynced.push(offlineOrder.id);
+          continue;
+        }
         if (orderError) throw orderError;
 
         const itemsPayload = offlineOrder.items.map((item: any) => ({
@@ -1998,6 +2031,10 @@ export const useStore = create<CashierStore>((set, get) => ({
         console.error("Failed to sync offline order:", offlineOrder.id, err);
         failedOrders.push(offlineOrder);
       }
+    }
+
+    if (alreadySynced.length) {
+      console.warn(`${alreadySynced.length} فاتورة كانت مرفوعة أصلاً — اتشالت من الطابور من غير تكرار.`);
     }
 
     localStorage.setItem('cashier_offline_queue', JSON.stringify(failedOrders));
@@ -2091,6 +2128,11 @@ export const useStore = create<CashierStore>((set, get) => ({
       ? markSavingsGroupNote(markMainTreasuryNote(notes || 'تحصيل من العميل'), collectionGroupId)
       : (notes || null);
 
+    // بصمة البيعة (idempotency key): بتتولّد **مرة واحدة** هنا وبتتكتب مع الفاتورة
+    // سواء اتحفظت أونلاين أو دخلت طابور الأوفلاين. لو النت فصل بعد ما الطلب وصل
+    // للسيرفر، المزامنة بتلاقي البصمة موجودة فمابتكتبش الفاتورة تاني (db/63).
+    const clientRef = newGroupId();
+
     const executeOfflineCheckout = () => {
       const offlineId = `OFF-${Date.now()}`;
       
@@ -2146,7 +2188,10 @@ export const useStore = create<CashierStore>((set, get) => ({
         discount_amount: discountAmount || 0,
         car_id: carId || undefined,
         items: state.cart.map((i) => ({ ...i })),
-        isOffline: true
+        isOffline: true,
+        // نفس بصمة المحاولة الأونلاين — لو الفاتورة اتسجّلت على السيرفر قبل ما
+        // النت يفصل، المزامنة هتلاقيها وماتكتبهاش تاني.
+        client_ref: clientRef
       };
 
       const updatedQueue = [...state.offlineQueue, newOfflineOrder];
@@ -2274,7 +2319,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         coupon_code: couponCode || null,
         discount_amount: discountAmount || 0,
         car_id: carId || null,
-        created_at: orderCreatedAt
+        created_at: orderCreatedAt,
+        client_ref: clientRef
       });
 
       if (orderError) {
