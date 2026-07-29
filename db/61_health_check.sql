@@ -140,6 +140,28 @@ dup_barcode as (
   select barcode from products
   where barcode is not null and barcode <> ''
   group by barcode having count(*) > 1
+),
+
+-- 12) حركة موظف مصروفة من الرئيسية ([SVG]) لكن صف الدفتر اتمسح ⇒ سلفة/راتب
+--     هيتخصم من الموظف رغم إن الصرف اتلغى. (نفس عيلة فحص 1 بس ناحية الموظفين.)
+orphan_employee_tx as (
+  select t.id from employee_transactions t, svg
+  where t.note like '%[SVG:%'
+    and not exists (
+      select 1 from savings_transactions st
+      where st.group_id::text = substring(t.note from svg.re))
+),
+
+-- 13) العكس: صرف/إيراد في دفتر الرئيسية بلا مصروف ولا حركة موظف مقابلة
+--     ⇒ الرصيد الرئيسي ناقص/زايد من غير سبب مسجّل.
+orphan_main_movement as (
+  select distinct st.group_id from savings_transactions st
+  where st.group_id is not null
+    and st.source in ('main_expense','main_income')
+    and not exists (select 1 from expenses e where e.note like '%[SVG:' || st.group_id::text || ']%')
+    and not exists (select 1 from employee_transactions t where t.note like '%[SVG:' || st.group_id::text || ']%')
+    and not exists (select 1 from purchase_invoices pi where pi.notes like '%[SVG:' || st.group_id::text || ']%')
+    and not exists (select 1 from orders o where o.notes like '%[SVG:' || st.group_id::text || ']%')
 )
 
 select * from (
@@ -165,6 +187,10 @@ select * from (
          (select count(*) from expense_salary_orphan), 'تفاصيل (10)'
   union all select 11, 'باركود مكرر على أكتر من منتج',
          (select count(*) from dup_barcode), 'تفاصيل (11)'
+  union all select 12, 'حركة موظف مصروفة من الرئيسية وحركتها في الدفتر اتمسحت',
+         (select count(*) from orphan_employee_tx), 'تفاصيل (12)'
+  union all select 13, 'حركة في دفتر الرئيسية بلا مصروف/حركة موظف مقابلة',
+         (select count(*) from orphan_main_movement), 'تفاصيل (13)'
 ) x
 order by "عدد" desc, "#";
 
@@ -278,6 +304,26 @@ order by "عدد" desc, "#";
 -- select barcode, count(*) as products, string_agg(name, ' | ') as names
 -- from products where barcode is not null and barcode <> ''
 -- group by barcode having count(*) > 1;
+
+-- (12) حركات موظفين يتيمة (الصرف من الرئيسية اتلغى والحركة فضلت في كشف الموظف).
+--      القرار: لو الفلوس خرجت فعلاً سجّلها من جديد، ولو ملغية امسح الحركة من
+--      صفحة الموظفين (أو delete from employee_transactions where id = '...').
+-- select t.id, t.type, e.name as employee, t.amount, t.payment_method, t.note, t.created_at
+-- from employee_transactions t left join employees e on e.id = t.employee_id
+-- where t.note like '%[SVG:%'
+--   and not exists (select 1 from savings_transactions st
+--                   where st.group_id::text = substring(t.note from '\[SVG:([0-9a-fA-F-]{6,})\]'))
+-- order by t.created_at desc;
+
+-- (13) حركات دفتر الرئيسية اللي مالهاش سبب مسجّل في أي جدول تاني.
+-- select st.group_id, st.source, st.direction, st.method, st.amount, st.note, st.created_at
+-- from savings_transactions st
+-- where st.group_id is not null and st.source in ('main_expense','main_income')
+--   and not exists (select 1 from expenses e where e.note like '%[SVG:' || st.group_id::text || ']%')
+--   and not exists (select 1 from employee_transactions t where t.note like '%[SVG:' || st.group_id::text || ']%')
+--   and not exists (select 1 from purchase_invoices pi where pi.notes like '%[SVG:' || st.group_id::text || ']%')
+--   and not exists (select 1 from orders o where o.notes like '%[SVG:' || st.group_id::text || ']%')
+-- order by st.created_at desc;
 
 
 -- ═════════════════════════════════════════════════════════════════════════════

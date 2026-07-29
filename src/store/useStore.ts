@@ -5373,6 +5373,19 @@ setupRealtime: () => {
     if (current && !isMainTreasuryExpense(current) && !(await ensureAccountingDayOpen(state, current.date))) return;
     await supabase.from('expenses').delete().eq('id', id);
     set((state) => ({ expenses: state.expenses.filter((e) => e.id !== id) }));
+
+    // المصروف الموسوم [SVG:gid] ليه صف مقابل في دفتر الخزنة الرئيسية. من غير
+    // مسحه كان بيفضل الرصيد الرئيسي شايف الفلوس خرجت والمصروف مش موجود.
+    // (deleteSavingsOperation بينادي الدالة دي بعد ما يمسح صفوف الدفتر، فالمسح
+    //  هنا بيبقى بلا أثر — مفيش دوران.)
+    const gid = current ? savingsGroupIdOf(current.note) : null;
+    if (gid) {
+      const { error } = await supabase.from('savings_transactions').delete().eq('group_id', gid);
+      if (error) {
+        console.error('Delete linked main-treasury rows error:', error);
+        alert('⚠️ اتمسح المصروف، لكن تعذّر مسح حركته في الخزنة الرئيسية. راجعها من صفحة الخزنة الرئيسية.');
+      }
+    }
   },
 
   // ── Financing ─────────────────────────────────────────────
@@ -6698,7 +6711,14 @@ setupRealtime: () => {
     }
 
     if (linkedExpense) {
+      // deleteExpense بيمسح كمان صف دفتر الخزنة الرئيسية المربوط بالـ [SVG:gid].
       await get().deleteExpense(linkedExpense.id);
+    } else {
+      // مفيش مصروف مربوط (اتمسح قبل كده أو الحركة قديمة): لو الحركة كانت مصروفة
+      // من الرئيسية لازم نشيل صف الدفتر بنفسنا، وإلا الرصيد الرئيسي يفضل ناقص
+      // من غير ما يكون في حركة مقابلة.
+      const gid = savingsGroupIdOf((current as any).note);
+      if (gid) await supabase.from('savings_transactions').delete().eq('group_id', gid);
     }
 
     set((state) => ({
