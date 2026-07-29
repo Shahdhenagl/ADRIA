@@ -5243,6 +5243,27 @@ setupRealtime: () => {
       }
     }
 
+    // حركة موظف (راتب/سلفة/حافز) مصروفة من الرئيسية: ملاحظتها موسومة بنفس
+    // الـ group_id. حذف صف الدفتر لوحده كان بيسيب الحركة في كشف الموظف — يعني
+    // سلفة هتتخصم من مرتبه رغم إن الصرف اتلغى. بنشيلها معاه (فلوس بس، مفيش مخزون).
+    if (tx.group_id) {
+      const { data: empRows } = await supabase
+        .from('employee_transactions')
+        .select('id, amount, type')
+        .ilike('note', `%[SVG:${tx.group_id}]%`);
+      const empIds = ((empRows as any[]) || []).map((r) => r.id);
+      if (empIds.length) {
+        const { error: empErr } = await supabase.from('employee_transactions').delete().in('id', empIds);
+        if (empErr) {
+          console.error('Delete linked employee transaction error:', empErr);
+          alert('⚠️ اتمسحت الحركة من الخزنة، لكن تعذّر مسح صفها في كشف الموظف. امسحيها يدوياً من صفحة «الموظفين».');
+        } else {
+          set((s) => ({ employeeTransactions: s.employeeTransactions.filter((t) => !empIds.includes(t.id)) }));
+          alert('اتمسحت الحركة من الخزنة الرئيسية، ومعاها الحركة المقابلة في كشف الموظف.');
+        }
+      }
+    }
+
     // فاتورة المشتريات/المرتجع مش بيتحذفوا تلقائياً: حذفهم بيرجّع المخزون كمان،
     // وده قرار لازم يتاخد من شاشة المشتريات مش كأثر جانبي لحذف صف من الدفتر.
     if (source === 'main_purchase' || source === 'main_supplier_return') {

@@ -56,6 +56,9 @@ orphan_expense as (
 --        الأصلية لكن التقسيمة بتفضل بتاعة أول تحصيل (السداد نفسه صف payment مستقل).
 --        وكمان الخصم/الإكرامية وقت السداد بيتضاف على paid_amount وهو مش فلوس
 --        دخلت. فبنطرح الاتنين (المبلغ + الخصم المكتوب في ملاحظة صف السداد).
+--      • المرتجع: المبلغ المردود بينزل من paid_amount والتقسيمة بتفضل بتاعة
+--        التحصيل الأصلي، فبنضيف المردود (order_items.refunded_amount) قبل المقارنة.
+--    المعادلة الصح: تقسيمة الوسائل = المحصّل + المردود − سدادات الأجل − خصوماتها.
 bad_order_split as (
   select o.id from orders o
   where coalesce(o.is_deleted, false) = false
@@ -64,6 +67,8 @@ bad_order_split as (
         +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) <> 0
     and abs(
           coalesce(o.paid_amount,0)
+          + coalesce((select sum(coalesce(it.refunded_amount,0)) from order_items it
+                      where it.order_id = o.id), 0)
           - coalesce((
               select sum(
                 coalesce(p.paid_amount,0)
@@ -72,7 +77,8 @@ bad_order_split as (
               from orders p
               where coalesce(p.is_deleted,false) = false
                 and p.type = 'payment'
-                and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'), 0)
+                -- المسافة بعد الرقم مهمة: من غيرها '#2' بيطابق '#21' و'#266'.
+                and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || ' %'), 0)
           - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
             +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0))
         ) > 0.01
@@ -203,20 +209,23 @@ order by "عدد" desc, "#";
 --          coalesce(sum(coalesce(nullif(substring(p.notes from 'خصم/إكرامية: ([0-9.]+)'), '')::numeric, 0)), 0) as debt_discounts
 --   from orders o
 --   left join orders p on coalesce(p.is_deleted,false) = false and p.type = 'payment'
---                     and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'
---   group by o.id)
--- select o.id, o.type, o.total, o.paid_amount, pay.debt_payments, pay.debt_discounts,
+--                     and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || ' %'
+--   group by o.id),
+-- ref as (select order_id, coalesce(sum(coalesce(refunded_amount,0)),0) as refunded
+--         from order_items group by order_id)
+-- select o.id, o.type, o.total, o.paid_amount, coalesce(ref.refunded,0) as refunded,
+--        pay.debt_payments, pay.debt_discounts,
 --        (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --        +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) as sum_splits,
---        round((coalesce(o.paid_amount,0) - pay.debt_payments - pay.debt_discounts
+--        round((coalesce(o.paid_amount,0) + coalesce(ref.refunded,0) - pay.debt_payments - pay.debt_discounts
 --        - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --          +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)))::numeric, 2) as residual,
 --        o.payment_method, o.notes, o.created_at
--- from orders o join pay on pay.order_id = o.id
+-- from orders o join pay on pay.order_id = o.id left join ref on ref.order_id = o.id
 -- where coalesce(o.is_deleted,false) = false and o.exchange_data is null
 --   and (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --       +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) <> 0
---   and abs(coalesce(o.paid_amount,0) - pay.debt_payments - pay.debt_discounts
+--   and abs(coalesce(o.paid_amount,0) + coalesce(ref.refunded,0) - pay.debt_payments - pay.debt_discounts
 --       - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --         +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0))) > 0.01
 -- order by o.created_at desc;
