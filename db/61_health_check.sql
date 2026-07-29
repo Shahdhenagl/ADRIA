@@ -54,7 +54,8 @@ orphan_expense as (
 --      • الاستبدال (exchange_data) — شوف db/55.
 --      • الفاتورة الآجل اللي اتسدّدت بعدين: السداد بيزوّد paid_amount على الفاتورة
 --        الأصلية لكن التقسيمة بتفضل بتاعة أول تحصيل (السداد نفسه صف payment مستقل).
---        فبنطرح سدادات الأجل قبل المقارنة.
+--        وكمان الخصم/الإكرامية وقت السداد بيتضاف على paid_amount وهو مش فلوس
+--        دخلت. فبنطرح الاتنين (المبلغ + الخصم المكتوب في ملاحظة صف السداد).
 bad_order_split as (
   select o.id from orders o
   where coalesce(o.is_deleted, false) = false
@@ -63,10 +64,15 @@ bad_order_split as (
         +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) <> 0
     and abs(
           coalesce(o.paid_amount,0)
-          - coalesce((select sum(coalesce(p.paid_amount,0)) from orders p
-                      where coalesce(p.is_deleted,false) = false
-                        and p.type = 'payment'
-                        and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'), 0)
+          - coalesce((
+              select sum(
+                coalesce(p.paid_amount,0)
+                + coalesce(nullif(substring(p.notes from 'خصم/إكرامية: ([0-9.]+)'), '')::numeric, 0)
+              )
+              from orders p
+              where coalesce(p.is_deleted,false) = false
+                and p.type = 'payment'
+                and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'), 0)
           - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
             +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0))
         ) > 0.01
@@ -97,11 +103,11 @@ zero_cost_stock as (
     and coalesce(nullif(average_purchase_price,0), nullif(purchase_price,0), 0) = 0
 ),
 
--- 9) راتب مصروف للموظف من غير صف مصروف مقابل ⇒ الخزنة مش شايفة الفلوس خرجت.
+-- 9) حركة موظف (راتب/سلفة/حافز) من غير صف مصروف مقابل ⇒ الخزنة مش شايفة الفلوس خرجت.
+--    مهم: التلات أنواع كلها بتتكتب في expenses بـ category='رواتب' (مش الراتب بس).
 salary_without_expense as (
   select t.id from employee_transactions t
-  where t.type = 'salary'
-    and not exists (select 1 from expenses e where e.employee_transaction_id = t.id)
+  where not exists (select 1 from expenses e where e.employee_transaction_id = t.id)
     and not exists (
       select 1 from expenses e
       where e.category = 'رواتب'
@@ -111,14 +117,15 @@ salary_without_expense as (
 ),
 
 -- 10) مصروف «رواتب» مش مربوط بأي حركة موظف ⇒ يا إما مزدوج يا إما يتيم.
+--    الصفوف الأقدم من db/49 مالهاش employee_transaction_id، فبنطابقها بالمبلغ
+--    واليوم على **أي** نوع حركة (راتب/سلفة/حافز).
 expense_salary_orphan as (
   select e.id from expenses e
   where e.category = 'رواتب'
     and e.employee_transaction_id is null
     and not exists (
       select 1 from employee_transactions t
-      where t.type = 'salary'
-        and abs(coalesce(e.amount,0) - coalesce(t.amount,0)) < 0.01
+      where abs(coalesce(e.amount,0) - coalesce(t.amount,0)) < 0.01
         and date_trunc('day', e.created_at) = date_trunc('day', t.created_at))
 ),
 
@@ -236,21 +243,21 @@ order by "عدد" desc, "#";
 --   and coalesce(nullif(average_purchase_price,0), nullif(purchase_price,0), 0) = 0
 -- order by stock_quantity desc;
 
--- (9) رواتب مصروفة من غير مصروف مقابل — الخزنة مش شايفة الفلوس خرجت.
--- select t.id, t.employee_id, e.name as employee, t.amount, t.created_at
+-- (9) حركات موظفين من غير مصروف مقابل — الخزنة مش شايفة الفلوس خرجت.
+-- select t.id, t.type, t.employee_id, e.name as employee, t.amount, t.created_at
 -- from employee_transactions t left join employees e on e.id = t.employee_id
--- where t.type='salary'
---   and not exists (select 1 from expenses x where x.employee_transaction_id = t.id)
+-- where not exists (select 1 from expenses x where x.employee_transaction_id = t.id)
 --   and not exists (select 1 from expenses x where x.category='رواتب' and x.employee_transaction_id is null
 --                   and abs(coalesce(x.amount,0)-coalesce(t.amount,0)) < 0.01
 --                   and date_trunc('day', x.created_at) = date_trunc('day', t.created_at))
 -- order by t.created_at desc;
 
 -- (10) مصروفات «رواتب» يتيمة — احتمال تكون اتسجّلت مرتين (خصم مضاعف من الخزنة).
+--      الملاحظة بتقول النوع: «راتب - » / «سلفة - » / «حافز - ».
 -- select e.id, e.amount, e.note, e.created_at from expenses e
 -- where e.category='رواتب' and e.employee_transaction_id is null
---   and not exists (select 1 from employee_transactions t where t.type='salary'
---                   and abs(coalesce(e.amount,0)-coalesce(t.amount,0)) < 0.01
+--   and not exists (select 1 from employee_transactions t
+--                   where abs(coalesce(e.amount,0)-coalesce(t.amount,0)) < 0.01
 --                   and date_trunc('day', e.created_at) = date_trunc('day', t.created_at))
 -- order by e.created_at desc;
 
