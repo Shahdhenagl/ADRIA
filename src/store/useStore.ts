@@ -994,6 +994,16 @@ async function isAccountingDayClosed(settings: StoreSettings, value?: string | D
   }
 }
 
+/**
+ * الكمية المعروضة بعد نقص المخزون.
+ * البيع بيتم من المعروض في المحل أولاً، فالمعروض لازم ينزل مع الإجمالي — من غير
+ * كده display_quantity بيفضل أكبر من stock_quantity، وحساب «المستودع»
+ * (الإجمالي − المعروض) بيطلع صفر بالغلط رغم إن في بضاعة في المخزن.
+ */
+function displayAfterStockDrop(product: { stock_quantity?: number; display_quantity?: number } | undefined, newStock: number): number {
+  return Math.min(Number(product?.display_quantity) || 0, Math.max(0, newStock));
+}
+
 async function ensureAccountingDayOpen(state: CashierStore, value?: string | Date | null): Promise<boolean> {
   const day = businessDateStr(state.storeSettings, dateValueForAccounting(value));
   if (!(await isAccountingDayClosed(state.storeSettings, value))) return true;
@@ -1971,10 +1981,13 @@ export const useStore = create<CashierStore>((set, get) => ({
         }
 
         for (const item of offlineOrder.items) {
-          const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', item.id).single();
+          const { data: prodData } = await supabase.from('products').select('stock_quantity, display_quantity').eq('id', item.id).single();
           const currentStock = prodData?.stock_quantity ?? 0;
           const netQty = item.quantity - (item.returned_quantity || 0);
-          await supabase.from('products').update({ stock_quantity: Math.max(0, currentStock - netQty) }).eq('id', item.id);
+          const newStock = Math.max(0, currentStock - netQty);
+          await supabase.from('products')
+            .update({ stock_quantity: newStock, display_quantity: displayAfterStockDrop(prodData as any, newStock) })
+            .eq('id', item.id);
         }
 
         set((s) => ({
@@ -2141,7 +2154,9 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       const updatedProducts = state.products.map((p) => {
         const cartItem = state.cart.find((c) => c.id === p.id);
-        return cartItem ? { ...p, stock_quantity: Math.max(0, p.stock_quantity - cartItem.quantity) } : p;
+        if (!cartItem) return p;
+        const newStock = Math.max(0, p.stock_quantity - cartItem.quantity);
+        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock) };
       });
 
       const updatedCustomers = finalCustomer && !state.customers.find((c) => c.id === finalCustomer!.id)
@@ -2290,10 +2305,13 @@ export const useStore = create<CashierStore>((set, get) => ({
         console.error("Order Items Insert Error:", itemsError);
       }
 
-      // Update stock
+      // Update stock (والمعروض ينزل معاه — البيع بيطلع من المحل أولاً)
       for (const item of state.cart) {
-        const newQty = (state.products.find((p) => p.id === item.id)?.stock_quantity ?? 0) - item.quantity;
-        await supabase.from('products').update({ stock_quantity: Math.max(0, newQty) }).eq('id', item.id);
+        const prod = state.products.find((p) => p.id === item.id);
+        const newQty = Math.max(0, (prod?.stock_quantity ?? 0) - item.quantity);
+        await supabase.from('products')
+          .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty) })
+          .eq('id', item.id);
       }
 
       // Build new order for local state
@@ -2321,7 +2339,9 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       const updatedProducts = state.products.map((p) => {
         const cartItem = state.cart.find((c) => c.id === p.id);
-        return cartItem ? { ...p, stock_quantity: Math.max(0, p.stock_quantity - cartItem.quantity) } : p;
+        if (!cartItem) return p;
+        const newStock = Math.max(0, p.stock_quantity - cartItem.quantity);
+        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock) };
       });
 
       const updatedCustomers = finalCustomer && !state.customers.find((c) => c.id === finalCustomer!.id)
@@ -2460,15 +2480,20 @@ export const useStore = create<CashierStore>((set, get) => ({
         return false;
       }
 
-      // Reserve stock.
+      // Reserve stock (والمعروض ينزل معاه زي البيع).
       for (const item of state.cart) {
-        const newQty = (state.products.find((p) => p.id === item.id)?.stock_quantity ?? 0) - item.quantity;
-        await supabase.from('products').update({ stock_quantity: Math.max(0, newQty) }).eq('id', item.id);
+        const prod = state.products.find((p) => p.id === item.id);
+        const newQty = Math.max(0, (prod?.stock_quantity ?? 0) - item.quantity);
+        await supabase.from('products')
+          .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty) })
+          .eq('id', item.id);
       }
 
       const updatedProducts = state.products.map((p) => {
         const cartItem = state.cart.find((c) => c.id === p.id);
-        return cartItem ? { ...p, stock_quantity: Math.max(0, p.stock_quantity - cartItem.quantity) } : p;
+        if (!cartItem) return p;
+        const newStock = Math.max(0, p.stock_quantity - cartItem.quantity);
+        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock) };
       });
 
       // تحصيل العربون: يدخل الخزنة كإيراد حجز (category='حجز', amount سالب).

@@ -50,16 +50,26 @@ orphan_expense as (
 ),
 
 -- 4) فاتورة بيع: المحصّل ≠ مجموع تقسيمة وسائل الدفع.
---    (الاستبدال بيكسر المساواة دي عن قصد، فمستبعد.)
+--    مستبعد منها الحالتين اللي بيكسروا المساواة **بشكل مقصود**:
+--      • الاستبدال (exchange_data) — شوف db/55.
+--      • الفاتورة الآجل اللي اتسدّدت بعدين: السداد بيزوّد paid_amount على الفاتورة
+--        الأصلية لكن التقسيمة بتفضل بتاعة أول تحصيل (السداد نفسه صف payment مستقل).
+--        فبنطرح سدادات الأجل قبل المقارنة.
 bad_order_split as (
   select o.id from orders o
   where coalesce(o.is_deleted, false) = false
     and o.exchange_data is null
     and (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
         +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) <> 0
-    and abs(coalesce(o.paid_amount,0)
-        - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
-          +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0))) > 0.01
+    and abs(
+          coalesce(o.paid_amount,0)
+          - coalesce((select sum(coalesce(p.paid_amount,0)) from orders p
+                      where coalesce(p.is_deleted,false) = false
+                        and p.type = 'payment'
+                        and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'), 0)
+          - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
+            +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0))
+        ) > 0.01
 ),
 
 -- 5) معاملة مورد: المدفوع ≠ مجموع تقسيمة وسائل الدفع.
@@ -176,8 +186,11 @@ order by "عدد" desc, "#";
 --                   where st.group_id::text = substring(e.note from '\[SVG:([0-9a-fA-F-]{6,})\]'))
 -- order by e.created_at desc;
 
--- (4) فواتير بيع تقسيمتها مش مظبوطة.
+-- (4) فواتير بيع تقسيمتها مش مظبوطة (بعد استبعاد سدادات الأجل والاستبدال).
 -- select o.id, o.total, o.paid_amount,
+--        coalesce((select sum(coalesce(p.paid_amount,0)) from orders p
+--                  where coalesce(p.is_deleted,false)=false and p.type='payment'
+--                    and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'), 0) as debt_payments,
 --        (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --        +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) as sum_splits,
 --        o.payment_method, o.created_at
@@ -186,9 +199,16 @@ order by "عدد" desc, "#";
 --   and (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --       +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) <> 0
 --   and abs(coalesce(o.paid_amount,0)
+--       - coalesce((select sum(coalesce(p.paid_amount,0)) from orders p
+--                   where coalesce(p.is_deleted,false)=false and p.type='payment'
+--                     and p.notes like '%سداد أجل للفاتورة رقم #' || o.id || '%'), 0)
 --       - (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
 --         +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0))) > 0.01
 -- order by o.created_at desc;
+--
+-- ملاحظة: الفرق الموجب اللي فاضل بعد كده معناه «محصّل مش موزّع على وسيلة» —
+-- راجع الفاتورة من صفحة الفواتير. والسالب معناه التقسيمة أكبر من المحصّل
+-- (غالباً مرتجع اتصرف كاش من فاتورة قديمة).
 
 -- (5) معاملات موردين تقسيمتها مش مظبوطة.
 -- select pi.id, pi.invoice_number, pi.total, pi.paid_amount,
