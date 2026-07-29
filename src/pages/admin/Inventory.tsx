@@ -4,7 +4,7 @@ import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon,
 import { normalizeArabic } from '../../utils/textUtils';
 import { splitStockValueBySource, totalIntakeValue, intakeSourceLabel } from '../../utils/stockIntake';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
-import { generateBarcode, printBarcodeLabels } from '../../utils/printBarcodeLabels';
+import { generateBarcode, printBarcodeLabels, printBarcodeLabelsBatch } from '../../utils/printBarcodeLabels';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 // html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها وتكسر تصدير PDF).
@@ -150,6 +150,53 @@ export default function Inventory() {
   );
 
   const fmtMoney = (n: number) => Math.round(n).toLocaleString();
+
+  // ── طباعة باركود لأكتر من منتج مع بعض ────────────────────────────────────
+  // بدل ما تطبع صنف صنف: تختار الأصناف، تحدّد عدد الملصقات لكل واحد، وتطبعهم
+  // كلهم في أمر طباعة واحد على الرول.
+  const [showBatchPrint, setShowBatchPrint] = useState(false);
+  const [batchSearch, setBatchSearch] = useState('');
+  const [batchRows, setBatchRows] = useState<{ id: string; count: string }[]>([]);
+
+  const batchCandidates = useMemo(() => {
+    const q = normalizeArabic(batchSearch.trim());
+    const chosen = new Set(batchRows.map(r => r.id));
+    return products
+      .filter(p => !p.is_hidden && !chosen.has(p.id))
+      .filter(p => !q || normalizeArabic(p.name).includes(q) || (p.barcode || '').includes(batchSearch.trim()))
+      .slice(0, 8);
+  }, [products, batchSearch, batchRows]);
+
+  const addBatchRow = (p: Product) => {
+    // الافتراضي = الكمية اللي في المخزن، لأن ده أشهر استخدام (طباعة لكل القطع).
+    setBatchRows(rows => [...rows, { id: p.id, count: String(Math.max(1, Math.floor(Number(p.stock_quantity) || 0) || 1)) }]);
+    setBatchSearch('');
+  };
+
+  const batchTotalLabels = batchRows.reduce((s, r) => s + (parseInt(r.count) || 0), 0);
+
+  const submitBatchPrint = () => {
+    const labels = batchRows.map(r => {
+      const p = products.find(x => x.id === r.id);
+      const count = Math.floor(parseInt(r.count) || 0);
+      if (!p || count <= 0) return null;
+      return {
+        name: p.name,
+        code: p.barcode || '',
+        price: Number(p.sale_price) || 0,
+        discountPrice: Number(p.discount_price) || 0,
+        count,
+      };
+    }).filter(Boolean) as { name: string; code: string; price: number; discountPrice: number; count: number }[];
+
+    if (labels.length === 0) return alert('اختر منتج واحد على الأقل بكمية أكبر من صفر.');
+    const noBarcode = labels.filter(l => !l.code);
+    if (noBarcode.length) {
+      return alert(`فيه ${noBarcode.length} منتج من غير باركود:\n${noBarcode.map(l => `• ${l.name}`).join('\n')}\n\nاعمله باركود من تعديل المنتج الأول.`);
+    }
+    printBarcodeLabelsBatch(labels, { currency: storeSettings.currency, storeName: storeSettings.name });
+    setShowBatchPrint(false);
+  };
 
   const submitManualIntake = async () => {
     const qty = parseFloat(intakeQty);
@@ -847,6 +894,94 @@ export default function Inventory() {
         </div>
       )}
 
+      {/* BATCH BARCODE PRINT — أكتر من منتج بكمياتهم في أمر طباعة واحد */}
+      {showBatchPrint && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b flex justify-between items-center bg-slate-50 shrink-0">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Printer size={22} className="text-slate-600" /> طباعة باركود لأكتر من منتج</h2>
+                <p className="text-xs text-slate-400 font-bold mt-1">اختار المنتجات وحدّد عدد الملصقات لكل واحد — هيتطبعوا كلهم ورا بعض على الرول</p>
+              </div>
+              <button onClick={() => setShowBatchPrint(false)} className="text-slate-400 hover:text-slate-600 bg-white p-2 rounded-xl shadow-sm border border-slate-200"><X size={20} /></button>
+            </div>
+
+            <div className="p-6 space-y-4 overflow-y-auto">
+              {/* البحث والإضافة */}
+              <div className="relative">
+                <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                <input
+                  value={batchSearch}
+                  onChange={(e) => setBatchSearch(e.target.value)}
+                  placeholder="ابحث بالاسم أو الباركود لإضافة منتج..."
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl py-3 pr-10 pl-3 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/20"
+                />
+                {batchSearch.trim() !== '' && batchCandidates.length > 0 && (
+                  <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+                    {batchCandidates.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => addBatchRow(p)}
+                        className="w-full text-right px-4 py-2.5 hover:bg-indigo-50 flex items-center justify-between gap-3 border-b border-slate-50 last:border-0"
+                      >
+                        <span className="font-bold text-sm text-slate-700 truncate">{p.name}</span>
+                        <span className="text-[11px] font-mono text-slate-400 shrink-0">{p.barcode || 'بدون باركود'} · مخزون {formatQty(Number(p.stock_quantity) || 0, p.unit)}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* المختار */}
+              {batchRows.length === 0 ? (
+                <p className="text-center text-slate-400 font-bold py-10 text-sm">مفيش منتجات مختارة — ابحث فوق وأضف اللي عايز تطبعه.</p>
+              ) : (
+                <div className="space-y-2">
+                  {batchRows.map((row, idx) => {
+                    const p = products.find(x => x.id === row.id);
+                    if (!p) return null;
+                    return (
+                      <div key={row.id} className="flex items-center gap-3 bg-slate-50 border border-slate-100 rounded-xl p-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-bold text-sm text-slate-800 truncate">{p.name}</p>
+                          <p className="text-[11px] font-mono text-slate-400">
+                            {p.barcode || <span className="text-red-500 font-sans font-bold">بدون باركود</span>} · {p.sale_price} {storeSettings.currency}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => setBatchRows(rows => rows.map((r, i) => i === idx ? { ...r, count: String(Math.max(1, (parseInt(r.count) || 1) - 1)) } : r))} className="w-8 h-8 rounded-lg bg-white border border-slate-200 font-black text-slate-600">−</button>
+                          <input
+                            type="number" min="1"
+                            value={row.count}
+                            onChange={(e) => setBatchRows(rows => rows.map((r, i) => i === idx ? { ...r, count: e.target.value } : r))}
+                            className="w-20 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-center font-black outline-none focus:ring-2 focus:ring-indigo-500/20"
+                          />
+                          <button onClick={() => setBatchRows(rows => rows.map((r, i) => i === idx ? { ...r, count: String((parseInt(r.count) || 0) + 1) } : r))} className="w-8 h-8 rounded-lg bg-indigo-100 text-indigo-600 font-black">+</button>
+                        </div>
+                        <button onClick={() => setBatchRows(rows => rows.filter((_, i) => i !== idx))} className="p-2 text-slate-400 hover:text-red-500 shrink-0"><Trash2 size={16} /></button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            <div className="p-5 border-t bg-slate-50 flex items-center justify-between gap-3 shrink-0">
+              <span className="text-sm font-black text-slate-600">
+                {batchRows.length} منتج · <span className="text-indigo-600">{batchTotalLabels}</span> ملصق
+              </span>
+              <button
+                onClick={submitBatchPrint}
+                disabled={batchRows.length === 0}
+                className="bg-slate-800 hover:bg-slate-900 disabled:opacity-40 text-white px-6 py-3 rounded-xl font-black flex items-center gap-2 transition"
+              >
+                <Printer size={18} /> طباعة الكل
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* NO-PURCHASE STOCK INTAKE MODAL — سجل رأس مال البضاعة اللي دخلت بدون فاتورة شراء */}
       {showIntakeModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1099,6 +1234,10 @@ export default function Inventory() {
               {loading ? '...جاري التصدير' : <><FileText size={16} /> PDF</>}
             </button>
           </div>
+          <button onClick={() => { setBatchRows([]); setBatchSearch(''); setShowBatchPrint(true); }} className="bg-slate-700 hover:bg-slate-800 text-white px-5 py-3 rounded-xl font-bold transition flex items-center gap-2 shadow-lg">
+            <Printer size={20} />
+            طباعة باركود
+          </button>
           <button onClick={() => { setSwapFromId(''); setSwapToId(''); setSwapQty(''); setShowSwapModal(true); }} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-3 rounded-xl font-bold transition flex items-center gap-2 shadow-lg">
             <ArrowLeftRight size={20} />
             استبدال

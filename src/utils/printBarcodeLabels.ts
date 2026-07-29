@@ -18,6 +18,69 @@ export function generateBarcode(existing: Set<string> = new Set()): string {
   return candidate;
 }
 
+/** صنف واحد في أمر الطباعة: بياناته + عدد الملصقات المطلوبة منه. */
+export interface BarcodeLabelItem {
+  name: string;
+  code: string;
+  price: number;
+  discountPrice?: number;
+  count: number;
+}
+
+/**
+ * طباعة ملصقات باركود لأكتر من صنف في أمر طباعة واحد (رول 38×25 مم).
+ * كل صنف بياخد عدد الملصقات بتاعه، والأصناف بتتطبع ورا بعض بنفس الترتيب —
+ * فتقدر تطبع فاتورة مشتريات كاملة بكمياتها مرة واحدة.
+ */
+export function printBarcodeLabelsBatch(
+  items: BarcodeLabelItem[],
+  opts: { currency: string; storeName?: string }
+) {
+  const { currency, storeName } = opts;
+  const usable = items.filter((it) => it.code && (Math.floor(it.count) || 0) > 0);
+  if (usable.length === 0) { alert('مفيش أصناف بباركود وكمية للطباعة'); return; }
+
+  const blocks: string[] = [];
+  const failed: string[] = [];
+
+  for (const it of usable) {
+    // صورة الباركود بتتولّد مرة لكل صنف وبتتكرر على ملصقاته.
+    const canvas = document.createElement('canvas');
+    try {
+      JsBarcode(canvas, it.code, { format: 'CODE128', displayValue: false, width: 2, height: 40, margin: 0 });
+    } catch {
+      failed.push(it.name || it.code);
+      continue;
+    }
+    const img = canvas.toDataURL('image/png');
+
+    const hasDiscount = !!(it.discountPrice && it.discountPrice > 0);
+    const priceHtml = hasDiscount
+      ? `<span class="old">${it.price} ${escapeHtml(currency)}</span> <span class="new">${it.discountPrice} ${escapeHtml(currency)}</span>`
+      : `<span class="new">${it.price} ${escapeHtml(currency)}</span>`;
+
+    // كود القطعة بيتكتب على جنب الليبل بالطول (زي ليبلات المحلات) — أوضح وأسهل
+    // في القراءة من غير ما ياخد سطر من الارتفاع المحدود.
+    const oneLabel = `
+    <div class="label">
+      <div class="main">
+        ${storeName ? `<div class="store">${escapeHtml(storeName)}</div>` : ''}
+        <div class="name">${escapeHtml(it.name)}</div>
+        <img class="bc" src="${img}" />
+        <div class="price">${priceHtml}</div>
+      </div>
+      <div class="side">${escapeHtml(it.code)}</div>
+    </div>`;
+    const n = Math.max(1, Math.floor(it.count) || 1);
+    blocks.push(Array.from({ length: n }).map(() => oneLabel).join(''));
+  }
+
+  if (blocks.length === 0) { alert('تعذّر توليد صور الباركود'); return; }
+  if (failed.length) alert(`تعذّر توليد باركود لـ ${failed.length} صنف:\n${failed.slice(0, 5).join('\n')}`);
+
+  void printDocument('barcode', wrapLabels(blocks.join('')));
+}
+
 // Prints `count` barcode labels on a 38mm x 25mm thermal label roll.
 export function printBarcodeLabels(opts: {
   name: string;
@@ -30,38 +93,11 @@ export function printBarcodeLabels(opts: {
 }) {
   const { name, code, price, discountPrice, currency, count, storeName } = opts;
   if (!code) { alert('لا يوجد باركود لطباعته'); return; }
+  printBarcodeLabelsBatch([{ name, code, price, discountPrice, count }], { currency, storeName });
+}
 
-  // Render the barcode to a PNG once, then reuse it on every label.
-  const canvas = document.createElement('canvas');
-  try {
-    JsBarcode(canvas, code, { format: 'CODE128', displayValue: false, width: 2, height: 40, margin: 0 });
-  } catch {
-    alert('تعذّر توليد صورة الباركود');
-    return;
-  }
-  const img = canvas.toDataURL('image/png');
-
-  const hasDiscount = !!(discountPrice && discountPrice > 0);
-  const priceHtml = hasDiscount
-    ? `<span class="old">${price} ${escapeHtml(currency)}</span> <span class="new">${discountPrice} ${escapeHtml(currency)}</span>`
-    : `<span class="new">${price} ${escapeHtml(currency)}</span>`;
-
-  const n = Math.max(1, Math.floor(count) || 1);
-  // كود القطعة بيتكتب على جنب الليبل بالطول (زي ليبلات المحلات) — أوضح وأسهل
-  // في القراءة من غير ما ياخد سطر من الارتفاع المحدود.
-  const oneLabel = `
-    <div class="label">
-      <div class="main">
-        ${storeName ? `<div class="store">${escapeHtml(storeName)}</div>` : ''}
-        <div class="name">${escapeHtml(name)}</div>
-        <img class="bc" src="${img}" />
-        <div class="price">${priceHtml}</div>
-      </div>
-      <div class="side">${escapeHtml(code)}</div>
-    </div>`;
-  const labels = Array.from({ length: n }).map(() => oneLabel).join('');
-
-  // Label roll: 38mm wide x 25mm tall.
+// Label roll: 38mm wide x 25mm tall.
+function wrapLabels(labels: string): string {
   const html = `<!doctype html><html dir="rtl" lang="ar"><head><meta charset="utf-8"><title>طباعة باركود</title>
   <style>
     @page { size: 38mm 25mm; margin: 0; }
@@ -86,5 +122,5 @@ export function printBarcodeLabels(opts: {
   <script>window.onload=function(){window.print();setTimeout(function(){window.close();},400);};<\/script>
   </body></html>`;
 
-  void printDocument('barcode', html);
+  return html;
 }

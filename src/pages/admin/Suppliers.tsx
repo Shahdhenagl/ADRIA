@@ -6,7 +6,7 @@ import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { openPrintWindow } from '../../utils/printWindow';
-import { generateBarcode } from '../../utils/printBarcodeLabels';
+import { generateBarcode, printBarcodeLabelsBatch } from '../../utils/printBarcodeLabels';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import PaymentSplitInputs from '../../components/PaymentSplitInputs';
 import { activePaymentKeys, formToSplit, sumSplit, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
@@ -478,6 +478,37 @@ export default function Suppliers() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  /**
+   * طباعة ملصق باركود لكل صنف في الفاتورة بعدد كميته — كله في أمر طباعة واحد.
+   * بتشتغل والفاتورة لسه بتتكتب (قبل الحفظ)، عشان تلزق الملصقات وإنت بتفرّغ
+   * الكرتونة. الأسعار من كارت المنتج مش من الفاتورة (سعر البيع مش الشراء).
+   */
+  const printInvoiceBarcodes = () => {
+    const labels = invItems
+      .map((row) => {
+        const p = products.find((x) => x.id === row.product_id);
+        const qty = Math.floor(parseFloat(row.quantity) || 0);
+        if (!p || qty <= 0) return null;
+        return {
+          name: p.name,
+          code: p.barcode || '',
+          price: Number(p.sale_price) || 0,
+          discountPrice: Number(p.discount_price) || 0,
+          count: qty,
+        };
+      })
+      .filter(Boolean) as { name: string; code: string; price: number; discountPrice: number; count: number }[];
+
+    if (labels.length === 0) return alert('مفيش أصناف بكميات في الفاتورة.');
+    const noBarcode = labels.filter((l) => !l.code);
+    if (noBarcode.length) {
+      return alert(`فيه ${noBarcode.length} صنف من غير باركود:\n${noBarcode.map((l) => `• ${l.name}`).join('\n')}\n\nحدّد لهم باركود من صفحة المخزون الأول.`);
+    }
+    const total = labels.reduce((s, l) => s + l.count, 0);
+    if (!confirm(`طباعة ${total} ملصق لـ ${labels.length} صنف؟`)) return;
+    printBarcodeLabelsBatch(labels, { currency: storeSettings.currency, storeName: storeSettings.name });
   };
 
   const addInvRow = () => setInvItems([...invItems, { product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
@@ -1380,6 +1411,11 @@ export default function Suppliers() {
                       <button type="button" disabled={invImporting} onClick={() => invFileRef.current?.click()} title="استيراد أصناف الفاتورة من ملف Excel (يُطابق بالكود وينشئ الناقص)" className="text-xs font-bold flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition disabled:opacity-60">
                         <Upload size={14} /> {invImporting ? 'جارٍ الاستيراد...' : 'استيراد Excel'}
                       </button>
+                      {invMode !== 'return' && (
+                        <button type="button" onClick={printInvoiceBarcodes} title="طباعة ملصق باركود لكل صنف بعدد كميته في الفاتورة" className="text-xs font-bold flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition">
+                          <Printer size={14} /> طباعة باركود الأصناف
+                        </button>
+                      )}
                       <button type="button" onClick={addInvRow} className="text-sm font-bold flex items-center gap-1 px-3 py-1.5 rounded-lg hover:opacity-80 transition" style={{ color: tc }}>
                         <Plus size={14} /> إضافة منتج
                       </button>
