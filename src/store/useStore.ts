@@ -5196,12 +5196,34 @@ setupRealtime: () => {
     const { error: delErr } = await supabase.from('savings_transactions').delete().in('id', ids);
     if (delErr) { console.error('deleteSavingsOperation error:', delErr); alert('تعذّر حذف المعاملة'); return false; }
 
-    // فاتورة المشتريات مش بتتحذف تلقائياً: حذفها بيرجّع المخزون كمان، وده قرار
-    // لازم يتاخد من شاشة المشتريات مش كأثر جانبي لحذف صف من الدفتر.
-    if (source === 'main_purchase') {
+    // «سداد لمورد» و«تحصيل من مورد» = فلوس بس (صف purchase_invoices بإجمالي صفر
+    // ومن غير أصناف)، فحذف صف الدفتر لازم يشيل صف المورد معاه — وإلا بيفضل يتيم
+    // في كشف حساب المورد ويبوّظ رصيده وهو أصلاً اتمسح من الخزنة (شوف db/58).
+    // المشتريات والمرتجعات بتلمس المخزون فبتفضل قرار يدوي من صفحة الموردين.
+    if ((source === 'main_supplier_payment' || source === 'main_supplier_collection') && tx.group_id) {
+      const { data: linkedRows } = await supabase
+        .from('purchase_invoices')
+        .select('id, total')
+        .ilike('notes', `%[SVG:${tx.group_id}]%`);
+      // شرط الإجمالي = صفر ضمان إضافي إن ده مش صف بيحمل مخزون.
+      const linkedIds = ((linkedRows as any[]) || []).filter((r) => Number(r.total) === 0).map((r) => r.id);
+      if (linkedIds.length) {
+        const { error: invErr } = await supabase.from('purchase_invoices').delete().in('id', linkedIds);
+        if (invErr) {
+          console.error('Delete linked supplier row error:', invErr);
+          alert('⚠️ اتمسحت الحركة من الخزنة، لكن تعذّر مسح صفها في حساب المورد. امسحيها يدوياً من صفحة «الموردين».');
+        } else {
+          set((s) => ({ purchaseInvoices: s.purchaseInvoices.filter((i) => !linkedIds.includes(i.id)) }));
+        }
+      }
+    }
+
+    // فاتورة المشتريات/المرتجع مش بيتحذفوا تلقائياً: حذفهم بيرجّع المخزون كمان،
+    // وده قرار لازم يتاخد من شاشة المشتريات مش كأثر جانبي لحذف صف من الدفتر.
+    if (source === 'main_purchase' || source === 'main_supplier_return') {
       alert(
         'اتمسحت الحركة من دفتر الخزنة الرئيسية.\n' +
-        'فاتورة المشتريات المرتبطة بيها لسه موجودة — امسحيها من صفحة «الموردين والمشتريات» لو ده المقصود (حذفها بيرجّع المخزون).'
+        `${source === 'main_purchase' ? 'فاتورة المشتريات' : 'مرتجع المورد'} المرتبط بيها لسه موجود — امسحيه من صفحة «الموردين والمشتريات» لو ده المقصود (حذفه بيرجّع المخزون).`
       );
     }
 

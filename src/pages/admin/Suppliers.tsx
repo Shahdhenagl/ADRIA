@@ -280,6 +280,28 @@ export default function Suppliers() {
     }
   };
 
+  /**
+   * حذف «سداد لمورد» أو «تحصيل من مورد» من كشف الحساب.
+   * الصفوف دي فلوس بس (total = 0 ومن غير أصناف) فمفيش أثر على المخزون،
+   * و deletePurchaseInvoice بيمسح كمان حركة الخزنة الرئيسية المرتبطة بالـ group_id
+   * (ولو كانت اتمسحت قبل كده من صفحة الخزنة بيعدّي عادي — وده بيصلّح الصف اليتيم).
+   */
+  const handleDeleteSupplierMoneyRow = async (inv: any, label: string) => {
+    const amount = Math.abs(Number(inv.paid_amount) || 0);
+    const isCollection = (Number(inv.paid_amount) || 0) < 0;
+    if (!confirm(
+      `حذف «${label}» رقم ${inv.invoice_number}؟\n` +
+      `المبلغ: ${amount.toFixed(2)} ${storeSettings.currency}\n\n` +
+      `هيرجع رصيد المورد زي ما كان، و${isCollection ? 'المبلغ اللي اتحصّل هيتشال من' : 'المبلغ المدفوع هيرجع على'} الخزنة المرتبطة بالمعاملة.`
+    )) return;
+    try {
+      await deletePurchaseInvoice(inv.id);
+    } catch (e) {
+      console.error('delete supplier money row:', e);
+      alert('تعذّر حذف المعاملة');
+    }
+  };
+
   const openReturnModal = (inv: any) => {
     setReturnInvoice(inv);
     setReturnQty({});
@@ -1957,6 +1979,18 @@ export default function Suppliers() {
                             </td>
                             <td className="p-4 text-left">
                               <button onClick={() => printPurchaseInvoice(inv)} className="p-2 text-slate-400 hover:text-slate-800 transition" title="طباعة"><Printer size={16} /></button>
+                              {/* حذف السداد/التحصيل: صفوف فلوس بس (مفيش مخزون)، وحذفها بيرجّع
+                                  رصيد المورد ويعكس أثرها على الخزنة المرتبطة. الفواتير والمرتجعات
+                                  ليها مسارات حذف خاصة بيها لأنها بتلمس المخزون. */}
+                              {(isPayment || isCollection) && (
+                                <button
+                                  onClick={() => handleDeleteSupplierMoneyRow(inv, label)}
+                                  className="p-2 text-slate-400 hover:text-red-600 transition"
+                                  title="حذف المعاملة"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))
