@@ -6,7 +6,7 @@ import { EditInvoiceModal } from '../components/EditInvoiceModal';
 import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Truck } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
-import { printBarcodeLabels, generateBarcode } from '../utils/printBarcodeLabels';
+import { printBarcodeLabelsBatch, generateBarcode } from '../utils/printBarcodeLabels';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, totalOpeningBalance } from '../utils/paymentMethods';
 import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
@@ -814,35 +814,40 @@ export default function POS() {
   // ── طباعة باركود منتج من الكاشير ──
   const [showBarcodeModal, setShowBarcodeModal] = useState(false);
   const [barcodeSearch, setBarcodeSearch] = useState('');
-  const [barcodeProductId, setBarcodeProductId] = useState('');
-  const [barcodeCount, setBarcodeCount] = useState('1');
+  // قايمة الطباعة: أكتر من منتج، كل واحد بعدد ملصقاته.
+  const [barcodeRows, setBarcodeRows] = useState<{ id: string; count: string }[]>([]);
   const canBarcodePrint = perm('barcodePrint');
   const barcodeMatches = (() => {
     const q = normalizeArabic(barcodeSearch.trim());
+    const chosen = new Set(barcodeRows.map((r) => r.id));
     const list = q === ''
       ? products
       : products.filter((p) => normalizeArabic(p.name).includes(q) || (p.barcode && p.barcode.includes(barcodeSearch.trim())));
-    return list.slice(0, 30);
+    return list.filter((p) => !chosen.has(p.id)).slice(0, 30);
   })();
-  const barcodeProduct = products.find((p) => p.id === barcodeProductId) || null;
+  const barcodeTotal = barcodeRows.reduce((s, r) => s + (parseInt(r.count) || 0), 0);
+
+  const closeBarcodeModal = () => { setShowBarcodeModal(false); setBarcodeSearch(''); setBarcodeRows([]); };
 
   const handlePrintBarcode = () => {
-    if (!barcodeProduct) { alert('يرجى اختيار منتج أولاً'); return; }
-    const n = Math.max(1, parseInt(barcodeCount) || 1);
-    let code = barcodeProduct.barcode || '';
-    if (!code) {
-      code = generateBarcode(new Set(products.map((p) => p.barcode).filter(Boolean) as string[]));
-      updateProduct(barcodeProduct.id, { barcode: code });
-    }
-    printBarcodeLabels({
-      name: barcodeProduct.name,
-      code,
-      price: barcodeProduct.sale_price,
-      discountPrice: (barcodeProduct as any).discount_price,
-      currency: storeSettings.currency,
-      count: n,
-      storeName: storeSettings.name,
-    });
+    if (barcodeRows.length === 0) { alert('يرجى اختيار منتج واحد على الأقل'); return; }
+    // المنتجات اللي مالهاش باركود بيتولّدلها كود ويتحفظ — نفس سلوك الطباعة الفردية.
+    const used = new Set(products.map((p) => p.barcode).filter(Boolean) as string[]);
+    const labels = barcodeRows.map((row) => {
+      const p = products.find((x) => x.id === row.id);
+      const count = Math.max(1, parseInt(row.count) || 1);
+      if (!p) return null;
+      let code = p.barcode || '';
+      if (!code) {
+        code = generateBarcode(used);
+        used.add(code);
+        updateProduct(p.id, { barcode: code });
+      }
+      return { name: p.name, code, price: p.sale_price, discountPrice: (p as any).discount_price, count };
+    }).filter(Boolean) as { name: string; code: string; price: number; discountPrice?: number; count: number }[];
+
+    printBarcodeLabelsBatch(labels, { currency: storeSettings.currency, storeName: storeSettings.name });
+    closeBarcodeModal();
   };
 
   const handleAdvanceSubmit = async () => {
@@ -2490,69 +2495,83 @@ export default function POS() {
           <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden flex flex-col border border-gray-200 dark:border-slate-700 max-h-[90vh]">
             <div className="p-6 bg-gradient-to-r from-slate-700 to-slate-900 text-white flex justify-between items-center shrink-0">
               <h2 className="text-xl font-bold flex items-center gap-2">
-                <ScanLine size={24} /> طباعة باركود منتج
+                <ScanLine size={24} /> طباعة باركود
               </h2>
-              <button onClick={() => { setShowBarcodeModal(false); setBarcodeSearch(''); setBarcodeProductId(''); setBarcodeCount('1'); }} className="hover:bg-white/20 p-2 rounded-full transition">
+              <button onClick={closeBarcodeModal} className="hover:bg-white/20 p-2 rounded-full transition">
                 <X size={24} />
               </button>
             </div>
             <div className="p-6 flex flex-col gap-4 overflow-y-auto" dir="rtl">
               <div>
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">ابحث عن المنتج (بالاسم أو الباركود)</label>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">ابحث وأضف المنتجات (بالاسم أو الباركود)</label>
                 <div className="relative">
                   <Search size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
                   <input
                     autoFocus
                     value={barcodeSearch}
-                    onChange={(e) => { setBarcodeSearch(e.target.value); setBarcodeProductId(''); }}
+                    onChange={(e) => setBarcodeSearch(e.target.value)}
                     placeholder="اكتب اسم المنتج..."
                     className="w-full bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl pr-10 pl-4 py-3 focus:outline-none focus:ring-2 focus:ring-slate-500 font-bold"
                   />
                 </div>
               </div>
 
-              <div className="max-h-52 overflow-y-auto rounded-xl border border-slate-100 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
+              <div className="max-h-40 overflow-y-auto rounded-xl border border-slate-100 dark:border-slate-700 divide-y divide-slate-100 dark:divide-slate-700">
                 {barcodeMatches.length === 0 ? (
                   <p className="text-center text-slate-400 py-6 text-sm font-bold">لا توجد منتجات مطابقة</p>
                 ) : barcodeMatches.map((p) => (
                   <button
                     key={p.id}
-                    onClick={() => { setBarcodeProductId(p.id); setBarcodeCount(String(Math.max(1, Math.floor(Number(p.stock_quantity) || 1)))); }}
-                    className={`w-full text-right px-4 py-2.5 flex items-center justify-between gap-2 transition ${barcodeProductId === p.id ? 'bg-slate-800 text-white' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}
+                    onClick={() => {
+                      // الافتراضي = كمية المخزون (أشهر استخدام: ملصق لكل قطعة)
+                      setBarcodeRows((rows) => [...rows, { id: p.id, count: String(Math.max(1, Math.floor(Number(p.stock_quantity) || 1))) }]);
+                      setBarcodeSearch('');
+                    }}
+                    className="w-full text-right px-4 py-2.5 flex items-center justify-between gap-2 transition hover:bg-slate-50 dark:hover:bg-slate-700/50"
                   >
                     <span className="font-bold text-sm truncate">{p.name}</span>
-                    <span className={`text-[11px] font-mono shrink-0 ${barcodeProductId === p.id ? 'text-slate-200' : 'text-slate-400'}`}>{p.barcode || 'بدون باركود'}</span>
+                    <span className="text-[11px] font-mono shrink-0 text-slate-400">{p.barcode || 'بدون باركود'}</span>
                   </button>
                 ))}
               </div>
 
-              {barcodeProduct && (
-                <div className="bg-slate-50 dark:bg-slate-700/40 rounded-xl p-3 flex items-center justify-between">
-                  <span className="text-sm font-bold text-slate-600 dark:text-slate-300 truncate">{barcodeProduct.name}</span>
-                  <span className="text-sm font-black text-slate-800 dark:text-slate-100 shrink-0">{barcodeProduct.sale_price.toLocaleString()} {storeSettings.currency}</span>
+              {/* المنتجات المختارة بكمياتها */}
+              {barcodeRows.length === 0 ? (
+                <p className="text-center text-slate-400 py-6 text-sm font-bold">اختر منتج أو أكتر من القايمة فوق</p>
+              ) : (
+                <div className="space-y-2">
+                  {barcodeRows.map((row, idx) => {
+                    const p = products.find((x) => x.id === row.id);
+                    if (!p) return null;
+                    return (
+                      <div key={row.id} className="bg-slate-50 dark:bg-slate-700/40 rounded-xl p-2.5 flex items-center gap-2">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-bold text-slate-700 dark:text-slate-200 truncate">{p.name}</p>
+                          <p className="text-[11px] font-mono text-slate-400">{p.barcode || 'هيتولّد كود جديد'} · {p.sale_price.toLocaleString()} {storeSettings.currency}</p>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button onClick={() => setBarcodeRows((rows) => rows.map((r, i) => i === idx ? { ...r, count: String(Math.max(1, (parseInt(r.count) || 1) - 1)) } : r))} className="w-9 h-9 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-600 font-black text-slate-600 dark:text-slate-200">−</button>
+                          <input
+                            type="number" min="1" dir="ltr"
+                            value={row.count}
+                            onChange={(e) => setBarcodeRows((rows) => rows.map((r, i) => i === idx ? { ...r, count: e.target.value } : r))}
+                            className="w-16 bg-white dark:bg-slate-800 dark:text-white border border-slate-200 dark:border-slate-600 rounded-lg px-1 py-2 text-center font-black outline-none"
+                          />
+                          <button onClick={() => setBarcodeRows((rows) => rows.map((r, i) => i === idx ? { ...r, count: String((parseInt(r.count) || 0) + 1) } : r))} className="w-9 h-9 rounded-lg bg-slate-200 dark:bg-slate-600 font-black text-slate-700 dark:text-white">+</button>
+                        </div>
+                        <button onClick={() => setBarcodeRows((rows) => rows.filter((_, i) => i !== idx))} className="p-1.5 text-slate-400 hover:text-red-500 shrink-0"><X size={16} /></button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
 
-              <div>
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">عدد الملصقات المطلوب طباعتها</label>
-                <div className="flex items-center gap-2">
-                  <button onClick={() => setBarcodeCount(String(Math.max(1, (parseInt(barcodeCount) || 1) - 1)))} className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-200 font-black text-xl hover:bg-slate-200">−</button>
-                  <input
-                    type="number" min="1" dir="ltr"
-                    value={barcodeCount}
-                    onChange={(e) => setBarcodeCount(e.target.value)}
-                    className="flex-1 bg-gray-100 dark:bg-slate-700 dark:text-white border-none rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-slate-500 font-black text-center text-lg"
-                  />
-                  <button onClick={() => setBarcodeCount(String((parseInt(barcodeCount) || 0) + 1))} className="w-11 h-11 rounded-xl bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-200 font-black text-xl hover:bg-slate-200">+</button>
-                </div>
-              </div>
-
               <button
                 onClick={handlePrintBarcode}
-                disabled={!barcodeProduct}
+                disabled={barcodeRows.length === 0}
                 className="w-full font-black py-4 rounded-2xl transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-white bg-slate-800 hover:bg-slate-900"
               >
-                <Printer size={20} /> طباعة الباركود
+                <Printer size={20} /> طباعة {barcodeTotal > 0 ? `${barcodeTotal} ملصق` : 'الباركود'}
               </button>
             </div>
           </div>

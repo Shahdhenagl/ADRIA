@@ -176,13 +176,22 @@ export default function Inventory() {
   const batchTotalLabels = batchRows.reduce((s, r) => s + (parseInt(r.count) || 0), 0);
 
   const submitBatchPrint = () => {
+    // المنتج اللي مالوش باركود بيتولّدله كود ويتحفظ على طول — نفس سلوك زرار
+    // الطباعة الفردي، عشان مايوقفش الطباعة على حاجة النظام يقدر يعملها لوحده.
+    const used = new Set(products.map(p => p.barcode).filter(Boolean) as string[]);
     const labels = batchRows.map(r => {
       const p = products.find(x => x.id === r.id);
       const count = Math.floor(parseInt(r.count) || 0);
       if (!p || count <= 0) return null;
+      let code = p.barcode || '';
+      if (!code) {
+        code = generateBarcode(used);
+        used.add(code);
+        updateProduct(p.id, { barcode: code });
+      }
       return {
         name: p.name,
-        code: p.barcode || '',
+        code,
         price: Number(p.sale_price) || 0,
         discountPrice: Number(p.discount_price) || 0,
         count,
@@ -190,10 +199,6 @@ export default function Inventory() {
     }).filter(Boolean) as { name: string; code: string; price: number; discountPrice: number; count: number }[];
 
     if (labels.length === 0) return alert('اختر منتج واحد على الأقل بكمية أكبر من صفر.');
-    const noBarcode = labels.filter(l => !l.code);
-    if (noBarcode.length) {
-      return alert(`فيه ${noBarcode.length} منتج من غير باركود:\n${noBarcode.map(l => `• ${l.name}`).join('\n')}\n\nاعمله باركود من تعديل المنتج الأول.`);
-    }
     printBarcodeLabelsBatch(labels, { currency: storeSettings.currency, storeName: storeSettings.name });
     setShowBatchPrint(false);
   };
