@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useStore, HELD_STATUS_LABEL, type HeldInvoice, type HeldStatus, type Product } from '../store/useStore';
 import { HeldReturnModal } from '../components/HeldReturnModal';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Truck } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Truck, Hourglass, Play } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { printBarcodeLabelsBatch, generateBarcode } from '../utils/printBarcodeLabels';
@@ -18,13 +18,97 @@ import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryEx
 import { calculateOrderReturnValue } from '../utils/returns';
 import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal } from '../utils/invoicePayments';
 import { printShippingLabel } from '../utils/printShippingLabel';
+import { loadParkedCarts, addParkedCart, removeParkedCart, parkedAgeLabel, type ParkedCart } from '../utils/parkedCarts';
+import { saveDayBudgetCache, loadDayBudgetCache } from '../utils/offlineCache';
 
 // فئة قيد تسوية الجرد: يضبط رصيد خزنة المحل ليطابق الكاش الفعلي المعدود.
 // يُحسب ضمن الداخل/الخارج (عشان الرصيد يتصحّح) لكن له خانته المستقلة في التفصيل.
 const RECONCILE_CAT = 'تسوية جرد الخزنة';
 
+/** توحيد شكل الفاتورة: الطابور الأوفلاين بيستخدم date/items، والسيرفر created_at/order_items. */
+const asNetworkOrder = (o: any) => ({
+  ...o,
+  created_at: o.created_at || o.date,
+  order_items: o.order_items || (o.items || []).map((i: any) => ({ refunded_amount: i.refunded_amount || 0 })),
+});
+
+const addByMethod = (a?: Record<string, number>, b?: Record<string, number>): Record<string, number> =>
+  Object.fromEntries(ALL_PAYMENT_KEYS.map((m) => [m, (a?.[m] || 0) + (b?.[m] || 0)]));
+
+/**
+ * مصدر بيانات «تقفيل اليوم»: الشبكة لو شغّالة، وإلا النسخة المحفوظة على الجهاز.
+ *
+ * التقفيل كان بيفشل تماماً أوفلاين لأنه بيقرا من السيرفر مباشرةً. النسخة
+ * المحفوظة بتحل ده: بتشيل صفوف اليوم + ملخّص «قبل اليوم» (رقمين لكل وسيلة دفع)،
+ * فالحساب بيطلع بنفس المنطق من غير ما نحفظ أرشيف الفواتير كله.
+ *
+ * seedBefIn/seedBefOut = نقطة بداية حركة «قبل اليوم». أونلاين بتيجي من الصفوف
+ * نفسها (نبدأ من صفر)، وأوفلاين بتيجي جاهزة من النسخة.
+ */
+async function loadDayBudgetSource(dayStr: string, start: Date, end: Date, localOrders: any[]) {
+  const inDay = (o: any) => { const d = new Date(o.created_at); return d >= start && d < end; };
+  // فواتير اتعملت أوفلاين على الجهاز ده ولسه في الطابور — لازم تدخل التقفيل،
+  // الفلوس بتاعتها فعلاً في الدرج.
+  const offlineOrders = localOrders.filter((o: any) => o.isOffline).map(asNetworkOrder).filter(inDay);
+  // ضم الفواتير الأوفلاين لصفوف السيرفر من غير تكرار: فاتورة ممكن تكون وصلت
+  // السيرفر والنت فصل قبل الرد، فتفضل في الطابور — البصمة (db/63) بتكشفها.
+  const mergeOffline = (serverOrders: any[]) => {
+    const ids = new Set(serverOrders.map((o) => o.id));
+    const refs = new Set(serverOrders.map((o) => o.client_ref).filter(Boolean));
+    return [...serverOrders, ...offlineOrders.filter((o) => !ids.has(o.id) && !(o.client_ref && refs.has(o.client_ref)))];
+  };
+
+  try {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) throw new Error('offline');
+    const { fetchAllRows } = await import('../lib/supabase');
+    // جلب كل الصفوف (تخطّي حد 1000) عشان الرصيد الافتتاحي وحركة «قبل اليوم» تطلع صح.
+    // للطلبات: select('*') عشان نتفادى خطأ عمود refunded_at لو الـmigration لسه ما اتشغّلتش.
+    const [expenses, purchases, salaries, ordData] = await Promise.all([
+      fetchAllRows('expenses'),
+      fetchAllRows('purchase_invoices'),
+      fetchAllRows('employee_transactions'),
+      fetchAllRows('orders', '*, order_items(refunded_amount)'),
+    ]);
+    return {
+      live: true, cachedAt: null as string | null, rolledFrom: null as string | null,
+      expenses, purchases, salaries,
+      orders: mergeOffline((ordData as any[]).map(asNetworkOrder)),
+      seedBefIn: null as Record<string, number> | null,
+      seedBefOut: null as Record<string, number> | null,
+    };
+  } catch (err) {
+    const cache = await loadDayBudgetCache();
+    if (!cache) throw err;
+
+    if (cache.day === dayStr) {
+      return {
+        live: false, cachedAt: cache.savedAt, rolledFrom: null as string | null,
+        expenses: cache.expenses || [], purchases: cache.purchases || [], salaries: cache.salaries || [],
+        orders: mergeOffline((cache.orders || []).map(asNetworkOrder)),
+        seedBefIn: cache.befIn, seedBefOut: cache.befOut,
+      };
+    }
+
+    if (cache.day < dayStr) {
+      // يوم محاسبي جديد بدأ والنت لسه مقطوع: افتتاح النهاردة = افتتاح اليوم
+      // المحفوظ + حركته. مضبوط لأن مفيش نت = مفيش حركة من جهاز تاني؛ اللي
+      // اتعمل هنا موجود في الطابور الأوفلاين وبيتضاف فوقه.
+      return {
+        live: false, cachedAt: cache.savedAt, rolledFrom: cache.day,
+        expenses: [] as any[], purchases: [] as any[], salaries: [] as any[],
+        orders: offlineOrders,
+        seedBefIn: addByMethod(cache.befIn, cache.dayIn),
+        seedBefOut: addByMethod(cache.befOut, cache.dayOut),
+      };
+    }
+
+    // يوم أقدم من النسخة المحفوظة — مالناش منه نسخة، محتاج نت.
+    throw err;
+  }
+}
+
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -570,26 +654,24 @@ export default function POS() {
   const [dayBudgetDate, setDayBudgetDate] = useState(() => businessDateStr(storeSettings));
   const [dayBudget, setDayBudget] = useState<any>(null);
   const [dayBudgetLoading, setDayBudgetLoading] = useState(false);
+  // مصدر أرقام التقفيل المعروضة: مباشر من السيرفر ولا من نسخة الجهاز (أوفلاين).
+  const [dayBudgetSource, setDayBudgetSource] = useState<{ live: boolean; cachedAt: string | null; rolledFrom: string | null } | null>(null);
 
   const computeDayBudget = async (dayStr: string) => {
     setDayBudgetLoading(true);
     try {
-      const { fetchAllRows } = await import('../lib/supabase');
       // اليوم المحاسبي يبدأ عند ساعة بداية اليوم (مثلاً 3 ص) وينتهي بعدها بـ 24 ساعة
       const { start, end } = businessDayRange(dayStr, storeSettings);
-      // جلب كل الصفوف (تخطّي حد 1000) عشان الرصيد الافتتاحي وحركة «قبل اليوم» تطلع صح.
-      // للطلبات: select('*') عشان نتفادى خطأ عمود refunded_at لو الـmigration لسه ما اتشغّلتش.
-      const [expData, purData, salData, ordData] = await Promise.all([
-        fetchAllRows('expenses'),
-        fetchAllRows('purchase_invoices'),
-        fetchAllRows('employee_transactions'),
-        fetchAllRows('orders', '*, order_items(refunded_amount)'),
-      ]);
-      const expRes = { data: expData }, purRes = { data: purData }, salRes = { data: salData };
-      const allOrders = (ordData as any[]).map((o) => ({ ...o, date: o.created_at, items: o.order_items || [] }));
+      const src = await loadDayBudgetSource(dayStr, start, end, orders);
+      setDayBudgetSource({ live: src.live, cachedAt: src.cachedAt, rolledFrom: src.rolledFrom });
+      const expRes = { data: src.expenses }, purRes = { data: src.purchases }, salRes = { data: src.salaries };
+      const allOrders = src.orders.map((o) => ({ ...o, date: o.created_at, items: o.order_items || [] }));
       const methods = [...ALL_PAYMENT_KEYS] as string[];
       const zero = (): Record<string, number> => Object.fromEntries(methods.map((m) => [m, 0]));
-      const dayIn = zero(), dayOut = zero(), befIn = zero(), befOut = zero();
+      // أوفلاين: حركة «قبل اليوم» بتيجي ملخّصة من النسخة المحفوظة بدل ما تتحسب
+      // من الأرشيف (اللي مش موجود على الجهاز).
+      const dayIn = zero(), dayOut = zero();
+      const befIn = { ...zero(), ...(src.seedBefIn || {}) }, befOut = { ...zero(), ...(src.seedBefOut || {}) };
       // تفصيل حركة اليوم (للتقفيل): مبيعات/تحصيل/مرتجعات/استبدال/مصروفات/مشتريات/رواتب.
       const bd = { salesCount: 0, salesTotal: 0, collected: 0, refundsTotal: 0, refundsCount: 0, exchangeCount: 0, exchangeValue: 0, exchangeNet: 0, expensesTotal: 0, otherIncome: 0, purchasesTotal: 0, salariesTotal: 0, reservationsNet: 0, savingsOut: 0, savingsIn: 0, reconcileIn: 0, reconcileOut: 0 };
       // توزيع مبلغ على وسائل الدفع (منطق مشترك في src/utils/treasury.ts).
@@ -714,7 +796,27 @@ export default function POS() {
       methods.forEach((m) => { shopAvail[m] = openingBalanceOf(storeSettings as any, m) + (befIn[m] + dayIn[m]) - (befOut[m] + dayOut[m]); });
       // «اليوم مقفول» = اتحوّل منه مبلغ للخزنة الرئيسية فعلاً؛ عندها نعرض ملخّص بدل إعادة التقفيل.
       setDayBudget({ opening, closing: opening + totalIn - totalOut, totalIn, totalOut, dayIn, dayOut, shopAvail, savingsOutBy, isClosed: bd.savingsOut > 0.009, breakdown: bd });
-    } catch (e) { console.error(e); alert('تعذّر تحميل ميزانية اليوم'); }
+
+      // نحفظ نسخة التقفيل لليوم الحالي بس — لو حفظنا يوم قديم، الترحيل للأيام
+      // اللي بعده أوفلاين هيتخطّى الأيام اللي بينهم ويطلّع افتتاح غلط.
+      if (src.live && dayStr === businessDateStr(storeSettings)) {
+        const inRange = (r: any) => { const d = new Date(r.created_at); return d >= start && d < end; };
+        void saveDayBudgetCache({
+          day: dayStr, befIn, befOut, dayIn, dayOut,
+          // فاتورة قديمة اترجّعت النهاردة بتأثّر على درج النهاردة، فلازم تتحفظ كمان.
+          orders: allOrders.filter((o: any) => inRange(o) || (o.refunded_at && new Date(o.refunded_at) >= start && new Date(o.refunded_at) < end)),
+          expenses: (expRes.data as any[]).filter(inRange),
+          purchases: (purRes.data as any[]).filter(inRange),
+          salaries: (salRes.data as any[]).filter(inRange),
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      setDayBudgetSource(null);
+      alert(isOfflineMode || !isOnline
+        ? 'تعذّر تحميل تقفيل اليوم أوفلاين — الجهاز ده لسه ما فتحش الشاشة دي والنت شغّال، فمفيش نسخة محفوظة.'
+        : 'تعذّر تحميل ميزانية اليوم');
+    }
     setDayBudgetLoading(false);
   };
 
@@ -755,6 +857,9 @@ export default function POS() {
   // عربون محصّل لفاتورة معلّقة يجري إتمامها الآن (يُضاف للمدفوع ويُسجّل تحويله بعد الإتمام)
   const [activeDeposit, setActiveDeposit] = useState<{ amount: number; split: Record<string, number> } | null>(null);
   useEffect(() => { if (cart.length === 0) setActiveDeposit(null); }, [cart.length]);
+  // فواتير الانتظار — محفوظة على الجهاز نفسه (مش في الداتابيز)، شوف utils/parkedCarts.
+  const [parkedCarts, setParkedCarts] = useState<ParkedCart[]>(() => loadParkedCarts());
+  const [showParkedModal, setShowParkedModal] = useState(false);
   const [shouldPrint, setShouldPrint] = useState(false);
   const [showNoteModal, setShowNoteModal] = useState(false);
   const [noteText, setNoteText] = useState('');
@@ -1811,6 +1916,87 @@ export default function POS() {
     await returnHeldInvoice(id);
   };
 
+  // ── فواتير الانتظار (إيقاف السلة مؤقتاً) ────────────────────
+  // العميل واقف على الكاشير وراح يجيب صنف تاني والطابور مستنّي: بنحفظ السلة
+  // في الجهاز، نفضّي الشاشة، ونحاسب اللي بعده، وبعدين نستدعيها.
+  // مفيش مخزون بيتحجز ولا فلوس بتتحصّل — دي وقفة مش حجز (شوف حفظ كفاتورة معلقة).
+
+  /** بيبني كائن السلة الموقوفة من حالة الكاشير الحالية. */
+  const snapshotCart = (label: string): Omit<ParkedCart, 'id' | 'at'> => ({
+    label,
+    cashier: activeCashier?.name || 'مدير النظام',
+    cart: cart.map((i) => ({ ...i })),
+    total: cart.reduce((s, i) => s + i.sale_price * i.quantity, 0),
+    customerName, customerPhone, customerId,
+    deferredNote, discountStr, invoiceType,
+    salesperson,
+  });
+
+  /** بيفضّي كل الحقول المرتبطة بالسلة (بعد الإيقاف أو قبل الاستدعاء). */
+  const resetCartFields = () => {
+    clearCart();
+    setCustomerName(''); setCustomerPhone(''); setCustomerId('');
+    setDeferredNote(''); setDiscountStr(''); setCouponInput('');
+    setPayInput({}); setActiveDeposit(null); setSalesperson(null);
+  };
+
+  const parkCurrentCart = () => {
+    if (cart.length === 0) return;
+    const suggested = customerName.trim() || cart[0]?.name || 'عميل';
+    const label = window.prompt('علامة تعرف بيها الفاتورة دي (اسم العميل مثلاً):', suggested);
+    if (label === null) return; // اتلغى
+    const next = addParkedCart(snapshotCart(label.trim() || suggested));
+    if (!next) {
+      alert('مساحة التخزين على الجهاز ممتلئة — امسح فاتورة من الانتظار وجرّب تاني.');
+      return;
+    }
+    setParkedCarts(next);
+    resetCartFields();
+  };
+
+  /**
+   * استدعاء سلة من الانتظار. لو في سلة شغّالة دلوقتي بنوقفها هي كمان قبل ما
+   * نحمّل الجديدة — الكاشير بيتنقّل بين عميلين من غير ما يضيع حاجة.
+   *
+   * المخزون مكانش محجوز وقت الإيقاف، فممكن يكون اتباع في فاتورة تانية بين
+   * الوقتين — بنراجع الكميات ونحذّر بدل ما الفاتورة تقع عند التحصيل.
+   */
+  const recallParkedCart = (id: string) => {
+    const p = parkedCarts.find((x) => x.id === id);
+    if (!p) return;
+
+    const short = p.cart
+      .map((it) => {
+        const prod = products.find((pr) => pr.id === it.id);
+        const available = prod ? Number(prod.stock_quantity) || 0 : 0;
+        return available < it.quantity ? `• ${it.name}: مطلوب ${formatQty(it.quantity, prod?.unit)} / متاح ${formatQty(available, prod?.unit)}` : null;
+      })
+      .filter(Boolean);
+    if (short.length > 0 && !window.confirm(
+      `الأصناف دي اتغيّرت كميتها في المخزون وقت الانتظار:\n\n${short.join('\n')}\n\nتحميل الفاتورة برضه؟ (عدّل الكميات قبل التحصيل)`
+    )) return;
+
+    // وقّف السلة الحالية بدل ما تتمسح — التبديل بين عميلين من غير ما يضيع حاجة.
+    if (cart.length > 0 && !addParkedCart(snapshotCart(customerName.trim() || cart[0]?.name || 'عميل'))) {
+      alert('مساحة التخزين ممتلئة — مش هينفع نوقف السلة الحالية. فضّيها أو حصّلها الأول.');
+      return;
+    }
+
+    restoreCart(p.cart, p.invoiceType, p.salesperson);
+    setCustomerName(p.customerName); setCustomerPhone(p.customerPhone); setCustomerId(p.customerId);
+    setDeferredNote(p.deferredNote); setDiscountStr(p.discountStr);
+    setCouponInput(''); setPayInput({}); setActiveDeposit(null);
+
+    setParkedCarts(removeParkedCart(p.id));
+    setShowParkedModal(false);
+  };
+
+  const deleteParkedCart = (id: string) => {
+    const p = parkedCarts.find((x) => x.id === id);
+    if (!window.confirm(`حذف فاتورة الانتظار «${p?.label || ''}»؟ الأصناف مش هتترجع للسلة.`)) return;
+    setParkedCarts(removeParkedCart(id));
+  };
+
   const filteredCustomers = customerName.trim()
     ? customers.filter(c => {
       const normalizedName = normalizeArabic(c.name);
@@ -2592,6 +2778,18 @@ export default function POS() {
                 <button onClick={() => setDayBudgetDate(todayStr())} className="text-xs font-bold text-emerald-600 hover:underline">اليوم</button>
               </div>
               <p className="text-[11px] text-slate-400 font-bold mb-2">اليوم يبدأ الساعة {(() => { const h = storeSettings.dayStartHour ?? 3; return h === 0 ? '12 ص' : h < 12 ? `${h} ص` : h === 12 ? '12 م' : `${h - 12} م`; })()} — الفواتير قبلها تُحسب على اليوم السابق.</p>
+              {/* أرقام من نسخة الجهاز: الكاشير لازم يعرف إنها مش لحظية قبل ما يبني عليها قرار. */}
+              {dayBudgetSource && !dayBudgetSource.live && (
+                <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-900/40 rounded-xl p-3 text-amber-700 dark:text-amber-400">
+                  <p className="text-xs font-black flex items-center gap-1.5"><Hourglass size={14} /> أرقام من نسخة الجهاز (من غير نت)</p>
+                  <p className="text-[11px] font-bold mt-1 leading-relaxed">
+                    آخر مزامنة: {dayBudgetSource.cachedAt ? new Date(dayBudgetSource.cachedAt).toLocaleString('ar-EG') : '—'}
+                    {dayBudgetSource.rolledFrom && ` · محسوبة بترحيل رصيد ${dayBudgetSource.rolledFrom}`}
+                    {' '}· فواتير الأوفلاين متحسوبة. لو في جهاز تاني باع النهاردة، حركته مش هتبان لحد ما النت يرجع.
+                  </p>
+                  <p className="text-[11px] font-black mt-1.5">التقفيل الفعلي (التحويل للخزنة الرئيسية) محتاج نت.</p>
+                </div>
+              )}
               {dayBudgetLoading || !dayBudget ? (
                 <p className="text-center text-slate-400 py-10 font-bold">جاري الحساب...</p>
               ) : (
@@ -3421,6 +3619,13 @@ export default function POS() {
               )}
             </button>
             )}
+            {/* فواتير الانتظار — مش متقيّدة بصلاحية: مفيش مخزون ولا فلوس بتتحرّك، ودي حاجة كل كاشير محتاجها. */}
+            <button onClick={() => setShowParkedModal(true)} className="relative flex items-center justify-center gap-1.5 lg:gap-2 px-3 lg:px-5 h-[44px] lg:h-[52px] bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 rounded-2xl font-bold transition border border-amber-100 dark:border-amber-900/30 whitespace-nowrap shadow-sm shrink-0">
+              <Hourglass size={18} /> <span className="text-sm">انتظار</span>
+              {parkedCarts.length > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 flex items-center justify-center text-[10px] font-black text-white bg-amber-500 rounded-full shadow">{parkedCarts.length}</span>
+              )}
+            </button>
           </div>
         </header>
 
@@ -3856,6 +4061,13 @@ export default function POS() {
             <PauseCircle size={18} /> {holdBusy ? 'جاري الحفظ...' : 'حفظ كفاتورة معلقة'}
           </button>
           )}
+          <button
+            onClick={parkCurrentCart}
+            disabled={cart.length === 0}
+            className="w-full mt-2 bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400 hover:bg-amber-100 disabled:opacity-40 disabled:cursor-not-allowed py-3 rounded-2xl font-black flex items-center justify-center gap-2 transition-all text-sm active:scale-95 border border-amber-100 dark:border-amber-900/30"
+          >
+            <Hourglass size={18} /> وضع الفاتورة في الانتظار
+          </button>
           <button onClick={clearCart} className="w-full text-slate-400 hover:text-red-500 text-xs font-bold py-3 transition-colors">
             إلغاء الطلب والتفريغ
           </button>
@@ -4070,6 +4282,93 @@ export default function POS() {
                 <button onClick={() => setShowHoldForm(false)} className="px-5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-2xl font-black">إلغاء</button>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── فواتير الانتظار ─────────────────────────────────────────────── */}
+      {showParkedModal && (
+        <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="bg-white dark:bg-slate-800 rounded-[32px] shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 border border-white/20">
+            <div className="p-6 border-b border-gray-100 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="flex items-center gap-3">
+                <div className="bg-amber-500 p-2.5 rounded-2xl text-white shadow-lg shadow-amber-200">
+                  <Hourglass size={24} />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-800 dark:text-white">فواتير الانتظار</h3>
+                  <p className="text-xs text-slate-400 font-bold">محفوظة على الجهاز ده — الكمية <span className="text-amber-600 dark:text-amber-400">مش محجوزة</span> من المخزون</p>
+                </div>
+              </div>
+              <button onClick={() => setShowParkedModal(false)} className="p-2 hover:bg-red-50 hover:text-red-500 rounded-xl transition-colors">
+                <X size={20} />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-5 space-y-3">
+              {parkedCarts.length === 0 ? (
+                <div className="text-center py-16 text-slate-400">
+                  <Hourglass size={48} className="mx-auto mb-3 opacity-30" />
+                  <p className="font-bold">مفيش فواتير في الانتظار</p>
+                  <p className="text-xs mt-1.5">لو عميل راح يجيب حاجة تانية، اضغط «وضع الفاتورة في الانتظار» وكمّل مع اللي بعده.</p>
+                </div>
+              ) : (
+                parkedCarts.map((p) => (
+                  <div key={p.id} className="border border-amber-100 dark:border-amber-900/30 bg-amber-50/40 dark:bg-amber-900/10 rounded-2xl p-4">
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-black text-slate-800 dark:text-white truncate">{p.label}</span>
+                          <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-amber-500 text-white">{parkedAgeLabel(p.at)}</span>
+                          {p.invoiceType !== 'retail' && (
+                            <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400">
+                              {p.invoiceType === 'wholesale' ? 'جملة' : 'نص جملة'}
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-400 font-bold mt-1">
+                          {p.cart.length} صنف · {p.cashier}
+                          {p.customerPhone ? ` · ${p.customerPhone}` : ''}
+                          {p.salesperson ? ` · البائع: ${p.salesperson.name}` : ''}
+                        </p>
+                      </div>
+                      {!pricesHidden && (
+                        <span className="font-black text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
+                          {p.total.toFixed(2)} {storeSettings.currency}
+                        </span>
+                      )}
+                    </div>
+
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-bold mb-3 line-clamp-2">
+                      {p.cart.map((i) => `${i.name} ×${formatQty(i.quantity, i.unit)}`).join(' · ')}
+                    </p>
+
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => recallParkedCart(p.id)}
+                        className="flex-1 bg-emerald-500 hover:bg-emerald-600 text-white py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition active:scale-95"
+                      >
+                        <Play size={16} /> استدعاء
+                      </button>
+                      <button
+                        onClick={() => deleteParkedCart(p.id)}
+                        className="px-4 bg-red-50 dark:bg-red-900/20 text-red-500 hover:bg-red-100 rounded-xl font-black text-sm flex items-center justify-center gap-2 transition active:scale-95"
+                      >
+                        <Trash2 size={16} /> حذف
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {cart.length > 0 && parkedCarts.length > 0 && (
+              <div className="px-5 py-3 border-t border-gray-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900/50">
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 font-bold text-center">
+                  في سلة شغّالة دلوقتي — لو استدعيت فاتورة، السلة الحالية هتتحط في الانتظار تلقائياً.
+                </p>
+              </div>
+            )}
           </div>
         </div>
       )}

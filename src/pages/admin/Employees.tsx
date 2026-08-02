@@ -37,8 +37,8 @@ export default function Employees() {
     employees, employeeTransactions, employeeLeaves, employeeAttendance, employeeDeductions, employeeBonuses, storeSettings, orders, cashiers,
     addEmployee, updateEmployee, addEmployeeTransaction,
     updateEmployeeTransaction, deleteEmployeeTransaction,
-    addEmployeeLeave, deleteEmployeeLeave,
-    addEmployeeDeduction, deleteEmployeeDeduction,
+    addEmployeeLeave, updateEmployeeLeave, deleteEmployeeLeave,
+    addEmployeeDeduction, updateEmployeeDeduction, deleteEmployeeDeduction,
     addEmployeeBonus, deleteEmployeeBonus,
     addEmployeeAttendance, updateEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut
   } = useStore();
@@ -166,6 +166,8 @@ export default function Employees() {
   const [editingLeave, setEditingLeave] = useState<EmployeeLeave | null>(null);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [transType, setTransType] = useState<'salary' | 'advance' | 'incentive'>('advance');
+  // البند المفتوح في كشف الراتب (لعرض صفوفه والمسامحة عليها). null = الكل مقفول.
+  const [expandedSalaryRow, setExpandedSalaryRow] = useState<string | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [profileTimeFilter, setProfileTimeFilter] = useState<'month' | 'week' | 'all' | 'custom_month' | 'custom_year'>('month');
   const [profileCustomMonth, setProfileCustomMonth] = useState<string>(currentBusinessMonth);
@@ -353,11 +355,18 @@ export default function Employees() {
     return { records, totalPaid, totalUnpaid, totalDeduction, totalGranted };
   };
 
-  // خصومات الحضور (التأخير) لموظف في شهر معيّن.
-  const getAttendanceMonthDeductions = (empId: string, month: string) =>
-    employeeAttendance
-      .filter(a => a.employee_id === empId && (a.month === month || a.date.slice(0, 7) === month))
-      .reduce((sum, a) => sum + Number(a.deduction_amount || 0), 0);
+  // تفاصيل الحضور/التأخير لموظف في شهر — مش الإجمالي بس، عشان كشف الراتب يوضّح
+  // الخصم جه منين (كام يوم تأخير وكام دقيقة) بدل رقم واحد المستخدم يطرحه بنفسه.
+  const getAttendanceMonthDetail = (empId: string, month: string) => {
+    const rows = employeeAttendance.filter(a => a.employee_id === empId && (a.month === month || a.date.slice(0, 7) === month));
+    return {
+      amount: rows.reduce((sum, a) => sum + Number(a.deduction_amount || 0), 0),
+      lateMinutes: rows.reduce((sum, a) => sum + Number(a.late_minutes || 0), 0),
+      lateDays: rows.filter(a => Number(a.late_minutes || 0) > 0).length,
+      presentDays: rows.length,
+    };
+  };
+
 
   // هل اليوم ده عليه إجازة مسجّلة للموظف (بأي نوع)؟ يوم الإجازة مالوش تأخير ولا خصم.
   const hasLeaveOn = (empId: string, dateStr: string) =>
@@ -370,16 +379,25 @@ export default function Employees() {
     computeLatenessOn(emp, dateStr, at, hasLeaveOn(emp.id, dateStr));
 
 
-  const getLeaveMonthDeductions = (empId: string, month: string, excludeLeaveId?: string) =>
-    employeeLeaves
-      .filter(l => l.employee_id === empId && l.month === month && l.leave_type === 'unpaid' && l.id !== excludeLeaveId)
-      .reduce((sum, l) => sum + Number(l.deduction_amount || 0), 0);
+  // إجازات بخصم في الشهر — بالمبلغ وبعدد الأيام (الأيام للعرض في كشف الراتب).
+  const getLeaveMonthDetail = (empId: string, month: string, excludeLeaveId?: string) => {
+    const rows = employeeLeaves.filter(l => l.employee_id === empId && l.month === month && l.leave_type === 'unpaid' && l.id !== excludeLeaveId);
+    return {
+      amount: rows.reduce((sum, l) => sum + Number(l.deduction_amount || 0), 0),
+      days: rows.reduce((sum, l) => sum + Number(l.days_count || 0), 0),
+    };
+  };
 
   // الخصومات اليدوية المسجّلة خلال الشهر — بتتجمّع وبتتخصم وقت صرف الراتب.
-  const getManualMonthDeductions = (empId: string, month: string) =>
-    employeeDeductions
-      .filter(d => d.employee_id === empId && d.month === month)
-      .reduce((sum, d) => sum + Number(d.amount || 0), 0);
+  const getManualMonthDetail = (empId: string, month: string) => {
+    const rows = employeeDeductions.filter(d => d.employee_id === empId && d.month === month);
+    return {
+      amount: rows.reduce((sum, d) => sum + Number(d.amount || 0), 0),
+      days: rows.reduce((sum, d) => sum + Number(d.days || 0), 0),
+      count: rows.length,
+    };
+  };
+
 
   // المكافآت المسجّلة خلال الشهر — بتتجمّع وبتتضاف على المتبقي وقت صرف الراتب.
   // مرآة getManualMonthDeductions فوق.
@@ -412,7 +430,7 @@ export default function Employees() {
 
   const getEmployeeMonthStats = (empId: string, month: string, excludeTransactionId?: string) => {
     const emp = employees.find(e => e.id === empId);
-    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0 };
+    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0, salaryTxDeductions: 0, lateMinutes: 0, lateDays: 0, presentDays: 0, leaveDays: 0, manualDays: 0, manualCount: 0 };
 
     const monthTrans = employeeTransactions.filter(t => t.employee_id === empId && t.month === month && t.id !== excludeTransactionId);
 
@@ -420,15 +438,30 @@ export default function Employees() {
     const paidSalary = monthTrans.filter(t => t.type === 'salary').reduce((sum, t) => sum + t.amount, 0);
     const deductions = monthTrans.filter(t => t.type === 'salary').reduce((sum, t) => sum + (t.deductions || 0), 0);
     const incentives = monthTrans.filter(t => t.type === 'incentive').reduce((sum, t) => sum + t.amount, 0);
-    const leaveDeductions = getLeaveMonthDeductions(empId, month);
-    const attendanceDeductions = getAttendanceMonthDeductions(empId, month);
-    const manualDeductions = getManualMonthDeductions(empId, month);
+    const leave = getLeaveMonthDetail(empId, month);
+    const attendance = getAttendanceMonthDetail(empId, month);
+    const manual = getManualMonthDetail(empId, month);
+    const leaveDeductions = leave.amount;
+    const attendanceDeductions = attendance.amount;
+    const manualDeductions = manual.amount;
     // المكافآت بتزوّد المستحق، فبتتجمع جوه الـ clamp مش بعده.
     const bonuses = getManualMonthBonuses(empId, month);
 
     const remaining = Math.max(0, emp.monthly_salary + bonuses - advances - paidSalary - deductions - leaveDeductions - attendanceDeductions - manualDeductions);
 
-    return { salary: emp.monthly_salary, advances, paidSalary, deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions, incentives, leaveDeductions, attendanceDeductions, manualDeductions, bonuses, remaining };
+    // ملاحظة: `deductions` المرجَّعة = إجمالي كل الخصومات (بما فيها خصومات صرف
+    // سابق). معادلات الـ net في مودال صرف الراتب بتعتمد عليها بالمعنى ده — أي
+    // تغيير هنا لازم يمشي معاها. الحقول التفصيلية تحتها للعرض بس.
+    return {
+      salary: emp.monthly_salary, advances, paidSalary,
+      deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions,
+      incentives, leaveDeductions, attendanceDeductions, manualDeductions, bonuses, remaining,
+      // تفاصيل للعرض في كشف صرف الراتب
+      salaryTxDeductions: deductions,
+      lateMinutes: attendance.lateMinutes, lateDays: attendance.lateDays, presentDays: attendance.presentDays,
+      leaveDays: leave.days,
+      manualDays: manual.days, manualCount: manual.count,
+    };
   };
 
   // تصدير كشف الرواتب للشهر المحدد (Excel)
@@ -443,7 +476,15 @@ export default function Employees() {
         'السلف': s.advances,
         'الحوافز': s.incentives,
         'المكافآت': s.bonuses,
-        'الخصومات': s.deductions,
+        // الخصم متفصّل لمصادره — عمود واحد مجمّع مش بيسمح بمراجعة الكشف.
+        'خصم التأخير': s.attendanceDeductions,
+        'أيام التأخير': s.lateDays,
+        'دقائق التأخير': s.lateMinutes,
+        'خصم الإجازات': s.leaveDeductions,
+        'أيام إجازة بخصم': s.leaveDays,
+        'خصومات يدوية': s.manualDeductions,
+        'خصم عند صرف راتب': s.salaryTxDeductions,
+        'إجمالي الخصومات': s.deductions,
         'الراتب المدفوع': s.paidSalary,
         'المتبقي': s.remaining,
         'مبيعاته (كبائع)': sales.sales,
@@ -631,12 +672,17 @@ export default function Employees() {
   }, [profileEmployee, salesOrders, orders, cashiers, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
   const profileStats = useMemo(() => {
-    if (!profileEmployee) return { advances: 0, paidSalary: 0, deductions: 0, incentives: 0, bonuses: 0, leaveDays: 0, lateDays: 0, lateMinutes: 0 };
+    if (!profileEmployee) return { advances: 0, paidSalary: 0, deductions: 0, incentives: 0, bonuses: 0, leaveDays: 0, lateDays: 0, lateMinutes: 0, dedSalaryTx: 0, dedLeave: 0, dedAttendance: 0, dedManual: 0 };
     const attDeductions = profileAttendance.attDeductions;
+    // الخصومات متفصّلة لمصادرها — «خصومات» كرقم واحد ما بيقولش التأخير كام.
+    const dedSalaryTx = profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + (t.deductions || 0), 0);
+    const dedLeave = profileLeaves.filter(l => l.leave_type === 'unpaid').reduce((s, l) => s + (l.deduction_amount || 0), 0);
+    const dedManual = profileDeductions.reduce((s, d) => s + Number(d.amount || 0), 0);
     return {
       advances: profileTransactions.filter(t => t.type === 'advance').reduce((s, t: any) => s + t.amount, 0),
       paidSalary: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + t.amount, 0),
-      deductions: profileTransactions.filter(t => t.type === 'salary').reduce((s, t: any) => s + (t.deductions || 0), 0) + profileLeaves.filter(l => l.leave_type === 'unpaid').reduce((s, l) => s + (l.deduction_amount || 0), 0) + attDeductions + profileDeductions.reduce((s, d) => s + Number(d.amount || 0), 0),
+      deductions: dedSalaryTx + dedLeave + attDeductions + dedManual,
+      dedSalaryTx, dedLeave, dedAttendance: attDeductions, dedManual,
       incentives: profileTransactions.filter(t => t.type === 'incentive').reduce((s, t: any) => s + t.amount, 0),
       bonuses: profileBonuses.reduce((s, b) => s + Number(b.amount || 0), 0),
       leaveDays: profileLeaves.reduce((s, l) => s + (l.days_count || 0), 0),
@@ -1129,6 +1175,106 @@ export default function Employees() {
     }
   };
 
+  // ── تفاصيل بنود راتب الشهر + المسامحة ──────────────────────────────────────
+  // شاشة الصرف كانت بتعرض مجاميع بس، فمكانش ينفع تعرف التأخير جه من أنهي يوم
+  // ولا تسامح على صف بعينه. الحاجتين محتاجين الصفوف نفسها مش المجاميع.
+  const getMonthDetailRows = (empId: string, month: string) => {
+    const inMonth = (m?: string, d?: string) => m === month || (d || '').slice(0, 7) === month;
+    return {
+      attendance: employeeAttendance
+        .filter(a => a.employee_id === empId && inMonth(a.month, a.date) && (Number(a.deduction_amount || 0) > 0.004 || Number(a.waived_amount || 0) > 0.004))
+        .sort((a, b) => a.date.localeCompare(b.date)),
+      leaves: employeeLeaves
+        .filter(l => l.employee_id === empId && l.month === month && l.leave_type === 'unpaid')
+        .sort((a, b) => a.start_date.localeCompare(b.start_date)),
+      manual: employeeDeductions
+        .filter(d => d.employee_id === empId && d.month === month)
+        .sort((a, b) => (a.date || '').localeCompare(b.date || '')),
+      advances: employeeTransactions
+        .filter(t => t.employee_id === empId && t.month === month && t.type === 'advance')
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+      incentives: employeeTransactions
+        .filter(t => t.employee_id === empId && t.month === month && t.type === 'incentive')
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+      bonuses: employeeBonuses
+        .filter(b => b.employee_id === empId && b.month === month)
+        .sort((a, b) => (a.date || '').localeCompare(b.date || '')),
+      paidSalaries: employeeTransactions
+        .filter(t => t.employee_id === empId && t.month === month && t.type === 'salary')
+        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+    };
+  };
+
+  /**
+   * مسامحة خصم — كامل أو جزئي (db/64).
+   *
+   * الحقل الحيّ (deduction_amount / amount) بيتصفّر بالمقدار المعفى والمبلغ
+   * بيتنقل لـ waived_amount. كل الحسابات بتقرا الحقل الحيّ، فالمتبقي بيتظبط على
+   * طول — والسجل بيفضل شايل إن ده كان خصم واتسامح، مش إنه كان صفر من الأصل.
+   */
+  const handleWaiveDeduction = async (
+    kind: 'attendance' | 'leave' | 'manual',
+    rec: { id: string; live: number; waived: number },
+    label: string,
+    empId: string,
+    month: string,
+  ) => {
+    const cur = storeSettings.currency;
+    if (rec.live <= 0.004) { alert('الخصم ده متسامح فيه بالكامل بالفعل.'); return; }
+
+    const entered = window.prompt(
+      `مسامحة: ${label}\n` +
+      `الخصم الحالي: ${rec.live.toLocaleString()} ${cur}` +
+      (rec.waived > 0.004 ? ` (متسامح فيه قبل كده: ${rec.waived.toLocaleString()} ${cur})` : '') + `\n\n` +
+      `اكتب المبلغ اللي عايز تسامح فيه (المبلغ كله = مسامحة كاملة):`,
+      rec.live.toFixed(2),
+    );
+    if (entered === null) return;
+    const waive = parseFloat(entered);
+    if (!Number.isFinite(waive) || waive <= 0) { alert('مبلغ غير صحيح'); return; }
+    if (waive > rec.live + 0.004) { alert(`المبلغ أكبر من الخصم نفسه (${rec.live.toLocaleString()} ${cur}).`); return; }
+
+    const newLive = Math.max(0, rec.live - waive);
+    const before = getEmployeeMonthStats(empId, month);
+    const after = Math.max(0, before.remaining + waive);
+    if (!window.confirm(
+      `مسامحة ${waive.toLocaleString()} ${cur} من «${label}».\n` +
+      `الخصم هيبقى ${newLive.toLocaleString()} ${cur}.\n` +
+      `المتبقي في راتب شهر ${month}: ${before.remaining.toLocaleString()} → ${after.toLocaleString()} ${cur}\n\nتأكيد؟`
+    )) return;
+
+    const note = window.prompt('سبب المسامحة (اختياري):', '') || null;
+    const patch: any = { waived_amount: rec.waived + waive, waived_at: new Date().toISOString(), waive_note: note };
+
+    try {
+      if (kind === 'attendance') await updateEmployeeAttendance(rec.id, { ...patch, deduction_amount: newLive });
+      else if (kind === 'leave') await updateEmployeeLeave(rec.id, { ...patch, deduction_amount: newLive });
+      else await updateEmployeeDeduction(rec.id, { ...patch, amount: newLive });
+    } catch (e) {
+      // أشيع سبب: db/64 لسه ماتشغّلتش على الداتابيز.
+      alert('فشل حفظ المسامحة: ' + (e instanceof Error ? e.message : String(e)) + '\n\nلو الأعمدة ناقصة، شغّل db/64_waive_deductions.sql على Supabase.');
+    }
+  };
+
+  /** التراجع عن المسامحة — بيرجّع المبلغ المعفى للخصم تاني. */
+  const handleUndoWaive = async (
+    kind: 'attendance' | 'leave' | 'manual',
+    rec: { id: string; live: number; waived: number },
+    label: string,
+  ) => {
+    if (rec.waived <= 0.004) return;
+    if (!window.confirm(`إلغاء المسامحة على «${label}» ورجوع ${rec.waived.toLocaleString()} ${storeSettings.currency} للخصم تاني؟`)) return;
+    const patch: any = { waived_amount: 0, waived_at: null, waive_note: null };
+    const restored = rec.live + rec.waived;
+    try {
+      if (kind === 'attendance') await updateEmployeeAttendance(rec.id, { ...patch, deduction_amount: restored });
+      else if (kind === 'leave') await updateEmployeeLeave(rec.id, { ...patch, deduction_amount: restored });
+      else await updateEmployeeDeduction(rec.id, { ...patch, amount: restored });
+    } catch (e) {
+      alert('فشل إلغاء المسامحة: ' + (e instanceof Error ? e.message : String(e)));
+    }
+  };
+
   const handleDeleteLeave = async (leaveId: string) => {
     if (!confirm('هل تريد حذف سجل الإجازة؟')) return;
     await deleteEmployeeLeave(leaveId);
@@ -1142,6 +1288,7 @@ export default function Employees() {
   const handleCloseTransModal = () => {
     setShowTransModal(false);
     setEditingTransaction(null);
+    setExpandedSalaryRow(null);
   };
 
   return (
@@ -1337,6 +1484,22 @@ export default function Employees() {
             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
               <span className="text-red-500 font-bold text-sm mb-1">خصومات (للفترة)</span>
               <span className="text-2xl font-black text-red-600">{profileStats.deductions.toLocaleString()} <span className="text-sm font-medium text-red-400">{storeSettings.currency}</span></span>
+              {/* تفصيل الخصم بمصدره — الرقم المجمّع لوحده مش بيقول التأخير كام. */}
+              {profileStats.deductions > 0.004 && (
+                <div className="mt-2 pt-2 border-t border-slate-100 space-y-0.5">
+                  {([
+                    ['تأخير', profileStats.dedAttendance],
+                    ['إجازات بخصم', profileStats.dedLeave],
+                    ['خصومات يدوية', profileStats.dedManual],
+                    ['خصم عند صرف راتب', profileStats.dedSalaryTx],
+                  ] as const).filter(([, v]) => v > 0.004).map(([label, v]) => (
+                    <div key={label} className="flex justify-between text-[11px] font-bold">
+                      <span className="text-slate-400">{label}</span>
+                      <span className="text-slate-500">{v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col justify-center">
               <span className="text-sky-500 font-bold text-sm mb-1">مكافآت (للفترة)</span>
@@ -2153,7 +2316,8 @@ export default function Employees() {
       {/* Transaction Modal (Salary/Advance/Incentive) */}
       {showTransModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[40px] shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]">
+          {/* صرف الراتب فيه كشف بنود بيتفتح — محتاج عرض أوسع من السلفة/الحافز. */}
+          <div className={`bg-white rounded-[40px] shadow-2xl w-full ${transType === 'salary' ? 'max-w-2xl' : 'max-w-lg'} overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh]`}>
             <div className="p-8 text-white flex justify-between items-center shrink-0" style={{ backgroundColor: transType === 'salary' ? '#059669' : transType === 'incentive' ? '#0284c7' : '#d97706' }}>
               <div>
                 <h2 className="text-2xl font-black">
@@ -2165,28 +2329,222 @@ export default function Employees() {
             </div>
             
             <div className="p-8 space-y-6 overflow-y-auto">
+              {/* كشف الراتب — كل بند بقيمته وسببه. قبل كده كان بيتعرض الإجمالي بس،
+                  فالمستخدم مكانش يعرف خصم التأخير كام إلا لو طرح بنفسه. */}
               {transType === 'salary' && (() => {
                 const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
+                const cur = storeSettings.currency;
+                const money = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                const num = (n: number) => Number(n.toFixed(2)).toLocaleString('en-US');
+                const dailyRate = selectedEmployee!.monthly_salary / 30;
+                const extraDays = parseFloat(transFormData.dedDays) || 0;
+                const extraAmount = parseFloat(transFormData.dedAmount) || 0;
+                const extraDed = extraDays * dailyRate + extraAmount;
+                const gross = stats.salary + stats.bonuses;
+                // نفس معادلة الـ net المستخدمة في حقول الفورم — الكشف لازم يوصّل
+                // لنفس الرقم اللي بيتحط في «المبلغ الإجمالي».
+                const totalDed = stats.advances + stats.paidSalary + stats.deductions + extraDed;
+                const net = Math.max(0, gross - totalDed);
+
+                const det = getMonthDetailRows(selectedEmployee!.id, transFormData.month);
+                const empId = selectedEmployee!.id, mon = transFormData.month;
+                const shortDate = (d?: string) => (d || '').slice(5); // MM-DD
+
+                const dedRows = [
+                  {
+                    key: 'advances', label: 'سلف مصروفة خلال الشهر', hint: '', value: stats.advances,
+                    details: det.advances.map(t => ({ id: t.id, when: shortDate(t.created_at?.slice(0, 10)), text: t.note || 'سلفة', amount: t.amount, waived: 0, kind: null })),
+                  },
+                  {
+                    key: 'paid', label: 'راتب مصروف سابقاً هذا الشهر', hint: '', value: stats.paidSalary,
+                    details: det.paidSalaries.map(t => ({ id: t.id, when: shortDate(t.created_at?.slice(0, 10)), text: t.note || 'صرف راتب', amount: t.amount, waived: 0, kind: null })),
+                  },
+                  {
+                    key: 'late', label: 'خصم التأخير', value: stats.attendanceDeductions,
+                    hint: stats.lateDays > 0 ? `${num(stats.lateDays)} يوم تأخير · ${num(stats.lateMinutes)} دقيقة` : '',
+                    details: det.attendance.map(a => ({
+                      id: a.id, when: shortDate(a.date),
+                      text: `تأخير ${num(Number(a.late_minutes || 0))} دقيقة${a.shift_start ? ` (الدوام ${a.shift_start.slice(0, 5)})` : ''}`,
+                      amount: Number(a.deduction_amount || 0), waived: Number(a.waived_amount || 0), kind: 'attendance' as const,
+                    })),
+                  },
+                  {
+                    key: 'leave', label: 'خصم إجازات بدون أجر', value: stats.leaveDeductions,
+                    hint: stats.leaveDays > 0 ? `${num(stats.leaveDays)} يوم × ${money(dailyRate)}` : '',
+                    details: det.leaves.map(l => ({
+                      id: l.id, when: shortDate(l.start_date),
+                      text: `${num(Number(l.days_count || 0))} يوم${l.note ? ` — ${l.note}` : ''}`,
+                      amount: Number(l.deduction_amount || 0), waived: Number(l.waived_amount || 0), kind: 'leave' as const,
+                    })),
+                  },
+                  {
+                    key: 'manual', label: 'خصومات يدوية', value: stats.manualDeductions,
+                    hint: stats.manualCount > 0 ? `${num(stats.manualCount)} خصم${stats.manualDays > 0 ? ` · ${num(stats.manualDays)} يوم` : ''}` : '',
+                    details: det.manual.map(d => ({
+                      id: d.id, when: shortDate(d.date),
+                      text: d.reason || (Number(d.days || 0) > 0 ? `${num(Number(d.days))} يوم` : 'خصم'),
+                      amount: Number(d.amount || 0), waived: Number(d.waived_amount || 0), kind: 'manual' as const,
+                    })),
+                  },
+                  { key: 'prev', label: 'خصومات من صرف سابق', hint: '', value: stats.salaryTxDeductions, details: [] },
+                  {
+                    key: 'extra', label: 'خصم إضافي (المكتوب تحت)', value: extraDed, details: [],
+                    hint: extraDays > 0 ? `${num(extraDays)} يوم × ${money(dailyRate)}${extraAmount > 0 ? ` + ${money(extraAmount)}` : ''}` : '',
+                  },
+                  // بند متسامح فيه بالكامل قيمته صفر، فمش هيعدّي الفلتر تحت —
+                  // بس لازم يفضل ظاهر عشان المستخدم يشوف إنه اتسامح ويقدر يتراجع.
+                ].filter(r => r.value > 0.004 || r.details.some(d => d.waived > 0.004));
+
                 return (
-                  <div className="bg-slate-50 rounded-2xl p-4 border border-slate-100 grid grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div>
-                      <p className="text-[10px] font-bold text-slate-400 uppercase">الراتب الأساسي</p>
-                      <p className="text-lg font-black text-slate-700">{selectedEmployee?.monthly_salary.toLocaleString()} <span className="text-xs text-slate-400">{storeSettings.currency}</span></p>
+                  <div className="bg-slate-50 rounded-[24px] border border-slate-200 overflow-hidden">
+                    <div className="px-5 py-3 bg-white border-b border-slate-200 flex items-center justify-between">
+                      <p className="text-sm font-black text-slate-700">كشف راتب {transFormData.month}</p>
+                      {stats.presentDays > 0 && (
+                        <span className="text-[10px] font-bold text-slate-400">{num(stats.presentDays)} يوم حضور مسجّل</span>
+                      )}
                     </div>
-                    {stats.paidSalary > 0 && (
-                      <div>
-                        <p className="text-[10px] font-bold text-indigo-400 uppercase">تم صرفه (سابقاً)</p>
-                        <p className="text-lg font-black text-indigo-600">-{stats.paidSalary.toLocaleString()} <span className="text-xs text-indigo-300">{storeSettings.currency}</span></p>
+
+                    <div className="px-5 py-3 space-y-1.5">
+                      <div className="flex justify-between text-sm">
+                        <span className="font-bold text-slate-600">الراتب الأساسي</span>
+                        <span className="font-black text-slate-700">{money(stats.salary)}</span>
+                      </div>
+                      {stats.bonuses > 0.004 && (
+                        <div>
+                          <div
+                            className="flex justify-between text-sm cursor-pointer hover:opacity-70"
+                            onClick={() => setExpandedSalaryRow(expandedSalaryRow === 'bonuses' ? null : 'bonuses')}
+                          >
+                            <span className="font-bold text-emerald-600">
+                              <span className="text-emerald-400 ml-1">{expandedSalaryRow === 'bonuses' ? '▾' : '▸'}</span>
+                              + مكافآت الشهر
+                            </span>
+                            <span className="font-black text-emerald-600">{money(stats.bonuses)}</span>
+                          </div>
+                          {expandedSalaryRow === 'bonuses' && (
+                            <div className="mt-1.5 mb-1 mr-3 pr-3 border-r-2 border-emerald-200 space-y-1">
+                              {det.bonuses.map((b) => (
+                                <div key={b.id} className="flex justify-between items-center gap-2 bg-emerald-50/60 rounded-lg px-2.5 py-1.5">
+                                  <span className="text-[11px] font-bold text-slate-500">
+                                    <span className="text-slate-400">{shortDate(b.date)}</span> · {b.reason || 'مكافأة'}
+                                  </span>
+                                  <span className="text-[11px] font-black text-emerald-600">{money(Number(b.amount || 0))}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex justify-between text-sm pt-1.5 border-t border-slate-200">
+                        <span className="font-black text-slate-700">إجمالي المستحق</span>
+                        <span className="font-black text-slate-800">{money(gross)} <span className="text-[10px] text-slate-400">{cur}</span></span>
+                      </div>
+                    </div>
+
+                    <div className="px-5 py-3 bg-red-50/60 border-y border-red-100 space-y-1.5">
+                      {dedRows.length === 0 ? (
+                        <p className="text-xs font-bold text-slate-400 text-center py-1">مفيش أي خصومات على الشهر ده</p>
+                      ) : (
+                        <>
+                          {dedRows.map((r) => {
+                            const open = expandedSalaryRow === r.key;
+                            const hasDetails = r.details.length > 0;
+                            return (
+                              <div key={r.key}>
+                                <div
+                                  className={`flex justify-between items-start gap-3 text-sm ${hasDetails ? 'cursor-pointer hover:opacity-70' : ''}`}
+                                  onClick={hasDetails ? () => setExpandedSalaryRow(open ? null : r.key) : undefined}
+                                >
+                                  <span className="font-bold text-slate-600">
+                                    {hasDetails && <span className="text-slate-400 ml-1">{open ? '▾' : '▸'}</span>}
+                                    {r.label}
+                                    {r.hint && <span className="block text-[10px] font-bold text-slate-400 mt-0.5">{r.hint}</span>}
+                                  </span>
+                                  {/* بند اتسامح فيه بالكامل: «-0.00» بيبان غلط، فبنقولها صريحة. */}
+                                  {r.value <= 0.004 ? (
+                                    <span className="font-black text-emerald-600 whitespace-nowrap text-[11px]">متسامح فيه بالكامل</span>
+                                  ) : (
+                                    <span className="font-black text-red-600 whitespace-nowrap">-{money(r.value)}</span>
+                                  )}
+                                </div>
+
+                                {/* صفوف البند نفسها + المسامحة على صف بعينه */}
+                                {open && (
+                                  <div className="mt-1.5 mb-2 mr-3 pr-3 border-r-2 border-red-200 space-y-1">
+                                    {r.details.map((d) => (
+                                      <div key={d.id} className="flex justify-between items-center gap-2 bg-white rounded-lg px-2.5 py-1.5">
+                                        <span className="text-[11px] font-bold text-slate-500 min-w-0">
+                                          <span className="text-slate-400">{d.when}</span> · {d.text}
+                                          {d.waived > 0.004 && (
+                                            <span className="block text-[10px] font-black text-emerald-600 mt-0.5">متسامح فيه: {money(d.waived)} {cur}</span>
+                                          )}
+                                        </span>
+                                        <span className="flex items-center gap-1.5 shrink-0">
+                                          <span className="text-[11px] font-black text-red-600">{money(d.amount)}</span>
+                                          {d.kind && d.amount > 0.004 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleWaiveDeduction(d.kind!, { id: d.id, live: d.amount, waived: d.waived }, `${r.label} — ${d.when}`, empId, mon)}
+                                              className="text-[10px] font-black px-2 py-1 rounded-md bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100"
+                                            >سامح</button>
+                                          )}
+                                          {d.kind && d.waived > 0.004 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleUndoWaive(d.kind!, { id: d.id, live: d.amount, waived: d.waived }, `${r.label} — ${d.when}`)}
+                                              className="text-[10px] font-black px-2 py-1 rounded-md bg-slate-100 text-slate-500 hover:bg-slate-200 border border-slate-200"
+                                            >تراجع</button>
+                                          )}
+                                        </span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          <div className="flex justify-between text-sm pt-1.5 border-t border-red-200">
+                            <span className="font-black text-red-700">إجمالي الخصومات</span>
+                            <span className="font-black text-red-700">-{money(totalDed)} <span className="text-[10px] text-red-400">{cur}</span></span>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    <div className="px-5 py-3.5 bg-emerald-600 text-white flex justify-between items-center">
+                      <span className="font-black">الصافي المستحق للصرف</span>
+                      <span className="text-xl font-black">{money(net)} <span className="text-xs text-emerald-200">{cur}</span></span>
+                    </div>
+
+                    {/* الحوافز مصروفة كاش وقت تسجيلها — مش بتتخصم من الراتب ولا بتتضاف
+                        عليه. بتتعرض هنا للعلم بس عشان ما تتلخبطش مع «مكافأة». */}
+                    {stats.incentives > 0.004 && (
+                      <div className="px-5 py-3 bg-sky-50 border-t border-sky-100">
+                        <div
+                          className="flex justify-between items-center text-sm cursor-pointer hover:opacity-70"
+                          onClick={() => setExpandedSalaryRow(expandedSalaryRow === 'incentives' ? null : 'incentives')}
+                        >
+                          <span className="font-bold text-sky-700">
+                            <span className="text-sky-400 ml-1">{expandedSalaryRow === 'incentives' ? '▾' : '▸'}</span>
+                            حوافز مصروفة هذا الشهر
+                          </span>
+                          <span className="font-black text-sky-700">{money(stats.incentives)} <span className="text-[10px] text-sky-400">{cur}</span></span>
+                        </div>
+                        <p className="text-[10px] font-bold text-sky-500 mt-1">اتصرفت كاش وقتها — مش داخلة في حساب الراتب فوق (لا خصم ولا إضافة).</p>
+                        {expandedSalaryRow === 'incentives' && (
+                          <div className="mt-1.5 mr-3 pr-3 border-r-2 border-sky-200 space-y-1">
+                            {det.incentives.map((t) => (
+                              <div key={t.id} className="flex justify-between items-center gap-2 bg-white rounded-lg px-2.5 py-1.5">
+                                <span className="text-[11px] font-bold text-slate-500">
+                                  <span className="text-slate-400">{shortDate(t.created_at?.slice(0, 10))}</span> · {t.note || 'حافز'}
+                                </span>
+                                <span className="text-[11px] font-black text-sky-600">{money(Number(t.amount || 0))}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
-                    <div>
-                      <p className="text-[10px] font-bold text-red-400 uppercase">سلف (خصم)</p>
-                      <p className="text-lg font-black text-red-600">-{stats.advances.toLocaleString()} <span className="text-xs text-red-300">{storeSettings.currency}</span></p>
-                    </div>
-                    <div>
-                      <p className="text-[10px] font-bold text-emerald-500 uppercase">المتبقي للصرف</p>
-                      <p className="text-lg font-black text-emerald-600">{stats.remaining.toLocaleString()} <span className="text-xs text-emerald-300">{storeSettings.currency}</span></p>
-                    </div>
                   </div>
                 );
               })()}
@@ -2247,17 +2605,24 @@ export default function Employees() {
                 </div>
               )}
 
-              {transType !== 'salary' && (
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 mb-1">تاريخ {transType === 'incentive' ? 'الحافز' : 'السلفة'}</label>
-                  <input
-                    type="date"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 outline-none font-bold"
-                    value={transFormData.date}
-                    onChange={e => setTransFormData({ ...transFormData, date: e.target.value })}
-                  />
-                </div>
-              )}
+              {/* تاريخ الصرف الفعلي — بيتسجّل كـ created_at، فالحركة بتقع في تقفيل
+                  اليوم الصح. الراتب كان مالوش الحقل ده فكان بيتسجّل بتاريخ النهاردة
+                  دايماً حتى لو الصرف حصل من كام يوم. «الشهر المستهدف» تحت حاجة تانية
+                  خالص: الشهر اللي الراتب بتاعه. */}
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                  تاريخ الصرف {transType === 'salary' ? '(الراتب)' : transType === 'incentive' ? '(الحافز)' : '(السلفة)'}
+                </label>
+                <input
+                  type="date"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 focus:ring-1 outline-none font-bold"
+                  value={transFormData.date}
+                  onChange={e => setTransFormData({ ...transFormData, date: e.target.value })}
+                />
+                {transType === 'salary' && (
+                  <p className="text-[10px] font-bold text-slate-400 mt-1">اليوم اللي الفلوس خرجت فيه من الخزنة — غير «الشهر المستهدف» اللي تحت.</p>
+                )}
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>

@@ -478,6 +478,10 @@ export interface EmployeeLeave {
   month: string;
   note: string;
   created_at: string;
+  /** مسامحة (db/64): المبلغ المعفى اتنقل هنا والحقل الحيّ اتصفّر — الحسابات بتقرا الحيّ بس. */
+  waived_amount?: number;
+  waived_at?: string | null;
+  waive_note?: string | null;
 }
 
 /**
@@ -496,6 +500,10 @@ export interface EmployeeDeduction {
   month: string;
   date: string;
   created_at: string;
+  /** مسامحة (db/64): المبلغ المعفى اتنقل هنا والحقل الحيّ اتصفّر — الحسابات بتقرا الحيّ بس. */
+  waived_amount?: number;
+  waived_at?: string | null;
+  waive_note?: string | null;
 }
 
 /**
@@ -526,6 +534,10 @@ export interface EmployeeAttendance {
   month: string; // YYYY-MM
   note?: string;
   created_at: string;
+  /** مسامحة (db/64): المبلغ المعفى اتنقل هنا والحقل الحيّ اتصفّر — الحسابات بتقرا الحيّ بس. */
+  waived_amount?: number;
+  waived_at?: string | null;
+  waive_note?: string | null;
 }
 
 export interface ProductSuggestion {
@@ -620,6 +632,11 @@ interface CashierStore {
   updateQuantity: (productId: string, quantity: number) => void;
   updatePrice: (productId: string, price: number) => void;
   clearCart: () => void;
+  restoreCart: (
+    cart: OrderItem[],
+    invoiceType: 'retail' | 'half' | 'wholesale',
+    salesperson: { id: string; name: string } | null,
+  ) => void;
   setInvoiceType: (t: 'retail' | 'half' | 'wholesale') => void;
   setSalesperson: (sp: { id: string; name: string } | null) => void;
 
@@ -803,6 +820,7 @@ interface CashierStore {
   updateEmployeeLeave: (id: string, leave: Partial<Omit<EmployeeLeave, 'id' | 'created_at'>>) => Promise<void>;
   deleteEmployeeLeave: (id: string) => Promise<void>;
   addEmployeeDeduction: (deduction: Omit<EmployeeDeduction, 'id' | 'created_at'>) => Promise<void>;
+  updateEmployeeDeduction: (id: string, deduction: Partial<Omit<EmployeeDeduction, 'id' | 'created_at'>>) => Promise<void>;
   deleteEmployeeDeduction: (id: string) => Promise<void>;
   addEmployeeBonus: (bonus: Omit<EmployeeBonus, 'id' | 'created_at'>) => Promise<void>;
   deleteEmployeeBonus: (id: string) => Promise<void>;
@@ -1781,6 +1799,9 @@ export const useStore = create<CashierStore>((set, get) => ({
         products: st.products,
         customers: st.customers,
         cashiers: st.cashiers,
+        // الموظفين: قايمة البائع على الفاتورة وسلف/خصومات الموظفين بتعتمد عليها،
+        // فمن غيرها الكاشير بيفتح أوفلاين بقايمة أسماء فاضية.
+        employees: st.employees,
         invoiceCounter: st.invoiceCounter,
       });
     } catch (err) {
@@ -1822,6 +1843,8 @@ export const useStore = create<CashierStore>((set, get) => ({
       products: (snap.products || []) as Product[],
       customers: (snap.customers || []) as Customer[],
       cashiers,
+      // نسخة قديمة من الكاش ممكن تكون من غير employees — سيب اللي في الذاكرة.
+      employees: Array.isArray(snap.employees) ? (snap.employees as Employee[]) : get().employees,
       invoiceCounter: snap.invoiceCounter || 1,
       activeInvoiceId: String(snap.invoiceCounter || 1),
       activeCashier: activeName ? (cashiers.find((c) => c.name === activeName) || null) : get().activeCashier,
@@ -2094,6 +2117,11 @@ export const useStore = create<CashierStore>((set, get) => ({
     })),
 
   clearCart: () => set({ cart: [] }),
+
+  // استرجاع سلة كاملة (من الانتظار) بنوع الفاتورة والبائع بتوعها في خطوة واحدة.
+  // مش بنعدّي على setInvoiceType عن قصد: ده بيعيد التسعير من المنتج، والكاشير
+  // ممكن يكون عدّل سعر صنف بإيده قبل ما يوقف السلة — الاسترجاع لازم يرجّعها زي ما هي.
+  restoreCart: (cart, invoiceType, salesperson) => set({ cart, invoiceType, salesperson }),
 
   // Switch pricing tier; re-price items already in the cart.
   setInvoiceType: (t) => set((state) => ({
@@ -6817,6 +6845,21 @@ setupRealtime: () => {
     }
     if (data) {
       set((state) => ({ employeeDeductions: [data as EmployeeDeduction, ...state.employeeDeductions] }));
+    }
+  },
+
+  // تعديل/مسامحة خصم يدوي. المسامحة بتصفّر amount وتنقل المبلغ لـ waived_amount
+  // (db/64) — كل الحسابات بتقرا amount، فمفيش سطر حساب محتاج يتغيّر.
+  updateEmployeeDeduction: async (id, deduction) => {
+    const { data, error } = await supabase.from('employee_deductions').update(deduction).eq('id', id).select().single();
+    if (error) {
+      console.error("Update Employee Deduction Error:", error);
+      throw error;
+    }
+    if (data) {
+      set((state) => ({
+        employeeDeductions: state.employeeDeductions.map(d => (d.id === id ? data as EmployeeDeduction : d)),
+      }));
     }
   },
 
