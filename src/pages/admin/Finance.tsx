@@ -851,7 +851,12 @@ export default function Finance() {
   };
 
   const handleDeleteExpense = async (id: string) => {
-    if (confirm('هل أنت متأكد من حذف هذه المعاملة؟')) {
+    // صف «رواتب» ليه صف مقابل في كشف الموظف وبيتمسح معاه — لازم يعرف قبل ما يأكد.
+    const row = expenses.find((e) => e.id === id);
+    const msg = row?.category === 'رواتب'
+      ? 'دي حركة راتب/سلفة. حذفها هيمسح كمان صفها في كشف الموظف (يعني مش هتتخصم من راتبه).\n\nمتأكد؟'
+      : 'هل أنت متأكد من حذف هذه المعاملة؟';
+    if (confirm(msg)) {
       prompt('الرجاء إدخال سبب الحذف:');
       try {
         setLoading(true);

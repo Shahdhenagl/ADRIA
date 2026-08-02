@@ -752,8 +752,10 @@ interface CashierStore {
   recordMainTreasuryOut: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string, groupId?: string) => Promise<boolean>;
   recordMainTreasuryIn: (split: { cash?: number; visa?: number; wallet?: number; instapay?: number; method5?: number; method6?: number }, source: string, note?: string, createdAt?: string, groupId?: string) => Promise<boolean>;
   deleteSavingsOperation: (tx: { id: string; group_id?: string | null; created_at: string; source?: string | null; note?: string | null }) => Promise<boolean>;
-  updateExpense: (id: string, expense: Partial<Expense>) => Promise<void>;
-  deleteExpense: (id: string) => Promise<void>;
+  // skipEmployeeSync: بيتبعت من updateEmployeeTransaction/deleteEmployeeTransaction
+  // لأنهم بيتعاملوا مع صف الموظف بنفسهم — يمنع الشغل المكرر.
+  updateExpense: (id: string, expense: Partial<Expense>, opts?: { skipEmployeeSync?: boolean }) => Promise<void>;
+  deleteExpense: (id: string, opts?: { skipEmployeeSync?: boolean }) => Promise<void>;
 
   // Financing
   loadFinancing: () => Promise<void>;
@@ -1269,6 +1271,32 @@ export const findLinkedSalaryExpense = (expenses: any[], tx: any): any | undefin
       && Math.abs(Number(e.amount) || 0) === Math.abs(Number(tx.amount) || 0)
       && (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
         .every((k) => Math.abs(Number(e['paid_' + k]) || 0) === Math.abs(Number(tx['paid_' + k]) || 0));
+  });
+};
+
+/**
+ * عكس findLinkedSalaryExpense: من صف مصروف «رواتب» لصف الموظف المقابل.
+ *
+ * الراتب/السلفة بيتكتبوا في مكانين (كشف الموظف + مصروف «رواتب»). الربط كان
+ * بيشتغل في اتجاه واحد بس — حذف/تعديل من صفحة الموظفين بيعدّي على المصروف،
+ * لكن من صفحة الخزنة كان بيسيب صف الموظف يتيم. النتيجة: سلفة اتلغت من الخزنة
+ * وفضلت متسجّلة على الموظف فاتخصمت من راتبه.
+ */
+export const findLinkedEmployeeTx = (txs: any[], expense: any): any | undefined => {
+  if (!expense || expense.category !== 'رواتب') return undefined;
+  // (أ) الربط الصريح (db/49).
+  if (expense.employee_transaction_id) {
+    return txs.find((t) => t.id === expense.employee_transaction_id);
+  }
+  // (ب) صفوف قديمة قبل db/49: مطابقة بالتاريخ + المبلغ + التقسيمة. الطرفين
+  //     بيتكتبوا بنفس created_at بالظبط، فمقارنة الـ UTC متّسقة على الجهتين.
+  const eDate = new Date(expense.date || expense.created_at).toISOString().slice(0, 10);
+  return txs.find((t) => {
+    const tDate = new Date(t.created_at).toISOString().slice(0, 10);
+    return tDate === eDate
+      && Math.abs(Number(t.amount) || 0) === Math.abs(Number(expense.amount) || 0)
+      && (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
+        .every((k) => Math.abs(Number(t['paid_' + k]) || 0) === Math.abs(Number(expense['paid_' + k]) || 0));
   });
 };
 
@@ -5407,7 +5435,7 @@ setupRealtime: () => {
     return true;
   },
 
-  updateExpense: async (id, expense) => {
+  updateExpense: async (id, expense, opts) => {
     const state = get();
     const current = state.expenses.find((e) => e.id === id);
     if (current && !(await ensureAccountingDayOpen(state, current.date))) return;
@@ -5435,10 +5463,44 @@ setupRealtime: () => {
       set((state) => ({
         expenses: state.expenses.map((e) => (e.id === id ? { ...e, ...expense } : e))
       }));
+
+      // نفس منطق الحذف: تعديل مصروف «رواتب» لازم ينزل على كشف الموظف كمان،
+      // وإلا الخزنة تقول ٣٠٠ وكشف الموظف يقول ٥٠٠ والفرق يفضل مستخبّي.
+      if (!opts?.skipEmployeeSync && current) {
+        const linkedTx = findLinkedEmployeeTx(get().employeeTransactions, current);
+        if (linkedTx) {
+          const patch: any = {
+            amount: expense.amount ?? linkedTx.amount,
+            paid_cash: expense.paid_cash ?? linkedTx.paid_cash,
+            paid_visa: expense.paid_visa ?? linkedTx.paid_visa,
+            paid_wallet: expense.paid_wallet ?? linkedTx.paid_wallet,
+            paid_instapay: expense.paid_instapay ?? linkedTx.paid_instapay,
+            paid_method5: (expense as any).paid_method5 ?? (linkedTx as any).paid_method5 ?? 0,
+            paid_method6: (expense as any).paid_method6 ?? (linkedTx as any).paid_method6 ?? 0,
+            payment_method: expense.payment_method ?? linkedTx.payment_method,
+          };
+          // تغيير التاريخ لازم يغيّر الشهر المحاسبي كمان، وإلا السلفة تتحرّك في
+          // الخزنة وتفضل متخصومة من راتب الشهر القديم.
+          if (expense.date) {
+            patch.created_at = expense.date;
+            patch.month = businessDateStr(get().storeSettings, dateValueForAccounting(expense.date)).slice(0, 7);
+          }
+          const { data: txData, error: txErr } = await supabase
+            .from('employee_transactions').update(patch).eq('id', linkedTx.id).select().single();
+          if (txErr) {
+            console.error('Sync linked employee transaction error:', txErr);
+            alert('⚠️ اتعدّل المصروف، لكن تعذّر تعديل صفه في كشف الموظف. عدّله يدوياً من صفحة «الموظفين».');
+          } else if (txData) {
+            set((s) => ({
+              employeeTransactions: s.employeeTransactions.map((t) => (t.id === linkedTx.id ? txData as EmployeeTransaction : t)),
+            }));
+          }
+        }
+      }
     }
   },
 
-  deleteExpense: async (id: string) => {
+  deleteExpense: async (id: string, opts) => {
     const state = get();
     const current = state.expenses.find((e) => e.id === id);
     // صفوف الخزنة الرئيسية ([MAIN_TREASURY]) مستبعَدة أصلاً من درج الكاشير، فتقفيل
@@ -5458,6 +5520,25 @@ setupRealtime: () => {
       if (error) {
         console.error('Delete linked main-treasury rows error:', error);
         alert('⚠️ اتمسح المصروف، لكن تعذّر مسح حركته في الخزنة الرئيسية. راجعها من صفحة الخزنة الرئيسية.');
+      }
+    }
+
+    // مصروف «رواتب» ليه صف مقابل في كشف الموظف (db/49). من غير مسحه الموظف
+    // بيفضل شايف السلفة/الراتب اتصرف رغم إنه اتلغى من الخزنة — فالمبلغ بيتخصم
+    // من راتبه وهو مش مصروف. ده كان أشيع مصدر لفرق «صرفت مرتين ومسحت واحدة».
+    // بنمسح الصف مباشرةً مش عن طريق deleteEmployeeTransaction عشان مفيش دوران
+    // (deleteEmployeeTransaction هو اللي بينادي الدالة دي أصلاً).
+    if (!opts?.skipEmployeeSync && current) {
+      const linkedTx = findLinkedEmployeeTx(get().employeeTransactions, current);
+      if (linkedTx) {
+        const { error } = await supabase.from('employee_transactions').delete().eq('id', linkedTx.id);
+        if (error) {
+          console.error('Delete linked employee transaction error:', error);
+          alert('⚠️ اتمسح المصروف، لكن تعذّر مسح صفه في كشف الموظف. امسحه يدوياً من صفحة «الموظفين» وإلا هيتخصم من راتبه.');
+        } else {
+          set((s) => ({ employeeTransactions: s.employeeTransactions.filter((t) => t.id !== linkedTx.id) }));
+          alert('اتمسح المصروف، ومعاه الحركة المقابلة في كشف الموظف.');
+        }
       }
     }
   },
@@ -6760,8 +6841,11 @@ setupRealtime: () => {
         paid_method5: (updatedTransaction as any).paid_method5 || 0,
         paid_method6: (updatedTransaction as any).paid_method6 || 0,
         note,
-        payment_method: updatedTransaction.payment_method
-      } as any);
+        payment_method: updatedTransaction.payment_method,
+        // تعديل تاريخ الصرف لازم يتحرّك على صف المصروف كمان — من غيره الحركة
+        // تفضل في تقفيل اليوم القديم بينما كشف الموظف اتنقل لليوم الجديد.
+        ...((transaction as any).created_at ? { date: (transaction as any).created_at } : {}),
+      } as any, { skipEmployeeSync: true });
     }
 
     set((state) => ({
@@ -6786,7 +6870,8 @@ setupRealtime: () => {
 
     if (linkedExpense) {
       // deleteExpense بيمسح كمان صف دفتر الخزنة الرئيسية المربوط بالـ [SVG:gid].
-      await get().deleteExpense(linkedExpense.id);
+      // skipEmployeeSync: صف الموظف اتمسح فوق خلاص.
+      await get().deleteExpense(linkedExpense.id, { skipEmployeeSync: true });
     } else {
       // مفيش مصروف مربوط (اتمسح قبل كده أو الحركة قديمة): لو الحركة كانت مصروفة
       // من الرئيسية لازم نشيل صف الدفتر بنفسنا، وإلا الرصيد الرئيسي يفضل ناقص
