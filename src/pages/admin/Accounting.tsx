@@ -14,7 +14,7 @@ import { runIntegrityChecks } from '../../utils/accounting/integrity';
  * بدل ما تفضل مستخبّية شهور.
  */
 export default function Accounting() {
-  const { orders, expenses, purchaseInvoices, employeeTransactions, products, storeSettings } = useStore();
+  const { orders, expenses, purchaseInvoices, employeeTransactions, products, stockIntakes, devoItems, storeSettings, loadStockIntakes, loadDevoAndWriteOffs } = useStore();
   const [savingsTransactions, setSavingsTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'tree' | 'checks'>('tree');
@@ -25,6 +25,8 @@ export default function Accounting() {
       const { fetchAllRows } = await import('../../lib/supabase');
       const rows = await fetchAllRows('savings_transactions');
       setSavingsTransactions(Array.isArray(rows) ? rows : []);
+      // حركات المخزون لازمة للطرف المقابل في المعادلة.
+      await Promise.all([loadStockIntakes(), loadDevoAndWriteOffs()]);
     } catch (e) {
       console.error('load savings_transactions:', e);
     }
@@ -41,8 +43,8 @@ export default function Accounting() {
 
   const tb = useMemo(() => buildTrialBalance({
     orders, expenses, purchaseInvoices, employeeTransactions,
-    savingsTransactions, products, settings: storeSettings,
-  }), [orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, products, storeSettings]);
+    savingsTransactions, products, stockIntakes, devoItems, settings: storeSettings,
+  }), [orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, products, stockIntakes, devoItems, storeSettings]);
 
   const issues = useMemo(() => runIntegrityChecks({
     orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions,

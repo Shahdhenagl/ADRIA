@@ -20,6 +20,10 @@ export interface LedgerInput {
   employeeTransactions: any[];
   savingsTransactions: any[];
   products: any[];
+  /** مخزون دخل بدون فاتورة شراء (db/59) — الطرف المقابل لزيادة المخزون. */
+  stockIntakes?: any[];
+  /** الديڤو والتوالف — بضاعة خرجت كخسارة. */
+  devoItems?: any[];
   settings: any;
 }
 
@@ -67,7 +71,7 @@ const refundedOf = (o: any) =>
   (o.items || o.order_items || []).reduce((s: number, it: any) => s + (Number(it.refunded_amount) || 0), 0);
 
 export function buildTrialBalance(input: LedgerInput): TrialBalance {
-  const { orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, products, settings } = input;
+  const { orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, products, stockIntakes, devoItems, settings } = input;
   const byCode: Record<string, number> = {};
   const partsByCode: Record<string, Record<string, number>> = {};
   const add = (code: string, v: number) => { byCode[code] = (byCode[code] || 0) + v; };
@@ -232,6 +236,14 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
     ALL_PAYMENT_KEYS.reduce((s, k) => s + savingsOpeningBalanceOf(settings, k), 0);
   add('31', openingCapital);
 
+  // ── 34 مخزون داخل بدون فاتورة + 55 خسائر الديڤو ──────────────────────────
+  // الإدخال بدون شراء بيزوّد أصل من غير ما فلوس تخرج، فلازم يقابله طرف في
+  // حقوق الملكية وإلا الميزان يختل بقيمته كلها.
+  const intakeValue = (stockIntakes || []).reduce((s, i) => s + (Number(i.total_value) || 0), 0);
+  add('34', intakeValue);
+  const devoLoss = (devoItems || []).reduce((s, d) => s + ((Number(d.quantity) || 0) * (Number(d.unit_cost) || 0)), 0);
+  add('54', devoLoss);
+
   // ── الإجماليات ───────────────────────────────────────────────────────────
   // 132 (سلف الموظفين) مستبعد عن قصد — بيتحسب ضمن مصروف الرواتب فوق.
   const cash = totalOf(shop) + totalOf(main);
@@ -240,7 +252,7 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
   const revenue = (byCode['41'] || 0) + (byCode['42'] || 0) + (byCode['43'] || 0);
   const expensesTotal = (byCode['51'] || 0) + (byCode['52'] || 0) + (byCode['53'] || 0) + (byCode['54'] || 0);
   const profit = revenue - expensesTotal;
-  const equity = (byCode['31'] || 0) + (byCode['32'] || 0);
+  const equity = (byCode['31'] || 0) + (byCode['32'] || 0) + (byCode['34'] || 0);
   add('33', profit);
 
   return {
