@@ -1651,6 +1651,8 @@ export const useStore = create<CashierStore>((set, get) => ({
           refunded_method5: (o.refunded_method5 as number) ?? 0,
           refunded_method6: (o.refunded_method6 as number) ?? 0,
           refunded_at: (o.refunded_at as string) ?? undefined,
+          // بصمة منع التكرار (db/63) — لازمة لفحص الفواتير المكررة في شجرة الحسابات.
+          client_ref: (o.client_ref as string) ?? null,
           date: o.created_at as string,
           items,
           cashier_name: (o.cashier_name as string) ?? undefined,

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   checkSalaryPairs, checkMainTreasuryPairs, checkRefundSanity,
-  checkSplitConsistency, runIntegrityChecks, type IntegrityInput,
+  checkSplitConsistency, checkDuplicateInvoices, runIntegrityChecks, type IntegrityInput,
 } from './integrity';
 
 /**
@@ -145,6 +145,62 @@ describe('تطابق تقسيمة الدفع', () => {
       orders: [{ id: '1', paid_amount: 300, payment_method: 'cash', items: [] }],
     }));
     expect(issues).toHaveLength(0);
+  });
+});
+
+describe('الفواتير المكررة', () => {
+  const at = (iso: string, over: Partial<any> = {}) => ({
+    id: over.id || 'x', type: 'sale', total: 100, date: iso,
+    items: [{ name: 'a' }], ...over,
+  });
+
+  // الحادثة: النت بيفصل بعد ما الطلب يوصل السيرفر، الكاشير يعيد الحفظ فتتسجّل مرتين.
+  it('بيكشف فاتورتين متطابقتين خلال دقيقة', () => {
+    const issues = checkDuplicateInvoices(input({
+      orders: [
+        at('2026-08-01T10:00:00Z', { id: '100' }),
+        at('2026-08-01T10:00:40Z', { id: '101' }),
+      ],
+    }));
+    expect(issues).toHaveLength(1);
+    expect(issues[0].severity).toBe('warning');
+  });
+
+  it('مابيكشفش لو الفرق أكتر من ٥ دقايق', () => {
+    expect(checkDuplicateInvoices(input({
+      orders: [
+        at('2026-08-01T10:00:00Z', { id: '100' }),
+        at('2026-08-01T10:30:00Z', { id: '101' }),
+      ],
+    }))).toHaveLength(0);
+  });
+
+  it('مابيكشفش لو الإجمالي مختلف', () => {
+    expect(checkDuplicateInvoices(input({
+      orders: [
+        at('2026-08-01T10:00:00Z', { id: '100' }),
+        at('2026-08-01T10:00:30Z', { id: '101', total: 250 }),
+      ],
+    }))).toHaveLength(0);
+  });
+
+  // بعد db/63 البصمة الفريدة بتضمن إنهم مختلفين فعلاً — مفيش إنذار كاذب.
+  it('مابيكشفش لو الاتنين ليهم بصمة client_ref', () => {
+    expect(checkDuplicateInvoices(input({
+      orders: [
+        at('2026-08-01T10:00:00Z', { id: '100', client_ref: 'r1' }),
+        at('2026-08-01T10:00:30Z', { id: '101', client_ref: 'r2' }),
+      ],
+    }))).toHaveLength(0);
+  });
+
+  it('بيتجاهل المحذوفة', () => {
+    expect(checkDuplicateInvoices(input({
+      orders: [
+        at('2026-08-01T10:00:00Z', { id: '100' }),
+        at('2026-08-01T10:00:30Z', { id: '101', is_deleted: true }),
+      ],
+    }))).toHaveLength(0);
   });
 });
 

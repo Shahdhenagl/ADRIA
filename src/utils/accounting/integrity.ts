@@ -180,6 +180,59 @@ export function checkRefundSanity(input: IntegrityInput): IntegrityIssue[] {
   }];
 }
 
+/**
+ * (5) فواتير شبه متطابقة في دقايق معدودة = تكرار غالباً.
+ *
+ * قبل db/63 كان النت لو فصل بعد ما الطلب يوصل السيرفر، الكاشير يعيد الحفظ
+ * فتتسجّل الفاتورة مرتين. الإصلاح حط بصمة `client_ref` بفهرس فريد، فالتكرار
+ * بقى مستحيل — لكن الفواتير القديمة (بصمتها فاضية) ممكن يكون فيها تكرار قديم.
+ *
+ * الفحص ده **تحذير مش خطأ**: عميل ممكن فعلاً يشتري نفس الحاجة مرتين. الشرط
+ * مضبوط (نفس الإجمالي + نفس عدد الأصناف + خلال ٥ دقايق) عشان يقلّل الإنذار
+ * الكاذب، بس القرار النهائي للمستخدم.
+ */
+export function checkDuplicateInvoices(input: IntegrityInput): IntegrityIssue[] {
+  const WINDOW_MS = 5 * 60 * 1000;
+  const sales = input.orders
+    .filter((o) => !o.is_deleted && o.type === 'sale' && (Number(o.total) || 0) > 0)
+    .map((o) => ({
+      id: String(o.id),
+      t: new Date(o.date || o.created_at).getTime(),
+      total: Number(o.total) || 0,
+      n: (o.items || []).length,
+      cust: o.customer?.id || o.customer_id || 'cash',
+      hasRef: Boolean(o.client_ref),
+      date: dayOf(o.date || o.created_at),
+    }))
+    .filter((o) => Number.isFinite(o.t))
+    .sort((a, b) => a.t - b.t);
+
+  const rows: { id: string; label: string; amount?: number }[] = [];
+  for (let i = 1; i < sales.length; i++) {
+    const a = sales[i - 1], b = sales[i];
+    if (b.t - a.t > WINDOW_MS) continue;
+    if (Math.abs(a.total - b.total) > 0.01) continue;
+    if (a.n !== b.n || a.cust !== b.cust) continue;
+    // الاتنين ليهم بصمة = اتسجّلوا بعد الإصلاح، فالبصمة ضمنت إنهم مختلفين فعلاً.
+    if (a.hasRef && b.hasRef) continue;
+    rows.push({
+      id: `${a.id}+${b.id}`,
+      label: `#${a.id} و #${b.id} — ${money(a.total)} · ${a.date} · فرق ${Math.round((b.t - a.t) / 1000)} ثانية`,
+      amount: a.total,
+    });
+  }
+
+  if (rows.length === 0) return [];
+  return [{
+    id: 'duplicate-invoices',
+    severity: 'warning',
+    title: 'فواتير شبه متطابقة خلال دقايق',
+    detail: `${rows.length} زوج فواتير بنفس الإجمالي ونفس عدد الأصناف ولنفس العميل خلال ٥ دقايق. غالباً تكرار من أيام ما النت كان بيفصل بعد الحفظ (اتصلح في db/63) — أو شراء حقيقي متكرر.`,
+    fix: 'راجع كل زوج في صفحة الفواتير. لو تكرار فعلاً، احذف الفاتورة الزيادة (الحذف بيرجّع المخزون ويعكس أثرها).',
+    rows: rows.slice(0, 50),
+  }];
+}
+
 /** كل الفحوصات مع بعض، الأخطر الأول. */
 export function runIntegrityChecks(input: IntegrityInput): IntegrityIssue[] {
   const all = [
@@ -187,6 +240,7 @@ export function runIntegrityChecks(input: IntegrityInput): IntegrityIssue[] {
     ...checkMainTreasuryPairs(input),
     ...checkRefundSanity(input),
     ...checkSplitConsistency(input),
+    ...checkDuplicateInvoices(input),
   ];
   return all.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'error' ? -1 : 1));
 }
