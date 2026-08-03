@@ -4851,7 +4851,12 @@ setupRealtime: () => {
     // والبيع بتعدّل products مباشرة (مش عن طريق updateProduct) فمفيش ازدواج.
     if (!opts?.skipIntakeLog && before && updated.stock_quantity !== undefined) {
       const delta = (Number(updated.stock_quantity) || 0) - (Number(before.stock_quantity) || 0);
-      if (delta > 0) {
+      // **النقصان بيتسجّل زي الزيادة.** قبل كده كان `delta > 0` بس، يعني لو حد
+      // قلّل الكمية بإيده المخزون بيختفي من غير أي أثر: لا سجل، لا تكلفة، ولا
+      // طريقة تعرف بيها راح فين. ده كان بيسيب فروق في قيمة المخزون مستحيل
+      // تتفسّر بعدين (شوف db/69 — أصناف كميتها أقل من كل حركاتها المسجّلة).
+      // النقصان بيتسجّل بكمية سالبة ومصدر مستقل عشان يبان في السجل بوضوح.
+      if (delta !== 0) {
         get().logStockIntake([{
           product_id: id,
           product_name: updated.name || before.name,
@@ -4860,7 +4865,7 @@ setupRealtime: () => {
             updated.average_purchase_price ?? updated.purchase_price ??
             before.average_purchase_price ?? before.purchase_price
           ) || 0,
-          source: opts?.intakeSource || 'manual_edit',
+          source: opts?.intakeSource || (delta > 0 ? 'manual_edit' : 'manual_decrease'),
         }]);
       }
     }

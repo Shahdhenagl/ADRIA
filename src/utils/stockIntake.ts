@@ -8,6 +8,8 @@ export const INTAKE_SOURCE_LABELS: Record<string, string> = {
   excel_import: 'استيراد Excel',
   stocktake: 'زيادة جرد',
   manual: 'قيد يدوي',
+  // نقصان يدوي — بيتسجّل بكمية سالبة عشان المخزون ما يختفيش من غير أثر.
+  manual_decrease: 'نقص كمية يدوي',
 };
 
 export const intakeSourceLabel = (s?: string) => INTAKE_SOURCE_LABELS[s || ''] || 'أخرى';
@@ -40,6 +42,8 @@ export function splitStockValueBySource(
     });
   });
 
+  // النقصان اليدوي بيتسجّل بكمية سالبة، فبيخصم من صافي الداخل بدون شراء — وده
+  // المطلوب. الـ Math.max تحت بيمنع النسبة السالبة لو النقصان زاد عن الداخل.
   const intakeQty = new Map<string, number>();
   intakes.forEach((i) => {
     intakeQty.set(i.product_id, (intakeQty.get(i.product_id) || 0) + (Number(i.quantity) || 0));
