@@ -32,6 +32,7 @@ import StockTake from './pages/admin/StockTake';
 import Devo from './pages/admin/Devo';
 import PaymentAccounts from './pages/admin/PaymentAccounts';
 import Reports from './pages/admin/Reports';
+import Accounting from './pages/admin/Accounting';
 import AdminUsers from './pages/admin/AdminUsers';
 import PublicInvoice from './pages/PublicInvoice';
 import Attendance from './pages/Attendance';
@@ -291,6 +292,7 @@ function App() {
             <Route path="stocktake" element={<StockTake />} />
             <Route path="devo" element={<Devo />} />
             <Route path="reports" element={<Reports />} />
+            <Route path="accounting" element={<Accounting />} />
             <Route path="users" element={<AdminUsers />} />
           </Route>
           <Route path="/view-invoice/:id" element={<PublicInvoice />} />

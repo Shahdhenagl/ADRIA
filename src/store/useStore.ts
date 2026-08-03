@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf, ALL_PAYMENT_KEYS } from '../utils/paymentMethods';
+// الربط بين صف الموظف وصف المصروف — دوال نقية في utils عشان تتغطّى بالتستات.
+import { findLinkedSalaryExpense, findLinkedEmployeeTx } from '../utils/salaryLink';
+export { findLinkedSalaryExpense, findLinkedEmployeeTx };
 import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassword, hasOfflinePassword } from '../utils/offlineCache';
@@ -1272,48 +1275,6 @@ const sumSplits = (a: any, b: any): Record<string, number> => {
  * (راتبين متطابقين في نفس اليوم = ممكن ترجّع الصف الغلط)، فبنستخدمها
  * للتوافق مع البيانات القديمة بس.
  */
-export const findLinkedSalaryExpense = (expenses: any[], tx: any): any | undefined => {
-  if (!tx) return undefined;
-  const linked = expenses.find((e) => e.employee_transaction_id && e.employee_transaction_id === tx.id);
-  if (linked) return linked;
-  const txDate = new Date(tx.created_at).toISOString().slice(0, 10);
-  return expenses.find((e) => {
-    if (e.employee_transaction_id) return false; // مربوط بمعاملة تانية — ما ينفعش
-    const eDate = new Date(e.date || e.created_at).toISOString().slice(0, 10);
-    return e.category === 'رواتب'
-      && eDate === txDate
-      && Math.abs(Number(e.amount) || 0) === Math.abs(Number(tx.amount) || 0)
-      && (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
-        .every((k) => Math.abs(Number(e['paid_' + k]) || 0) === Math.abs(Number(tx['paid_' + k]) || 0));
-  });
-};
-
-/**
- * عكس findLinkedSalaryExpense: من صف مصروف «رواتب» لصف الموظف المقابل.
- *
- * الراتب/السلفة بيتكتبوا في مكانين (كشف الموظف + مصروف «رواتب»). الربط كان
- * بيشتغل في اتجاه واحد بس — حذف/تعديل من صفحة الموظفين بيعدّي على المصروف،
- * لكن من صفحة الخزنة كان بيسيب صف الموظف يتيم. النتيجة: سلفة اتلغت من الخزنة
- * وفضلت متسجّلة على الموظف فاتخصمت من راتبه.
- */
-export const findLinkedEmployeeTx = (txs: any[], expense: any): any | undefined => {
-  if (!expense || expense.category !== 'رواتب') return undefined;
-  // (أ) الربط الصريح (db/49).
-  if (expense.employee_transaction_id) {
-    return txs.find((t) => t.id === expense.employee_transaction_id);
-  }
-  // (ب) صفوف قديمة قبل db/49: مطابقة بالتاريخ + المبلغ + التقسيمة. الطرفين
-  //     بيتكتبوا بنفس created_at بالظبط، فمقارنة الـ UTC متّسقة على الجهتين.
-  const eDate = new Date(expense.date || expense.created_at).toISOString().slice(0, 10);
-  return txs.find((t) => {
-    const tDate = new Date(t.created_at).toISOString().slice(0, 10);
-    return tDate === eDate
-      && Math.abs(Number(t.amount) || 0) === Math.abs(Number(expense.amount) || 0)
-      && (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
-        .every((k) => Math.abs(Number(t['paid_' + k]) || 0) === Math.abs(Number(expense['paid_' + k]) || 0));
-  });
-};
-
 const primaryMethodOf = (split: any): 'cash' | 'visa' | 'wallet' | 'instapay' | 'method5' | 'method6' => {
   if (!split) return 'cash';
   const keys = ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const;
