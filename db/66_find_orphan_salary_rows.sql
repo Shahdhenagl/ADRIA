@@ -44,6 +44,54 @@ order by t.created_at desc;
 
 
 -- =============================================================================
+-- (1-ب) 🎯 الأهم — الاستعلام (1) عنده نقطة عمياء: المطابقة الاحتياطية بالتاريخ
+--       + المبلغ، فلو نفس المبلغ اتسجّل مرتين في نفس اليوم، المصروف الواحد
+--       الفاضل بيطابق الصفّين واليتيم بيتخفي. الحل: **نعدّ** مش نطابق.
+--
+--       الفرق موجب = صفوف على الموظفين أكتر من الخزنة (خصم من غير صرف).
+--       الفرق سالب = الخزنة دفعت أكتر مما هو متسجّل على الموظفين.
+-- =============================================================================
+with tx as (
+  select date(created_at) as d, abs(coalesce(amount, 0)) as amt, count(*) as n
+  from employee_transactions
+  where coalesce(note, '') not like '%[MAIN_TREASURY]%'
+  group by 1, 2
+),
+ex as (
+  select date(created_at) as d, abs(coalesce(amount, 0)) as amt, count(*) as n
+  from expenses
+  where category = 'رواتب' and coalesce(note, '') not like '%[MAIN_TREASURY]%'
+  group by 1, 2
+)
+select
+  coalesce(tx.d, ex.d)                     as "التاريخ",
+  coalesce(tx.amt, ex.amt)                 as "المبلغ",
+  coalesce(tx.n, 0)                        as "عدد صفوف الموظف",
+  coalesce(ex.n, 0)                        as "عدد صفوف الخزنة",
+  coalesce(tx.n, 0) - coalesce(ex.n, 0)    as "الفرق"
+from tx
+full outer join ex on tx.d = ex.d and tx.amt = ex.amt
+where coalesce(tx.n, 0) <> coalesce(ex.n, 0)
+order by 1 desc;
+
+
+-- =============================================================================
+-- (1-ج) بعد ما تحدد التاريخ والمبلغ من (1-ب)، اعرض الصفوف نفسها بالتفصيل.
+--       غيّر المبلغ والتاريخ تحت. الصفوف بتظهر جنب بعض عشان تشوف الزيادة فين.
+-- =============================================================================
+select 'كشف الموظف' as "المصدر", t.id::text as "id", t.created_at as "التاريخ",
+       t.type as "النوع", t.amount as "المبلغ", t.month as "الشهر", t.note as "الملاحظة"
+from employee_transactions t
+where abs(coalesce(t.amount, 0)) = 500
+union all
+select 'الخزنة (مصروف)', x.id::text, x.created_at,
+       coalesce(x.employee_transaction_id::text, '— مش مربوط'), x.amount, null, x.note
+from expenses x
+where x.category = 'رواتب' and abs(coalesce(x.amount, 0)) = 500
+order by 3 desc, 1;
+
+
+-- =============================================================================
 -- (2) العكس: مصروف «رواتب» من غير صف على الموظف.
 --     الخزنة دفعت والموظف مش متسجّل عليه — يعني السلفة مش هتتخصم من راتبه.
 -- =============================================================================
