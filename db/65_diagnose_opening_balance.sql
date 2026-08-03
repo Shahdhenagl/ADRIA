@@ -81,6 +81,48 @@ where t.created_at < p.start_ts and coalesce(t.note,'') not like '%[MAIN_TREASUR
 
 
 -- =============================================================================
+-- (3-ب) 🎯 نفس فكرة (3) بس **بالإشارات مظبوطة ومعاها الافتتاحي والإجمالي**،
+--       فالمجموع بيساوي «رصيد بداية اليوم» المعروض بالظبط.
+--       البند اللي رقمه مش متوقّع = مكان المشكلة.
+--
+--       ملاحظة: تصنيف «رواتب» مستبعد من المصروفات عن قصد — الرواتب بتتعدّ من
+--       employee_transactions (وإلا اتعدّت مرتين). نفس منطق الكود.
+-- =============================================================================
+with p as (
+  select ((date '2026-08-03' + interval '3 hours') at time zone 'Africa/Cairo') as start_ts
+),
+rows_ as (
+  select 0 as ord, 'الرصيد الافتتاحي (من الإعدادات)' as bnd,
+    coalesce(
+      (select sum(v::numeric) from store_settings s, jsonb_each_text(s.payment_opening_balances) as kv(k, v)),
+      (select initial_balance from store_settings limit 1),
+      0) as val
+  union all
+  select 1, 'فواتير بيع/سداد (داخل +)', sum(coalesce(o.paid_amount, 0))
+  from orders o, p
+  where o.created_at < p.start_ts and coalesce(o.is_deleted, false) = false
+    and o.type in ('sale', 'payment') and coalesce(o.notes, '') not like '%[MAIN_TREASURY]%'
+  union all
+  select 2, 'مصروفات (خارج −) / إيرادات يدوية (+)', -sum(coalesce(e.amount, 0))
+  from expenses e, p
+  where e.created_at < p.start_ts and coalesce(e.note, '') not like '%[MAIN_TREASURY]%'
+    and e.category <> 'رواتب'
+  union all
+  select 3, 'مشتريات (خارج −)', -sum(coalesce(pi.paid_amount, 0))
+  from purchase_invoices pi, p
+  where pi.created_at < p.start_ts and coalesce(pi.notes, '') not like '%[MAIN_TREASURY]%'
+  union all
+  select 4, 'رواتب/سلف/حوافز (خارج −)', -sum(coalesce(t.amount, 0))
+  from employee_transactions t, p
+  where t.created_at < p.start_ts and coalesce(t.note, '') not like '%[MAIN_TREASURY]%'
+)
+select bnd as "البند", round(coalesce(val, 0)::numeric, 2) as "القيمة"
+from rows_
+union all
+select '══ الإجمالي = رصيد بداية اليوم ══', round(coalesce(sum(val), 0)::numeric, 2) from rows_;
+
+
+-- =============================================================================
 -- (4) آخر 40 حركة «قبل اليوم» على خزنة المحل — لو الاستعلام 1 ما طلّعش حاجة.
 --     الصف المتسجّل بتاريخ قديم بيبان هنا: تاريخه قديم بس ساعته 3 العصر
 --     بالظبط (كل الصفوف الملحوقة بتتختم بمنتصف اليوم المحاسبي).
