@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
-import { payLabelOf } from '../utils/paymentMethods';
+import { payLabelOf, ALL_PAYMENT_KEYS } from '../utils/paymentMethods';
 import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassword, hasOfflinePassword } from '../utils/offlineCache';
@@ -220,6 +220,13 @@ export interface Order {
   date: string;
   payment_method: 'cash' | 'visa' | 'wallet' | 'instapay' | 'method5' | 'method6';
   refund_method?: string;
+  /** تقسيمة المرتجع لكل وسيلة — تراكمية (db/67). المرتجع ممكن يترد على أكتر من وسيلة. */
+  refunded_cash?: number;
+  refunded_visa?: number;
+  refunded_wallet?: number;
+  refunded_instapay?: number;
+  refunded_method5?: number;
+  refunded_method6?: number;
   refunded_at?: string | null; // تاريخ آخر استرجاع — يُحسب المرتجع على يومه في التقفيل
   customer?: Customer;
   cashier_name?: string;
@@ -665,7 +672,9 @@ interface CashierStore {
     discount?: number,
     toMainTreasury?: boolean
   ) => Promise<string | null | void>;
-  processReturn: (orderId: string, returns: { productId: string, returnQty: number, refundAmount: number, debtDeduction?: number }[], refundMethod?: string) => Promise<boolean>;
+  // refundSplit: تقسيمة الفلوس الراجعة للعميل على الوسائل (db/67). لو مش متبعتة
+  // بيتحمّل المبلغ كله على refundMethod — نفس السلوك القديم.
+  processReturn: (orderId: string, returns: { productId: string, returnQty: number, refundAmount: number, debtDeduction?: number }[], refundMethod?: string, refundSplit?: Record<string, number>) => Promise<boolean>;
   processPurchaseReturn: (
     sourceInvoiceId: string,
     returns: { productId: string; returnQty: number }[],
@@ -1669,6 +1678,12 @@ export const useStore = create<CashierStore>((set, get) => ({
           type: (o.type as string) as 'sale' | 'payment' ?? 'sale',
           payment_method: (o.payment_method as any) ?? 'cash',
           refund_method: (o.refund_method as string) ?? undefined,
+          refunded_cash: (o.refunded_cash as number) ?? 0,
+          refunded_visa: (o.refunded_visa as number) ?? 0,
+          refunded_wallet: (o.refunded_wallet as number) ?? 0,
+          refunded_instapay: (o.refunded_instapay as number) ?? 0,
+          refunded_method5: (o.refunded_method5 as number) ?? 0,
+          refunded_method6: (o.refunded_method6 as number) ?? 0,
           refunded_at: (o.refunded_at as string) ?? undefined,
           date: o.created_at as string,
           items,
@@ -3049,7 +3064,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
   },
 
-  processReturn: async (orderId, returns, refundMethod = 'cash') => {
+  processReturn: async (orderId, returns, refundMethod = 'cash', refundSplit) => {
     const state = get();
     const orderIndex = state.orders.findIndex((o) => o.id === orderId);
     if (orderIndex === -1 || returns.length === 0) return false;
@@ -3180,7 +3195,9 @@ export const useStore = create<CashierStore>((set, get) => ({
       // Handle paid_amount adjustments based on cash refunded
       const totalRefundAmount = returns.reduce((sum, ret) => sum + (ret.refundAmount || 0), 0);
       let finalPaidAmount = order.paid_amount || 0;
-      
+      // التقسيمة اللي اتكتبت فعلاً على الصف (فاضية لو db/67 لسه ماتشغّلتش).
+      let refundSplitApplied: Record<string, number> = {};
+
       const refundedAt = accountingTimestampForNow(state.storeSettings);
       if (totalRefundAmount > 0) {
         finalPaidAmount = finalPaidAmount - totalRefundAmount;
@@ -3199,6 +3216,25 @@ export const useStore = create<CashierStore>((set, get) => ({
           .eq('id', orderId);
         if (methodError) {
           console.warn('Could not store refund_method (column may be missing):', methodError.message);
+        }
+
+        // تقسيمة المرتجع على الوسائل (db/67) — **تراكمية**، لأن الفاتورة ممكن
+        // يترجّع منها أكتر من مرة وكل مرة بوسيلة مختلفة. بنجمع على المتسجّل قبل
+        // كده عشان مجموع الأعمدة يفضل مساوي لإجمالي المسترد من البنود.
+        const splitPatch: Record<string, number> = {};
+        ALL_PAYMENT_KEYS.forEach((k) => {
+          const add = Number(refundSplit?.[k]) || 0;
+          if (add > 0) splitPatch['refunded_' + k] = (Number((order as any)['refunded_' + k]) || 0) + add;
+        });
+        if (Object.keys(splitPatch).length > 0) {
+          const { error: splitError } = await supabase.from('orders').update(splitPatch).eq('id', orderId);
+          if (splitError) {
+            // الأعمدة ناقصة = قاعدة قديمة. الحسابات بترجع لـ refund_method تلقائياً،
+            // فالمرتجع بيتحسب على وسيلة واحدة بس من غير ما يضيع.
+            console.warn('Could not store refund split (run db/67):', splitError.message);
+          } else {
+            refundSplitApplied = splitPatch;
+          }
         }
       }
 
@@ -3219,7 +3255,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         idx === orderIndex
           // refund_method يفضل شرطي (مالوش معنى من غير كاش)، لكن refunded_at
           // بيتسجّل لكل مرتجع عشان يظهر بتاريخه الصح في القوائم.
-          ? { ...o, items: updatedItems, paid_amount: finalPaidAmount, refund_method: totalRefundAmount > 0 ? refundMethod : o.refund_method, refunded_at: refundedAt }
+          ? { ...o, items: updatedItems, paid_amount: finalPaidAmount, refund_method: totalRefundAmount > 0 ? refundMethod : o.refund_method, ...refundSplitApplied, refunded_at: refundedAt }
           : o
       );
 

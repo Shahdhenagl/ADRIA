@@ -5,9 +5,9 @@
  *
  * الإشارة: inAmount = دخل للوسيلة (مدين/زيادة رصيد)، outAmount = خرج منها.
  */
-import { ALL_PAYMENT_KEYS, splitFromRow, primaryMethod, type PaymentKey } from './paymentMethods';
+import { ALL_PAYMENT_KEYS, type PaymentKey } from './paymentMethods';
 import { calculateCashRefunded } from './returns';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, stripTreasuryMarkers } from './treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, stripTreasuryMarkers, refundPartsOf } from './treasury';
 
 export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'income' | 'purchase' | 'purchase_return' | 'transfer';
 
@@ -95,17 +95,19 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
     // مرتجع / استرداد نقدي (صادر) على وسيلة الاسترداد
     const refunded = calculateCashRefunded(o);
     if (refunded > 0.001) {
-      const rm = (o.refund_method && (ALL_PAYMENT_KEYS as readonly string[]).includes(o.refund_method))
-        ? (o.refund_method as PaymentKey)
-        : primaryMethod(splitFromRow(o));
+      // المرتجع ممكن يترد على أكتر من وسيلة (db/67) — بيتحوّل لسطر لكل وسيلة
+      // بدل سطر واحد، وإلا الكشف بيحمّل المبلغ كله على وسيلة واحدة غلط.
+      const rows = refundPartsOf(o, refunded);
+      rows.forEach(([rm, amount]) => {
       entries.push({
-        id: `${o.id}:refund`,
+        id: `${o.id}:refund:${rm}`,
         date: o.date,
-        method: rm,
+        method: rm as PaymentKey,
         desc: `مرتجع فاتورة #${shortId(o.id)}`,
         inAmount: 0,
-        outAmount: refunded,
+        outAmount: amount,
         kind: 'return',
+      });
       });
     }
   }

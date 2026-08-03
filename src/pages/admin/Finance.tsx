@@ -12,7 +12,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers } from '../../utils/treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers, refundShareOfMethod } from '../../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
@@ -48,6 +48,15 @@ export default function Finance() {
 
   // المرتجع يُحسب على يوم الاسترجاع (refunded_at) لا يوم البيع؛ fallback للبيانات القديمة.
   const refundDateOf = (o: any) => (o as any).refunded_at || o.date;
+  /**
+   * نصيب وسيلة دفع معيّنة من مرتجع الفاتورة.
+   * المرتجع بقى ممكن يتقسّم على أكتر من وسيلة (db/67)، فالفلترة القديمة
+   * «وسيلة الاسترداد == الوسيلة دي» كانت هتحمّل المبلغ كله على وسيلة واحدة.
+   */
+  const refundShareOf = (o: any, method: string) => {
+    const total = calculateCashRefunded(o);
+    return total <= 0 ? 0 : refundShareOfMethod(o, total, method);
+  };
 
 
   
@@ -189,9 +198,11 @@ export default function Finance() {
       .filter(o => new Date(o.date) < startOfPeriod && !isMainTreasuryOrder(o))
       .reduce((sum, o) => sum + getSafeMethodAmount(o, method, 'paid_amount'), 0);
     
+    // المرتجع ممكن يكون مقسّم على أكتر من وسيلة (db/67)، فبناخد نصيب الوسيلة دي
+    // من التقسيمة بدل ما نشوف «وسيلة الاسترداد» كوسيلة واحدة.
     const returnsOut = activeOrders
-      .filter(o => new Date(refundDateOf(o)) < startOfPeriod && (o.refund_method || getPrimaryMethod(o)) === method)
-      .reduce((sum, o) => sum + calculateCashRefunded(o), 0);
+      .filter(o => new Date(refundDateOf(o)) < startOfPeriod)
+      .reduce((sum, o) => sum + refundShareOf(o, method), 0);
 
     const expensesOut = expenses
       .filter(e => new Date(e.date) < startOfPeriod)
@@ -284,8 +295,7 @@ export default function Finance() {
   const getDailyByMethod = (method: string) => {
     const inc = periodTransactions.orders.reduce((sum, o) => sum + getSafeMethodAmount(o, method, 'paid_amount'), 0);
     const returnsOut = periodTransactions.refundOrders
-      .filter(o => (o.refund_method || getPrimaryMethod(o)) === method)
-      .reduce((sum, o) => sum + calculateCashRefunded(o), 0);
+      .reduce((sum, o) => sum + refundShareOf(o, method), 0);
     const outExp = periodTransactions.expenses.filter(e => !isMainTreasuryExpense(e)).reduce((sum, e) => sum + getSafeMethodAmount(e, method, 'amount'), 0);
     const outPur = periodTransactions.purchases.filter(inv => !isMainTreasuryPurchase(inv)).reduce((sum, inv) => sum + getSafeMethodAmount(inv, method, 'paid_amount'), 0);
     

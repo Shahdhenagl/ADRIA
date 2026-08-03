@@ -5,7 +5,7 @@ import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
-import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase } from '../../utils/treasury';
+import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundRecordOf } from '../../utils/treasury';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 
 export default function Reports() {
@@ -79,7 +79,7 @@ export default function Reports() {
       }
       const ref = calculateCashRefunded(o);
       // المرتجع على يوم الاسترجاع (refunded_at) لا يوم البيع؛ fallback للتاريخ القديم.
-      if (ref > 0 && pass(o.refunded_at || o.date)) add(outN, { paid_amount: ref, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+      if (ref > 0 && pass(o.refunded_at || o.date)) add(outN, refundRecordOf(o, ref), 'paid_amount');
     });
     extra.expenses.filter((e) => !isMainTreasuryExpense(e) && pass(e.created_at)).forEach((e) => {
       const amt = Number(e.amount) || 0;

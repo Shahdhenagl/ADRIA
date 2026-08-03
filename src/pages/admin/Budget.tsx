@@ -11,7 +11,7 @@ import html2canvas from 'html2canvas-pro';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase } from '../../utils/treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundPartsOf } from '../../utils/treasury';
 
 interface UnifiedTransaction {
   id: string;
@@ -183,20 +183,23 @@ export default function Budget() {
       }
 
       // Expenses: Returns refunded amount
+      // المرتجع ممكن يترد على أكتر من وسيلة (db/67) — صف لكل وسيلة، وإلا المبلغ
+      // كله بيتحمّل على وسيلة واحدة والكشف يختلف عن الخزنة.
       if (totalRefunded > 0) {
-        txs.push({
-          id: `${o.id}-refund`,
-          originalId: o.id,
-          type: 'expense',
-          category: 'مرتجعات عملاء',
-          description: `إرجاع للفاتورة #${o.id}`,
-          amount: totalRefunded,
-          payment_method: ((o.refund_method && ['cash', 'visa', 'wallet', 'instapay'].includes(o.refund_method))
-            ? o.refund_method
-            : (['visa', 'wallet', 'instapay'].includes(o.payment_method) ? o.payment_method : 'cash')) as 'cash' | 'visa' | 'wallet' | 'instapay',
-          date: new Date((o as any).refunded_at || o.date),
-          car_id: o.car_id,
-          treasury: 'cashier'
+        const rows = refundPartsOf(o, totalRefunded);
+        rows.forEach(([method, amount]) => {
+          txs.push({
+            id: `${o.id}-refund-${method}`,
+            originalId: o.id,
+            type: 'expense',
+            category: 'مرتجعات عملاء',
+            description: `إرجاع للفاتورة #${o.id}`,
+            amount,
+            payment_method: method as 'cash' | 'visa' | 'wallet' | 'instapay',
+            date: new Date((o as any).refunded_at || o.date),
+            car_id: o.car_id,
+            treasury: 'cashier'
+          });
         });
       }
     });

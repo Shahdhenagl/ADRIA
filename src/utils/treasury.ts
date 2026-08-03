@@ -48,6 +48,49 @@ export function applyInternalTransferNet(net: Bucket, rec: any): void {
   (ALL_PAYMENT_KEYS as readonly string[]).forEach((k) => { net[k] += +rec['paid_' + k] || 0; });
 }
 
+/**
+ * صف وهمي بيمثّل **الفلوس الراجعة للعميل** في مرتجع، بشكل يفهمه `applySplit`.
+ *
+ * المرتجع بقى ممكن يترد على أكتر من وسيلة (db/67): الأعمدة `refunded_*`
+ * تراكمية على الفاتورة. الدالة دي بتوحّد القراءة في كل مكان بيحسب خزنة:
+ *   • فيه تقسيمة مسجّلة → نستخدمها زي ما هي.
+ *   • مفيش (فواتير قبل db/67) → المبلغ كله على `refund_method` أو وسيلة الدفع.
+ *
+ * لازم تتستخدم في **كل** موضع بيطرح المرتجع من الخزنة، وإلا شاشة تقول رقم
+ * وشاشة تقول رقم تاني.
+ */
+export function refundRecordOf(order: any, refundedTotal: number): any {
+  const rec: any = {
+    paid_amount: refundedTotal,
+    payment_method: order?.refund_method || order?.payment_method || 'cash',
+  };
+  ALL_PAYMENT_KEYS.forEach((k) => { rec['paid_' + k] = Number(order?.['refunded_' + k]) || 0; });
+  return rec;
+}
+
+/** إجمالي المرتجع المسترد على الفاتورة (مجموع بنودها). */
+export function refundedTotalOf(order: any): number {
+  return (order?.items || []).reduce((t: number, it: any) => t + (Number(it.refunded_amount) || 0), 0);
+}
+
+/**
+ * المرتجع كأزواج (وسيلة، مبلغ) — للشاشات اللي بتعرض **سطر لكل وسيلة** أو
+ * بتحسب نصيب وسيلة معيّنة (كشف وسائل الدفع، الميزانية، الخزنة).
+ * الفواتير القديمة (قبل db/67) بترجع بزوج واحد على وسيلة الاسترداد.
+ */
+export function refundPartsOf(order: any, refundedTotal: number): [string, number][] {
+  const rec = refundRecordOf(order, refundedTotal);
+  const parts = ALL_PAYMENT_KEYS
+    .map((k) => [k, Number(rec['paid_' + k]) || 0] as [string, number])
+    .filter(([, v]) => v > 0.001);
+  return parts.length > 0 ? parts : [[rec.payment_method as string, refundedTotal]];
+}
+
+/** نصيب وسيلة واحدة من المرتجع. */
+export function refundShareOfMethod(order: any, refundedTotal: number, method: string): number {
+  return refundPartsOf(order, refundedTotal).find(([k]) => k === method)?.[1] || 0;
+}
+
 export const isInternalTransfer = (category: any): boolean => category === 'تحويل داخلي';
 export const isSavingsTransfer = (category: any): boolean =>
   category === 'تحويل للخزنة الرئيسية' || category === 'تحويل من الخزنة الرئيسية';
@@ -155,8 +198,8 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
     // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية مش لدرج المحل — يتستبعد.
     if (isMainTreasuryOrder(o)) return;
     if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
-    const refunded = (o.items || []).reduce((t: number, it: any) => t + (+it.refunded_amount || 0), 0);
-    if (refunded > 0) add(-1, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+    const refunded = refundedTotalOf(o);
+    if (refunded > 0) add(-1, refundRecordOf(o, refunded), 'paid_amount');
   });
 
   (rows.expenses || []).forEach((e: any) => {

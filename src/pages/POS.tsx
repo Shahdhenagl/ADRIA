@@ -14,7 +14,7 @@ import { printDocument } from '../utils/printWindow';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../utils/financeCategories';
 import { buildPagesQrBlock } from '../utils/pagesQr';
-import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../utils/treasury';
+import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, refundRecordOf } from '../utils/treasury';
 import { calculateOrderReturnValue } from '../utils/returns';
 import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal } from '../utils/invoicePayments';
 import { printShippingLabel } from '../utils/printShippingLabel';
@@ -720,7 +720,7 @@ export default function POS() {
           const rd = new Date(o.refunded_at || o.date);
           const rInDay = rd >= start && rd < end;
           if (rInDay || rd < start) {
-            addM(rInDay ? dayOut : befOut, { paid_amount: refunded, payment_method: o.refund_method || o.payment_method }, 'paid_amount');
+            addM(rInDay ? dayOut : befOut, refundRecordOf(o, refunded), 'paid_amount');
             if (rInDay) { bd.refundsTotal += refunded; bd.refundsCount += 1; }
           }
         }
@@ -829,6 +829,28 @@ export default function POS() {
   const [returnDebtDeduction, setReturnDebtDeduction] = useState<number | null>(null);
   // Method used to refund cash to the customer on a return.
   const [refundMethod, setRefundMethod] = useState<'cash' | 'visa' | 'wallet' | 'instapay'>('cash');
+  // رد المرتجع على أكتر من وسيلة (db/67): الوضع الافتراضي وسيلة واحدة زي الأول،
+  // و«تقسيم» بيفتح خانة مبلغ لكل وسيلة — العميل ممكن يكون دفع بأكتر من وسيلة،
+  // أو الدرج مافيهوش كاش كفاية فيترد جزء كاش وجزء انستا.
+  const [refundSplitMode, setRefundSplitMode] = useState(false);
+  const [refundSplitInput, setRefundSplitInput] = useState<Record<string, string>>({});
+  const refundSplitTotal = activePayKeys.reduce((s, k) => s + (parseFloat(refundSplitInput[k] || '') || 0), 0);
+  /** تقسيمة الاسترداد المرسلة للـ store: من الخانات لو تقسيم، وإلا المبلغ كله على الوسيلة المختارة. */
+  const buildRefundSplit = (amount: number): Record<string, number> => {
+    if (!refundSplitMode) return { [refundMethod]: amount };
+    const out: Record<string, number> = {};
+    activePayKeys.forEach((k) => {
+      const v = parseFloat(refundSplitInput[k] || '') || 0;
+      if (v > 0) out[k] = v;
+    });
+    return out;
+  };
+  // أكبر وسيلة في التقسيمة — بتتخزّن في refund_method القديم عشان الشاشات اللي
+  // لسه بتقراه (وقواعد البيانات من غير db/67) تفضل شغّالة.
+  const primaryRefundMethod = (split: Record<string, number>): string =>
+    Object.entries(split).sort((a, b) => b[1] - a[1])[0]?.[0] || refundMethod;
+  // تصفير خانات التقسيم مع كل فاتورة مرتجع جديدة.
+  useEffect(() => { setRefundSplitMode(false); setRefundSplitInput({}); }, [activeReturnOrder?.id]);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastInvoiceId, setLastInvoiceId] = useState('');
   const [lastCustomerInfo, setLastCustomerInfo] = useState<any>(null);
@@ -1519,14 +1541,29 @@ export default function POS() {
       refundAmount: r.itemValue * cashRatio,
     }));
 
+    // التقسيمة لازم تساوي المبلغ المردود بالظبط، وإلا الخزنة هتختلف عن الفاتورة.
+    if (cashToRefund > 0 && refundSplitMode && Math.abs(refundSplitTotal - cashToRefund) >= 0.01) {
+      alert(`مجموع التقسيمة (${refundSplitTotal.toFixed(2)}) مش مساوي المبلغ المردود (${cashToRefund.toFixed(2)}). ظبّط الأرقام الأول.`);
+      return;
+    }
+    const refundSplit = buildRefundSplit(cashToRefund);
+    const splitLines = cashToRefund > 0
+      ? Object.entries(refundSplit).filter(([, v]) => v > 0).map(([k, v]) => `  • ${payLabel(k)}: ${v.toFixed(2)}`).join('\n')
+      : '';
+
     if (!confirm(
       `تأكيد المرتجعات المحددة؟\n` +
       `قيمة المرتجع: ${totalReturnValue.toFixed(2)} ${storeSettings.currency}\n` +
       `يُخصم من المديونية: ${debtSettled.toFixed(2)} ${storeSettings.currency}\n` +
-      `يُرد كاش للعميل: ${cashToRefund.toFixed(2)} ${storeSettings.currency}`
+      `يُرد للعميل: ${cashToRefund.toFixed(2)} ${storeSettings.currency}` +
+      (splitLines ? `\n${splitLines}` : '')
     )) return;
 
-    const success = await processReturn(activeReturnOrder.id, returnsArray, cashToRefund > 0 ? refundMethod : 'cash');
+    const success = await processReturn(
+      activeReturnOrder.id, returnsArray,
+      cashToRefund > 0 ? primaryRefundMethod(refundSplit) : 'cash',
+      cashToRefund > 0 ? refundSplit : undefined,
+    );
     if (success) {
       alert('تم إرجاع المنتجات المحددة بنجاح!');
       const updatedOrder = useStore.getState().orders.find(o => o.id === activeReturnOrder.id);
@@ -2158,11 +2195,21 @@ export default function POS() {
     }).filter((r: any) => r.returnQty > 0);
 
     if (returnsArray.length > 0) {
-      await processReturn(activeReturnOrder.id, returnsArray, cashToRefund > 0 ? refundMethod : 'cash');
+      if (cashToRefund > 0 && refundSplitMode && Math.abs(refundSplitTotal - cashToRefund) >= 0.01) {
+        alert(`مجموع التقسيمة (${refundSplitTotal.toFixed(2)}) مش مساوي المبلغ المردود (${cashToRefund.toFixed(2)}). ظبّط الأرقام الأول.`);
+        return;
+      }
+      const refundSplit = buildRefundSplit(cashToRefund);
+      await processReturn(
+        activeReturnOrder.id, returnsArray,
+        cashToRefund > 0 ? primaryRefundMethod(refundSplit) : 'cash',
+        cashToRefund > 0 ? refundSplit : undefined,
+      );
       alert('تم استرجاع الفاتورة بالكامل بنجاح');
       const updatedOrder = useStore.getState().orders.find(o => o.id === activeReturnOrder.id);
       setActiveReturnOrder(updatedOrder);
       setPendingReturns({}); setReturnDebtDeduction(null); setRefundMethod('cash');
+      setRefundSplitMode(false); setRefundSplitInput({});
     }
   };
 
@@ -3353,21 +3400,64 @@ export default function POS() {
                         <div className="bg-emerald-500 text-white rounded-xl p-3 text-center shadow-lg shadow-emerald-200 dark:shadow-none">
                           <div className="text-[10px] font-bold uppercase tracking-wider opacity-90">تدّي العميل</div>
                           <div className="text-lg font-black">{cashToCustomer.toFixed(2)}</div>
-                          {cashToCustomer > 0 && (
+                          {cashToCustomer > 0 && !refundSplitMode && (
                             <div className="flex flex-wrap gap-1 mt-2 justify-center">
-                              {([['cash', 'كاش'], ['visa', 'فيزا'], ['wallet', 'محفظة'], ['instapay', 'انستا']] as const).map(([m, label]) => (
+                              {/* الوسائل المفعّلة من الإعدادات — مش قايمة ثابتة، عشان
+                                  الطريقتين الإضافيتين (5/6) يظهروا هنا كمان. */}
+                              {activePayKeys.map((m) => (
                                 <button
                                   key={m}
                                   type="button"
-                                  onClick={() => setRefundMethod(m)}
+                                  onClick={() => setRefundMethod(m as any)}
                                   className={`text-[9px] font-bold px-2 py-0.5 rounded transition ${refundMethod === m ? 'bg-white text-emerald-700' : 'bg-emerald-600/60 text-white hover:bg-emerald-600'}`}
                                 >
-                                  {label}
+                                  {payLabel(m)}
                                 </button>
                               ))}
                             </div>
                           )}
+                          {cashToCustomer > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = !refundSplitMode;
+                                setRefundSplitMode(next);
+                                // أول ما يفتح التقسيم بنحط المبلغ كله على الوسيلة
+                                // المختارة — الكاشير بيعدّل منها بدل ما يكتب من الأول.
+                                setRefundSplitInput(next ? { [refundMethod]: cashToCustomer.toFixed(2) } : {});
+                              }}
+                              className="mt-2 text-[9px] font-black px-2 py-0.5 rounded bg-emerald-700/70 hover:bg-emerald-700 text-white transition"
+                            >
+                              {refundSplitMode ? '↩ وسيلة واحدة' : '⇄ تقسيم على أكتر من وسيلة'}
+                            </button>
+                          )}
                         </div>
+
+                        {/* خانات التقسيم — بتاخد عرض الصف كله عشان الأرقام تبان */}
+                        {refundSplitMode && cashToCustomer > 0 && (
+                          <div className="col-span-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-400">وزّع {cashToCustomer.toFixed(2)} {storeSettings.currency} على الوسائل</span>
+                              <span className={`text-[11px] font-black ${Math.abs(refundSplitTotal - cashToCustomer) < 0.01 ? 'text-emerald-600' : 'text-red-500'}`}>
+                                المكتوب: {refundSplitTotal.toFixed(2)}
+                                {Math.abs(refundSplitTotal - cashToCustomer) >= 0.01 && ` (الفرق ${(cashToCustomer - refundSplitTotal).toFixed(2)})`}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                              {activePayKeys.map((k) => (
+                                <div key={k}>
+                                  <label className="block text-[10px] font-bold text-emerald-700 dark:text-emerald-400 mb-0.5">{payLabel(k)}</label>
+                                  <input
+                                    type="number" dir="ltr" placeholder="0.00"
+                                    value={refundSplitInput[k] ?? ''}
+                                    onChange={(e) => setRefundSplitInput((s) => ({ ...s, [k]: e.target.value }))}
+                                    className="w-full bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-700 rounded-lg px-2 py-1.5 text-sm font-bold text-center focus:ring-2 focus:ring-emerald-400 outline-none"
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 
