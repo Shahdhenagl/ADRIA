@@ -849,8 +849,16 @@ export default function POS() {
   // لسه بتقراه (وقواعد البيانات من غير db/67) تفضل شغّالة.
   const primaryRefundMethod = (split: Record<string, number>): string =>
     Object.entries(split).sort((a, b) => b[1] - a[1])[0]?.[0] || refundMethod;
+  // تاريخ تسجيل المرتجع — الافتراضي اليوم المحاسبي الحالي. بيتغيّر لما المرتجع
+  // يكون حصل امبارح ويتسجّل النهاردة، عشان يقع في تقفيل يومه الصح.
+  const [refundDate, setRefundDate] = useState(() => businessDateStr(storeSettings));
+  // خصم من اللي راجع للعميل (رسوم/تلف) — بيفضل في الدرج ويتسجّل إيراد مستقل.
+  const [refundFeeStr, setRefundFeeStr] = useState('');
   // تصفير خانات التقسيم مع كل فاتورة مرتجع جديدة.
-  useEffect(() => { setRefundSplitMode(false); setRefundSplitInput({}); }, [activeReturnOrder?.id]);
+  useEffect(() => {
+    setRefundSplitMode(false); setRefundSplitInput({});
+    setRefundFeeStr(''); setRefundDate(businessDateStr(storeSettings));
+  }, [activeReturnOrder?.id]);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastInvoiceId, setLastInvoiceId] = useState('');
   const [lastCustomerInfo, setLastCustomerInfo] = useState<any>(null);
@@ -1541,28 +1549,38 @@ export default function POS() {
       refundAmount: r.itemValue * cashRatio,
     }));
 
+    // الخصم بيقلّل اللي بيخرج للعميل بس؛ قيمة المرتجع على الفاتورة بتفضل كاملة.
+    const fee = Math.min(Math.max(0, parseFloat(refundFeeStr) || 0), cashToRefund);
+    const netToCustomer = Math.max(0, cashToRefund - fee);
     // التقسيمة لازم تساوي المبلغ المردود بالظبط، وإلا الخزنة هتختلف عن الفاتورة.
-    if (cashToRefund > 0 && refundSplitMode && Math.abs(refundSplitTotal - cashToRefund) >= 0.01) {
-      alert(`مجموع التقسيمة (${refundSplitTotal.toFixed(2)}) مش مساوي المبلغ المردود (${cashToRefund.toFixed(2)}). ظبّط الأرقام الأول.`);
+    if (netToCustomer > 0 && refundSplitMode && Math.abs(refundSplitTotal - netToCustomer) >= 0.01) {
+      alert(`مجموع التقسيمة (${refundSplitTotal.toFixed(2)}) مش مساوي المبلغ المردود (${netToCustomer.toFixed(2)}). ظبّط الأرقام الأول.`);
       return;
     }
-    const refundSplit = buildRefundSplit(cashToRefund);
-    const splitLines = cashToRefund > 0
-      ? Object.entries(refundSplit).filter(([, v]) => v > 0).map(([k, v]) => `  • ${payLabel(k)}: ${v.toFixed(2)}`).join('\n')
+    // تقسيمة اللي العميل بياخده فعلاً (للعرض والتحقق).
+    const netSplit = buildRefundSplit(netToCustomer);
+    const primary = netToCustomer > 0 ? primaryRefundMethod(netSplit) : refundMethod;
+    // التقسيمة المتخزّنة لازم تغطّي **قيمة المرتجع كاملة** (الفاتورة بتتعكس بالكامل)،
+    // والخصم بيترجع للدرج كإيراد. لو خزّنّا الصافي بس، الخصم يتحسب مرتين.
+    const refundSplit: Record<string, number> = { ...netSplit };
+    if (fee > 0) refundSplit[primary] = (refundSplit[primary] || 0) + fee;
+    const splitLines = netToCustomer > 0
+      ? Object.entries(netSplit).filter(([, v]) => v > 0).map(([k, v]) => `  • ${payLabel(k)}: ${v.toFixed(2)}`).join('\n')
       : '';
 
     if (!confirm(
       `تأكيد المرتجعات المحددة؟\n` +
+      `تاريخ المرتجع: ${refundDate}\n` +
       `قيمة المرتجع: ${totalReturnValue.toFixed(2)} ${storeSettings.currency}\n` +
       `يُخصم من المديونية: ${debtSettled.toFixed(2)} ${storeSettings.currency}\n` +
-      `يُرد للعميل: ${cashToRefund.toFixed(2)} ${storeSettings.currency}` +
+      (fee > 0 ? `خصم من المرتجع (يفضل في الدرج): ${fee.toFixed(2)} ${storeSettings.currency}\n` : '') +
+      `يُرد للعميل: ${netToCustomer.toFixed(2)} ${storeSettings.currency}` +
       (splitLines ? `\n${splitLines}` : '')
     )) return;
 
     const success = await processReturn(
-      activeReturnOrder.id, returnsArray,
-      cashToRefund > 0 ? primaryRefundMethod(refundSplit) : 'cash',
-      cashToRefund > 0 ? refundSplit : undefined,
+      activeReturnOrder.id, returnsArray, primary, refundSplit,
+      { refundDate, deduction: fee },
     );
     if (success) {
       alert('تم إرجاع المنتجات المحددة بنجاح!');
@@ -2195,21 +2213,27 @@ export default function POS() {
     }).filter((r: any) => r.returnQty > 0);
 
     if (returnsArray.length > 0) {
-      if (cashToRefund > 0 && refundSplitMode && Math.abs(refundSplitTotal - cashToRefund) >= 0.01) {
-        alert(`مجموع التقسيمة (${refundSplitTotal.toFixed(2)}) مش مساوي المبلغ المردود (${cashToRefund.toFixed(2)}). ظبّط الأرقام الأول.`);
+      // الخصم بيقلّل اللي بيخرج للعميل بس؛ قيمة المرتجع على الفاتورة بتفضل كاملة.
+      const fee = Math.min(Math.max(0, parseFloat(refundFeeStr) || 0), cashToRefund);
+      const netToCustomer = Math.max(0, cashToRefund - fee);
+      if (netToCustomer > 0 && refundSplitMode && Math.abs(refundSplitTotal - netToCustomer) >= 0.01) {
+        alert(`مجموع التقسيمة (${refundSplitTotal.toFixed(2)}) مش مساوي المبلغ المردود (${netToCustomer.toFixed(2)}). ظبّط الأرقام الأول.`);
         return;
       }
-      const refundSplit = buildRefundSplit(cashToRefund);
+      const netSplit = buildRefundSplit(netToCustomer);
+      const primary = netToCustomer > 0 ? primaryRefundMethod(netSplit) : refundMethod;
+      // نفس المنطق: المتخزّن يغطّي المرتجع كامل، والخصم يرجع كإيراد.
+      const refundSplit: Record<string, number> = { ...netSplit };
+      if (fee > 0) refundSplit[primary] = (refundSplit[primary] || 0) + fee;
       await processReturn(
-        activeReturnOrder.id, returnsArray,
-        cashToRefund > 0 ? primaryRefundMethod(refundSplit) : 'cash',
-        cashToRefund > 0 ? refundSplit : undefined,
+        activeReturnOrder.id, returnsArray, primary, refundSplit,
+        { refundDate, deduction: fee },
       );
       alert('تم استرجاع الفاتورة بالكامل بنجاح');
       const updatedOrder = useStore.getState().orders.find(o => o.id === activeReturnOrder.id);
       setActiveReturnOrder(updatedOrder);
       setPendingReturns({}); setReturnDebtDeduction(null); setRefundMethod('cash');
-      setRefundSplitMode(false); setRefundSplitInput({});
+      setRefundSplitMode(false); setRefundSplitInput({}); setRefundFeeStr('');
     }
   };
 
@@ -3341,7 +3365,11 @@ export default function POS() {
                 const debtSettled = returnDebtDeduction === null
                   ? maxDebtDeduction
                   : Math.max(0, Math.min(returnDebtDeduction, maxDebtDeduction));
-                const cashToCustomer = Math.max(0, selectedReturnValue - debtSettled);
+                const cashRefundValue = Math.max(0, selectedReturnValue - debtSettled);
+                // الخصم بيقلّل اللي بيخرج من الدرج للعميل بس — قيمة المرتجع على
+                // الفاتورة بتفضل كاملة والفرق بيتسجّل إيراد (شوف processReturn).
+                const refundFee = Math.min(Math.max(0, parseFloat(refundFeeStr) || 0), cashRefundValue);
+                const cashToCustomer = Math.max(0, cashRefundValue - refundFee);
 
                 return (
                   <>
@@ -3364,6 +3392,32 @@ export default function POS() {
                         <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">{((1 - discountRatio) * 100).toFixed(1)}%</span>
                       </div>
                     </div>
+
+                    {/* تاريخ المرتجع + الخصم — قبل بطاقات الأرقام عشان يبانوا */}
+                    {selectedReturnValue > 0 && (
+                      <div className="grid grid-cols-2 gap-3 mb-3">
+                        <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 border border-slate-200 dark:border-slate-700">
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">تاريخ المرتجع</label>
+                          <input
+                            type="date" value={refundDate}
+                            onChange={(e) => setRefundDate(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-sm font-bold focus:ring-2 focus:ring-indigo-400 outline-none"
+                          />
+                          {refundDate !== businessDateStr(storeSettings) && (
+                            <p className="text-[10px] font-bold text-amber-600 mt-1">هيتسجّل على تقفيل يوم {refundDate}</p>
+                          )}
+                        </div>
+                        <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 border border-slate-200 dark:border-slate-700">
+                          <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">خصم من المرتجع</label>
+                          <input
+                            type="number" dir="ltr" placeholder="0.00" value={refundFeeStr}
+                            onChange={(e) => setRefundFeeStr(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-sm font-bold text-center focus:ring-2 focus:ring-indigo-400 outline-none"
+                          />
+                          <p className="text-[10px] font-bold text-slate-400 mt-1">بيقلّل اللي العميل هياخده ويفضل في الدرج كإيراد</p>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Return split: debt settlement vs cash to customer */}
                     {selectedReturnValue > 0 && (

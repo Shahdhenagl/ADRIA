@@ -674,7 +674,10 @@ interface CashierStore {
   ) => Promise<string | null | void>;
   // refundSplit: تقسيمة الفلوس الراجعة للعميل على الوسائل (db/67). لو مش متبعتة
   // بيتحمّل المبلغ كله على refundMethod — نفس السلوك القديم.
-  processReturn: (orderId: string, returns: { productId: string, returnQty: number, refundAmount: number, debtDeduction?: number }[], refundMethod?: string, refundSplit?: Record<string, number>) => Promise<boolean>;
+  // opts.refundDate: اليوم المحاسبي اللي المرتجع يتسجّل عليه (YYYY-MM-DD).
+  //   من غيره بيتسجّل على النهاردة — فمرتجع حصل امبارح كان بيقع في تقفيل يوم غلط.
+  // opts.deduction: مبلغ بيتخصم من اللي راجع للعميل ويفضل في الدرج (رسوم/تلف).
+  processReturn: (orderId: string, returns: { productId: string, returnQty: number, refundAmount: number, debtDeduction?: number }[], refundMethod?: string, refundSplit?: Record<string, number>, opts?: { refundDate?: string; deduction?: number; deductionNote?: string }) => Promise<boolean>;
   processPurchaseReturn: (
     sourceInvoiceId: string,
     returns: { productId: string; returnQty: number }[],
@@ -3066,11 +3069,15 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
   },
 
-  processReturn: async (orderId, returns, refundMethod = 'cash', refundSplit) => {
+  processReturn: async (orderId, returns, refundMethod = 'cash', refundSplit, opts) => {
     const state = get();
     const orderIndex = state.orders.findIndex((o) => o.id === orderId);
     if (orderIndex === -1 || returns.length === 0) return false;
-    if (!(await ensureAccountingDayOpen(state, new Date()))) return false;
+    // المرتجع بيحرّك الخزنة يوم ما اتسجّل عليه، فالتحقق على اليوم المختار مش على النهاردة.
+    const refundStamp = opts?.refundDate
+      ? timestampForBusinessDate(opts.refundDate, state.storeSettings)
+      : accountingTimestampForNow(state.storeSettings);
+    if (!(await ensureAccountingDayOpen(state, refundStamp))) return false;
 
     const order = state.orders[orderIndex];
 
@@ -3200,7 +3207,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       // التقسيمة اللي اتكتبت فعلاً على الصف (فاضية لو db/67 لسه ماتشغّلتش).
       let refundSplitApplied: Record<string, number> = {};
 
-      const refundedAt = accountingTimestampForNow(state.storeSettings);
+      const refundedAt = refundStamp;
       if (totalRefundAmount > 0) {
         finalPaidAmount = finalPaidAmount - totalRefundAmount;
         const { error: paidError } = await supabase
@@ -3251,6 +3258,30 @@ export const useStore = create<CashierStore>((set, get) => ({
         .eq('id', orderId);
       if (refundedAtError) {
         console.warn('Could not store refunded_at (column may be missing — run db/36):', refundedAtError.message);
+      }
+
+      // ── خصم من المرتجع (رسوم/تلف يفضل في الدرج) ─────────────────────────
+      // الفاتورة بتتعكس بقيمة المرتجع **كاملة** (البضاعة رجعت والبيع اتلغى)،
+      // والمبلغ المخصوم بيتسجّل **إيراد مستقل**. ليه مش بس نقلّل المرتجع؟
+      // لأن الصنف راجع بالكامل، فالمستحق على الفاتورة بيبقى صفر — ولو سيبنا
+      // المخصوم ضمن «المدفوع» كان هيبان كأنه رصيد للعميل عندنا، وده غلط.
+      // بالشكل ده: المخزون رجع، البيع اتعكس، والفرق ظاهر كإيراد باسمه.
+      const deduction = Math.max(0, Number(opts?.deduction) || 0);
+      if (deduction > 0.004) {
+        const dedSplit: Record<string, number> = {};
+        ALL_PAYMENT_KEYS.forEach((k) => { dedSplit[k] = 0; });
+        // بيتسجّل على نفس وسيلة الاسترداد الأساسية — الفلوس اللي ما خرجتش.
+        dedSplit[refundMethod] = deduction;
+        await get().addExpense({
+          category: 'خصم مرتجع',
+          amount: -deduction, // سالب = إيراد داخل للخزنة
+          paid_cash: dedSplit.cash, paid_visa: dedSplit.visa,
+          paid_wallet: dedSplit.wallet, paid_instapay: dedSplit.instapay,
+          paid_method5: dedSplit.method5, paid_method6: dedSplit.method6,
+          payment_method: refundMethod as any,
+          note: opts?.deductionNote?.trim() || `خصم من مرتجع فاتورة #${orderId}`,
+          created_at: refundedAt,
+        } as any);
       }
 
       const updatedOrders = state.orders.map((o, idx) =>
