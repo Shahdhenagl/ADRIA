@@ -1,7 +1,7 @@
 // ── منطق توزيع مبالغ المعاملات على وسائل الدفع (الخزنة) ──────────────────
 // مشترك بين: تقفيل اليوم (POS)، الخزنة الرئيسية (Savings)، التقارير (Reports).
 // كان متكرّر في 3 أماكن، فأي خطأ كان بيظهر 3 مرات — التوحيد هنا يمنع ذلك.
-import { ALL_PAYMENT_KEYS, openingBalanceOf } from './paymentMethods';
+import { ALL_PAYMENT_KEYS, openingBalanceOf, splitFromRow, primaryMethod } from './paymentMethods';
 
 type Bucket = Record<string, number>;
 
@@ -60,10 +60,22 @@ export function applyInternalTransferNet(net: Bucket, rec: any): void {
  * وشاشة تقول رقم تاني.
  */
 export function refundRecordOf(order: any, refundedTotal: number): any {
-  const rec: any = {
-    paid_amount: refundedTotal,
-    payment_method: order?.refund_method || order?.payment_method || 'cash',
-  };
+  const keys = ALL_PAYMENT_KEYS as readonly string[];
+  // ترتيب الرجوع للفواتير القديمة (من غير تقسيمة مرتجع):
+  //   1) refund_method لو متسجّل وصالح.
+  //   2) أكبر وسيلة في **تقسيمة دفع الفاتورة نفسها** — الفلوس بترجع زي ما جت.
+  //      (مهم: فاتورة اتدفعت 300 كاش + 700 فيزا، payment_method = 'cash'؛
+  //       الاعتماد على payment_method كان بينقل المرتجع للوسيلة الغلط.)
+  //   3) payment_method، وإلا كاش.
+  let fallback: string;
+  if (order?.refund_method && keys.includes(order.refund_method)) {
+    fallback = order.refund_method;
+  } else if (keys.some((k) => (Number(order?.['paid_' + k]) || 0) !== 0)) {
+    fallback = primaryMethod(splitFromRow(order) as any);
+  } else {
+    fallback = keys.includes(order?.payment_method) ? order.payment_method : 'cash';
+  }
+  const rec: any = { paid_amount: refundedTotal, payment_method: fallback };
   ALL_PAYMENT_KEYS.forEach((k) => { rec['paid_' + k] = Number(order?.['refunded_' + k]) || 0; });
   return rec;
 }
