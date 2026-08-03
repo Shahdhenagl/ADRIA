@@ -123,6 +123,109 @@ select '══ الإجمالي = رصيد بداية اليوم ══', round(
 
 
 -- =============================================================================
+-- (3-ج) 🎯 رصيد بداية اليوم **لكل وسيلة دفع** في خزنة المحل.
+--       الإجمالي ممكن يكون موجب بينما وسيلة واحدة سالبة — وده اللي بيظهر
+--       كرقم سالب صغير في شاشة التقفيل وفي خانة «بالمحل».
+--
+--       تحقّق: مجموع عمود «الرصيد» لازم يساوي إجمالي استعلام (3-ب).
+--
+--       قاعدة التقسيم (زي applySplit في الكود): لو أي عمود paid_* مش صفر
+--       بناخد الأعمدة دي، وإلا بنحمّل المبلغ كله على payment_method.
+-- =============================================================================
+with p as (
+  select ((date '2026-08-03' + interval '3 hours') at time zone 'Africa/Cairo') as start_ts
+),
+k as (select unnest(array['cash','visa','wallet','instapay','method5','method6']) as m),
+ob as (
+  select kv.k as m, kv.v::numeric as v
+  from store_settings st, jsonb_each_text(st.payment_opening_balances) as kv(k, v)
+),
+ords as (
+  select k.m, sum(sp.val) as v
+  from orders o cross join k cross join p cross join lateral (
+    select case
+      when (coalesce(o.paid_cash,0)+coalesce(o.paid_visa,0)+coalesce(o.paid_wallet,0)
+           +coalesce(o.paid_instapay,0)+coalesce(o.paid_method5,0)+coalesce(o.paid_method6,0)) <> 0
+      then case k.m when 'cash' then coalesce(o.paid_cash,0) when 'visa' then coalesce(o.paid_visa,0)
+                    when 'wallet' then coalesce(o.paid_wallet,0) when 'instapay' then coalesce(o.paid_instapay,0)
+                    when 'method5' then coalesce(o.paid_method5,0) else coalesce(o.paid_method6,0) end
+      else case when coalesce(o.payment_method,'cash') = k.m then coalesce(o.paid_amount,0) else 0 end
+    end as val
+  ) sp
+  where o.created_at < p.start_ts and coalesce(o.is_deleted,false) = false
+    and o.type in ('sale','payment') and coalesce(o.notes,'') not like '%[MAIN_TREASURY]%'
+  group by k.m
+),
+exp_ as (
+  select k.m, sum(
+    case
+      when e.category = 'تحويل داخلي' then sp.val    -- بالإشارة: موجب داخل / سالب خارج
+      when coalesce(e.amount,0) < 0    then abs(sp.val) -- مبلغ سالب = إيراد يدوي (داخل)
+      else -sp.val                                    -- مصروف عادي (خارج)
+    end) as v
+  from expenses e cross join k cross join p cross join lateral (
+    select case
+      when (coalesce(e.paid_cash,0)+coalesce(e.paid_visa,0)+coalesce(e.paid_wallet,0)
+           +coalesce(e.paid_instapay,0)+coalesce(e.paid_method5,0)+coalesce(e.paid_method6,0)) <> 0
+      then case k.m when 'cash' then coalesce(e.paid_cash,0) when 'visa' then coalesce(e.paid_visa,0)
+                    when 'wallet' then coalesce(e.paid_wallet,0) when 'instapay' then coalesce(e.paid_instapay,0)
+                    when 'method5' then coalesce(e.paid_method5,0) else coalesce(e.paid_method6,0) end
+      else case when coalesce(e.payment_method,'cash') = k.m then coalesce(e.amount,0) else 0 end
+    end as val
+  ) sp
+  where e.created_at < p.start_ts and coalesce(e.note,'') not like '%[MAIN_TREASURY]%'
+    and e.category <> 'رواتب'
+  group by k.m
+),
+sal as (
+  select k.m, sum(-sp.val) as v
+  from employee_transactions t cross join k cross join p cross join lateral (
+    select case
+      when (coalesce(t.paid_cash,0)+coalesce(t.paid_visa,0)+coalesce(t.paid_wallet,0)
+           +coalesce(t.paid_instapay,0)+coalesce(t.paid_method5,0)+coalesce(t.paid_method6,0)) <> 0
+      then case k.m when 'cash' then coalesce(t.paid_cash,0) when 'visa' then coalesce(t.paid_visa,0)
+                    when 'wallet' then coalesce(t.paid_wallet,0) when 'instapay' then coalesce(t.paid_instapay,0)
+                    when 'method5' then coalesce(t.paid_method5,0) else coalesce(t.paid_method6,0) end
+      else case when coalesce(t.payment_method,'cash') = k.m then coalesce(t.amount,0) else 0 end
+    end as val
+  ) sp
+  where t.created_at < p.start_ts and coalesce(t.note,'') not like '%[MAIN_TREASURY]%'
+  group by k.m
+),
+pur as (
+  select k.m, sum(-sp.val) as v
+  from purchase_invoices pi cross join k cross join p cross join lateral (
+    select case
+      when (coalesce(pi.paid_cash,0)+coalesce(pi.paid_visa,0)+coalesce(pi.paid_wallet,0)
+           +coalesce(pi.paid_instapay,0)+coalesce(pi.paid_method5,0)+coalesce(pi.paid_method6,0)) <> 0
+      then case k.m when 'cash' then coalesce(pi.paid_cash,0) when 'visa' then coalesce(pi.paid_visa,0)
+                    when 'wallet' then coalesce(pi.paid_wallet,0) when 'instapay' then coalesce(pi.paid_instapay,0)
+                    when 'method5' then coalesce(pi.paid_method5,0) else coalesce(pi.paid_method6,0) end
+      else case when coalesce(pi.payment_method,'cash') = k.m then coalesce(pi.paid_amount,0) else 0 end
+    end as val
+  ) sp
+  where pi.created_at < p.start_ts and coalesce(pi.notes,'') not like '%[MAIN_TREASURY]%'
+  group by k.m
+)
+select
+  k.m                                                                as "الوسيلة",
+  round(coalesce(ob.v, 0)::numeric, 2)                               as "الافتتاحي",
+  round(coalesce(ords.v, 0)::numeric, 2)                             as "الفواتير",
+  round(coalesce(exp_.v, 0)::numeric, 2)                             as "مصروفات/إيرادات",
+  round(coalesce(sal.v, 0)::numeric, 2)                              as "رواتب/سلف",
+  round(coalesce(pur.v, 0)::numeric, 2)                              as "مشتريات",
+  round((coalesce(ob.v,0) + coalesce(ords.v,0) + coalesce(exp_.v,0)
+       + coalesce(sal.v,0) + coalesce(pur.v,0))::numeric, 2)         as "الرصيد"
+from k
+left join ob    on ob.m    = k.m
+left join ords  on ords.m  = k.m
+left join exp_  on exp_.m  = k.m
+left join sal   on sal.m   = k.m
+left join pur   on pur.m   = k.m
+order by 1;
+
+
+-- =============================================================================
 -- (4) آخر 40 حركة «قبل اليوم» على خزنة المحل — لو الاستعلام 1 ما طلّعش حاجة.
 --     الصف المتسجّل بتاريخ قديم بيبان هنا: تاريخه قديم بس ساعته 3 العصر
 --     بالظبط (كل الصفوف الملحوقة بتتختم بمنتصف اليوم المحاسبي).
