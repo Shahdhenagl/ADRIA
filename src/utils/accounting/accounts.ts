@@ -51,8 +51,11 @@ export const BASE_ACCOUNTS: AccountDef[] = [
   { code: '13', name: 'ذمم مدينة (لينا عند الغير)', type: 'asset', parent: '1' },
   { code: '131', name: 'ذمم العملاء (الآجل)', type: 'asset', parent: '13',
     source: 'الفواتير: المستحق − المدفوع' },
-  { code: '132', name: 'سلف الموظفين', type: 'asset', parent: '13',
-    source: 'employee_transactions نوع advance غير المسدّدة' },
+  // للعرض بس — مستبعد من إجمالي الأصول لأنه محسوب ضمن مصروف الرواتب (52).
+  // مفيش تسجيل مستقل لسداد السلفة (بتتخصم من صافي الراتب)، فلو اتحسبت أصل
+  // مش هيبقى فيه حاجة تصفّيها وهتتراكم للأبد — وكمان هتتعدّ مرتين مع المصروف.
+  { code: '132', name: 'سلف الموظفين (للعلم — ضمن الرواتب)', type: 'asset', parent: '13',
+    source: 'employee_transactions نوع advance — مستبعد من إجمالي الأصول' },
   { code: '133', name: 'أرصدة لدى الموردين', type: 'asset', parent: '13',
     source: 'purchase_invoices: المدفوع الزائد عن قيمة الفواتير' },
 

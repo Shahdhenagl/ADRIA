@@ -118,21 +118,29 @@ export default function Accounting() {
         </button>
       </div>
 
-      {/* معادلة الميزانية — أهم رقم في الصفحة */}
-      <div className={`rounded-2xl p-5 border ${Math.abs(tb.imbalance) < 0.5 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+      {/* معادلة الميزانية */}
+      <div className={`rounded-2xl p-5 border ${Math.abs(tb.imbalance) < 0.5 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
         <div className="flex items-center gap-2 mb-2">
-          <Scale size={18} className={Math.abs(tb.imbalance) < 0.5 ? 'text-emerald-600' : 'text-red-600'} />
-          <span className={`font-black ${Math.abs(tb.imbalance) < 0.5 ? 'text-emerald-700' : 'text-red-700'}`}>
-            {Math.abs(tb.imbalance) < 0.5 ? 'الميزانية متوازنة' : `الميزانية مش متوازنة — فرق ${money(tb.imbalance)} ${cur}`}
+          <Scale size={18} className={Math.abs(tb.imbalance) < 0.5 ? 'text-emerald-600' : 'text-amber-600'} />
+          <span className={`font-black ${Math.abs(tb.imbalance) < 0.5 ? 'text-emerald-700' : 'text-amber-700'}`}>
+            {Math.abs(tb.imbalance) < 0.5 ? 'الميزانية متوازنة' : `فرق غير مفسّر: ${money(tb.imbalance)} ${cur}`}
           </span>
         </div>
         <p className="text-xs font-bold text-slate-600">
           الأصول {money(tb.assets)} = الخصوم {money(tb.liabilities)} + حقوق الملكية {money(tb.equity)} + أرباح الفترة {money(tb.profit)}
         </p>
         {Math.abs(tb.imbalance) >= 0.5 && (
-          <p className="text-[11px] font-bold text-red-600 mt-2">
-            الفرق معناه حركة ناقصة طرف — شوف تبويب «فحص السلامة» تحت.
-          </p>
+          <div className="mt-3 pt-3 border-t border-amber-200">
+            <p className="text-[11px] font-black text-amber-800 mb-1">الفرق ده مش دليل على خطأ في البيانات لوحده.</p>
+            <p className="text-[11px] font-bold text-slate-600 leading-relaxed">
+              المخزون ({money(tb.inventory)} {cur}) بيتقرا كـ«لقطة» من كميات المنتجات، لكن مصادر تانية
+              بتحرّكه والموديول لسه مابيسجّلهاش كقيود: <b>إدخال مخزون بدون فاتورة، الديڤو والتوالف،
+              تسويات الجرد، والتصنيع</b>. الفرق بيستوعبهم كلهم.
+            </p>
+            <p className="text-[11px] font-black text-slate-700 mt-1.5">
+              الكشف الموثوق للحركات الناقصة طرف هو تبويب «فحص السلامة» تحت — مش الرقم ده.
+            </p>
+          </div>
         )}
       </div>
 

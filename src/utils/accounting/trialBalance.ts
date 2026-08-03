@@ -40,7 +40,16 @@ export interface TrialBalance {
   revenue: number;
   expenses: number;
   profit: number;
-  /** الأصول − (الخصوم + الملكية + الربح). المفروض صفر. */
+  inventory: number;
+  /**
+   * الأصول − (الخصوم + الملكية + الربح).
+   *
+   * ⚠️ **مش دليل فساد بيانات لوحده.** المخزون هنا بيتقرا كـ«لقطة» من
+   * `products.stock_quantity`، بينما حركته بتيجي من مصادر الموديول ده لسه
+   * مابيسجّلهاش كقيود: إدخال مخزون بدون فاتورة (db/59)، الديڤو والتوالف
+   * (db/27)، تسويات الجرد (db/18)، والتصنيع. الفرق ده بيستوعبهم كلهم.
+   * الكشف الموثوق للحركات الناقصة طرف هو تبويب «فحص السلامة».
+   */
   imbalance: number;
 }
 
@@ -112,7 +121,9 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
   });
 
   partsByCode['111'] = shop;
-  add('111', totalOf(shop));
+  // الرصيد بيتحط على الحسابات الفرعية (وسيلة بوسيلة) والأب بيجمعهم — لو حطّيناه
+  // على الأب كمان كان هيتعدّ مرتين.
+  ALL_PAYMENT_KEYS.forEach((k, i) => { byCode[`111${i + 1}`] = shop[k] || 0; });
 
   // ── 112 الخزنة الرئيسية ──────────────────────────────────────────────────
   const main = zero();
@@ -123,7 +134,7 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
     main[m] += s.direction === 'in' ? amt : -amt;
   });
   partsByCode['112'] = main;
-  add('112', totalOf(main));
+  ALL_PAYMENT_KEYS.forEach((k, i) => { byCode[`112${i + 1}`] = main[k] || 0; });
 
   // ── 12 المخزون بالتكلفة ──────────────────────────────────────────────────
   const stockValue = (products || []).reduce((s, p) => {
@@ -170,8 +181,13 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
     if (t.type === 'advance') advances += amt;
     else salaries += amt; // salary / incentive
   });
-  // السلفة بتتخصم من الراتب وقت صرفه، فالمتبقي كأصل = السلف − اللي اترد منها
-  // ضمن الرواتب المصروفة. تقريب محافظ: بنعرضها كاملة ونوضّح المصدر.
+  // السلفة بتتعامل كجزء من مصروف الرواتب، **مش كأصل**.
+  //
+  // ليه؟ السلفة بتتخصم من صافي الراتب وقت صرفه، ومفيش تسجيل مستقل لسدادها —
+  // فلو عددناها أصل (ذمة على الموظف) مش هيبقى فيه حاجة تصفّيها وهتفضل تتراكم
+  // في الأصول للأبد. وكمان لو عددناها أصل **ومصروف** في نفس الوقت، الميزان
+  // بيختل بمقدارها (الكاش نزل مرة والطرف المقابل اتسجّل مرتين).
+  // الحساب 132 بيفضل للعرض بس ومستبعد من إجمالي الأصول.
   add('132', Math.max(0, advances));
   add('52', salaries + advances);
 
@@ -217,8 +233,9 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
   add('31', openingCapital);
 
   // ── الإجماليات ───────────────────────────────────────────────────────────
-  const assets = (byCode['111'] || 0) + (byCode['112'] || 0) + (byCode['12'] || 0)
-    + (byCode['131'] || 0) + (byCode['132'] || 0) + (byCode['133'] || 0);
+  // 132 (سلف الموظفين) مستبعد عن قصد — بيتحسب ضمن مصروف الرواتب فوق.
+  const cash = totalOf(shop) + totalOf(main);
+  const assets = cash + (byCode['12'] || 0) + (byCode['131'] || 0) + (byCode['133'] || 0);
   const liabilities = (byCode['21'] || 0) + (byCode['22'] || 0);
   const revenue = (byCode['41'] || 0) + (byCode['42'] || 0) + (byCode['43'] || 0);
   const expensesTotal = (byCode['51'] || 0) + (byCode['52'] || 0) + (byCode['53'] || 0) + (byCode['54'] || 0);
@@ -233,6 +250,7 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
       revenue, expense: expensesTotal,
     },
     assets, liabilities, equity, revenue, expenses: expensesTotal, profit,
+    inventory: byCode['12'] || 0,
     imbalance: assets - (liabilities + equity + profit),
   };
 }
