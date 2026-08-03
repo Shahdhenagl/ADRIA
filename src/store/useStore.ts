@@ -693,6 +693,8 @@ interface CashierStore {
     toMainTreasury?: boolean
   ) => Promise<boolean>;
   deleteOrder: (orderId: string, reason?: string) => Promise<boolean>;
+  /** إلغاء مرتجع اتعمل بالغلط — بيرجّع الفاتورة لحالتها قبل الإرجاع. */
+  undoReturn: (orderId: string) => Promise<boolean>;
   editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string, opts?: { exchange?: boolean }) => Promise<boolean>;
   markOrderExchanged: (orderId: string, exchangeData: any) => Promise<boolean>;
   updateOrderRefundedAt: (orderId: string, refundedAt: string) => Promise<boolean>;
@@ -3289,6 +3291,89 @@ export const useStore = create<CashierStore>((set, get) => ({
       }
       console.warn("Network offline or Supabase return failed. Falling back to offline return:", err);
       return executeOfflineReturn();
+    }
+  },
+
+  /**
+   * إلغاء مرتجع اتعمل بالغلط: بيرجّع الفاتورة لحالتها قبل الإرجاع —
+   * الكميات المرتجعة تترجع للفاتورة وتتشال من المخزون، والفلوس اللي اترجّعت
+   * للعميل ترجع للمدفوع، وحقول المرتجع تتصفّر.
+   *
+   * **التحقق من اليوم بيتعمل على تاريخ المرتجع مش تاريخ الفاتورة.** المرتجع
+   * بيحرّك الخزنة يوم ما اتعمل، فده اليوم اللي الإلغاء بيأثر عليه. من غير كده
+   * مرتجع اتعمل النهاردة على فاتورة من يوم مقفول مكانش ينفع يتلغى أبداً —
+   * ولا حتى بحذف الفاتورة (اللي بيتحقق من يوم الفاتورة).
+   */
+  undoReturn: async (orderId) => {
+    const state = get();
+    const order = state.orders.find((o) => o.id === orderId);
+    if (!order || order.is_deleted) return false;
+
+    const refundedTotal = (order.items || []).reduce((s, it) => s + (Number(it.refunded_amount) || 0), 0);
+    const returnedAny = (order.items || []).some((it) => (Number(it.returned_quantity) || 0) > 0);
+    if (!returnedAny && refundedTotal <= 0) { alert('مفيش مرتجع على الفاتورة دي.'); return false; }
+
+    if (!(await ensureAccountingDayOpen(state, (order as any).refunded_at || new Date()))) return false;
+
+    try {
+      // 1) صفّر بنود المرتجع على الفاتورة.
+      for (const it of order.items || []) {
+        if ((Number(it.returned_quantity) || 0) <= 0 && (Number(it.refunded_amount) || 0) <= 0) continue;
+        const { error } = await supabase
+          .from('order_items')
+          .update({ returned_quantity: 0, refunded_amount: 0 })
+          .eq('order_id', orderId)
+          .eq('product_id', it.id);
+        if (error) throw error;
+      }
+
+      // 2) شيل الكميات من المخزون تاني (كانت رجعت له وقت الإرجاع).
+      const updatedProducts = [...state.products];
+      for (const it of order.items || []) {
+        const qty = Number(it.returned_quantity) || 0;
+        if (qty <= 0) continue;
+        const { data: prod } = await supabase.from('products').select('stock_quantity').eq('id', it.id).single();
+        if (!prod) continue;
+        const next = Math.max(0, (Number((prod as any).stock_quantity) || 0) - qty);
+        await supabase.from('products').update({ stock_quantity: next }).eq('id', it.id);
+        const idx = updatedProducts.findIndex((p) => p.id === it.id);
+        if (idx >= 0) updatedProducts[idx] = { ...updatedProducts[idx], stock_quantity: next };
+      }
+
+      // 3) رجّع المدفوع وصفّر حقول المرتجع (التقسيمة كمان — db/67).
+      const restoredPaid = (Number(order.paid_amount) || 0) + refundedTotal;
+      const patch: any = { paid_amount: restoredPaid, refund_method: null, refunded_at: null };
+      ALL_PAYMENT_KEYS.forEach((k) => { patch['refunded_' + k] = 0; });
+      const { error: ordErr } = await supabase.from('orders').update(patch).eq('id', orderId);
+      if (ordErr) {
+        // الأعمدة الجديدة ممكن تكون ناقصة (db/67 لسه ماتشغّلتش) — نجرّب من غيرها.
+        const { error: retryErr } = await supabase
+          .from('orders')
+          .update({ paid_amount: restoredPaid, refund_method: null, refunded_at: null })
+          .eq('id', orderId);
+        if (retryErr) throw retryErr;
+      }
+
+      set({
+        products: updatedProducts,
+        orders: state.orders.map((o) => (o.id === orderId
+          ? {
+              ...o,
+              paid_amount: restoredPaid,
+              refund_method: undefined,
+              refunded_at: null,
+              refunded_cash: 0, refunded_visa: 0, refunded_wallet: 0,
+              refunded_instapay: 0, refunded_method5: 0, refunded_method6: 0,
+              items: (o.items || []).map((it) => ({ ...it, returned_quantity: 0, refunded_amount: 0 })),
+            }
+          : o)),
+      });
+      new BroadcastChannel('cashier-sync').postMessage('sync_products');
+      return true;
+    } catch (e) {
+      console.error('undoReturn failed:', e);
+      alert('تعذّر إلغاء المرتجع: ' + (e instanceof Error ? e.message : String(e)));
+      return false;
     }
   },
 

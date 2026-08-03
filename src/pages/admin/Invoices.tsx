@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useStore } from '../../store/useStore';
-import { ArrowRightLeft, Search, User, Printer, CreditCard, FileText, Table as TableIcon, TrendingUp, Calendar, X, Trash2, Archive, Edit2, Eye } from 'lucide-react';
+import { ArrowRightLeft, Search, User, Printer, CreditCard, FileText, Table as TableIcon, TrendingUp, Calendar, X, Trash2, Archive, Edit2, Eye, Undo2 } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { calculateOrderReturnValue } from '../../utils/returns';
@@ -17,7 +17,7 @@ import html2canvas from 'html2canvas-pro';
 import { EditInvoiceModal } from '../../components/EditInvoiceModal';
 
 export default function Invoices() {
-  const { orders, storeSettings, deleteOrder } = useStore();
+  const { orders, storeSettings, deleteOrder, undoReturn } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [showReturnsOnly, setShowReturnsOnly] = useState(false);
   const [showExchangeOnly, setShowExchangeOnly] = useState(false);
@@ -304,6 +304,24 @@ export default function Invoices() {
     visibleOrders.forEach(o => { if ((o as any).salesperson_name) s.add((o as any).salesperson_name); });
     return Array.from(s).sort();
   }, [visibleOrders]);
+
+  // إلغاء مرتجع اتعمل بالغلط. بيتحقق من **يوم المرتجع** مش يوم الفاتورة، فمرتجع
+  // اتعمل النهاردة على فاتورة قديمة (يومها مقفول) ينفع يتلغى عادي.
+  const handleUndoReturn = async (order: any) => {
+    const refunded = (order.items || []).reduce((s: number, it: any) => s + (Number(it.refunded_amount) || 0), 0);
+    const qty = (order.items || []).reduce((s: number, it: any) => s + (Number(it.returned_quantity) || 0), 0);
+    const message = [
+      `إلغاء مرتجع الفاتورة #${order.id}؟`,
+      '',
+      `• هيترجع ${qty} صنف للفاتورة ويتشال من المخزون`,
+      ...(refunded > 0 ? [`• هيرجع ${refunded.toFixed(2)} ${storeSettings.currency} للمدفوع (الفلوس اللي اتردّت للعميل)`] : []),
+      '',
+      'الفاتورة هترجع لحالتها قبل الإرجاع بالظبط.',
+    ].join('\n');
+    if (!confirm(message)) return;
+    const ok = await undoReturn(order.id);
+    if (ok) alert('تم إلغاء المرتجع ورجعت الفاتورة لحالتها الأصلية.');
+  };
 
   const handleDeleteOrder = async (order: any) => {
     const message = [
@@ -932,6 +950,16 @@ export default function Invoices() {
                               title="تعديل الفاتورة"
                             >
                               <Edit2 size={18} />
+                            </button>
+                          )}
+                          {/* بيظهر بس لو على الفاتورة مرتجع فعلاً */}
+                          {!order.is_deleted && (order.items || []).some((it: any) => (Number(it.returned_quantity) || 0) > 0) && (
+                            <button
+                              onClick={() => handleUndoReturn(order)}
+                              className="p-2 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-all shadow-sm border border-amber-100"
+                              title="إلغاء المرتجع (يرجّع الفاتورة لحالتها قبل الإرجاع)"
+                            >
+                              <Undo2 size={18} />
                             </button>
                           )}
                           {!order.is_deleted && (
