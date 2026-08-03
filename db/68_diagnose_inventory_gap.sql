@@ -23,7 +23,7 @@ purchases as (
 ),
 cogs as (
   select coalesce(sum((coalesce(oi.quantity,0) - coalesce(oi.returned_quantity,0))
-       * coalesce(oi.average_purchase_price, oi.purchase_price, 0)), 0) as v
+       * coalesce(oi.purchase_price, 0)), 0) as v
   from order_items oi
   join orders o on o.id = oi.order_id
   where coalesce(o.is_deleted, false) = false
