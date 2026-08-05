@@ -1541,17 +1541,17 @@ export default function POS() {
       ? maxDebtDeduction
       : Math.max(0, Math.min(returnDebtDeduction, maxDebtDeduction));
     const cashToRefund = Math.max(0, totalReturnValue - debtSettled);
-    const cashRatio = totalReturnValue > 0 ? cashToRefund / totalReturnValue : 0;
+
+    const fee = Math.min(Math.max(0, parseFloat(refundFeeStr) || 0), cashToRefund);
+    const netToCustomer = Math.max(0, cashToRefund - fee);
+    const netCashRatio = totalReturnValue > 0 ? netToCustomer / totalReturnValue : 0;
 
     const returnsArray = selected.map(r => ({
       productId: r.productId,
       returnQty: r.returnQty,
-      refundAmount: r.itemValue * cashRatio,
+      refundAmount: r.itemValue * netCashRatio,
     }));
 
-    // الخصم بيقلّل اللي بيخرج للعميل بس؛ قيمة المرتجع على الفاتورة بتفضل كاملة.
-    const fee = Math.min(Math.max(0, parseFloat(refundFeeStr) || 0), cashToRefund);
-    const netToCustomer = Math.max(0, cashToRefund - fee);
     // التقسيمة لازم تساوي المبلغ المردود بالظبط، وإلا الخزنة هتختلف عن الفاتورة.
     if (netToCustomer > 0 && refundSplitMode && Math.abs(refundSplitTotal - netToCustomer) >= 0.01) {
       alert(`مجموع التقسيمة (${refundSplitTotal.toFixed(2)}) مش مساوي المبلغ المردود (${netToCustomer.toFixed(2)}). ظبّط الأرقام الأول.`);
@@ -1560,10 +1560,7 @@ export default function POS() {
     // تقسيمة اللي العميل بياخده فعلاً (للعرض والتحقق).
     const netSplit = buildRefundSplit(netToCustomer);
     const primary = netToCustomer > 0 ? primaryRefundMethod(netSplit) : refundMethod;
-    // التقسيمة المتخزّنة لازم تغطّي **قيمة المرتجع كاملة** (الفاتورة بتتعكس بالكامل)،
-    // والخصم بيترجع للدرج كإيراد. لو خزّنّا الصافي بس، الخصم يتحسب مرتين.
     const refundSplit: Record<string, number> = { ...netSplit };
-    if (fee > 0) refundSplit[primary] = (refundSplit[primary] || 0) + fee;
     const splitLines = netToCustomer > 0
       ? Object.entries(netSplit).filter(([, v]) => v > 0).map(([k, v]) => `  • ${payLabel(k)}: ${v.toFixed(2)}`).join('\n')
       : '';
@@ -1572,15 +1569,15 @@ export default function POS() {
       `تأكيد المرتجعات المحددة؟\n` +
       `تاريخ المرتجع: ${refundDate}\n` +
       `قيمة المرتجع: ${totalReturnValue.toFixed(2)} ${storeSettings.currency}\n` +
-      `يُخصم من المديونية: ${debtSettled.toFixed(2)} ${storeSettings.currency}\n` +
-      (fee > 0 ? `خصم من المرتجع (يفضل في الدرج): ${fee.toFixed(2)} ${storeSettings.currency}\n` : '') +
-      `يُرد للعميل: ${netToCustomer.toFixed(2)} ${storeSettings.currency}` +
+      (debtSettled > 0 ? `يُخصم من المديونية: ${debtSettled.toFixed(2)} ${storeSettings.currency}\n` : '') +
+      (fee > 0 ? `خصم من المرتجع: ${fee.toFixed(2)} ${storeSettings.currency}\n` : '') +
+      `يُرد للعميل (يخرج من الخزنة): ${netToCustomer.toFixed(2)} ${storeSettings.currency}` +
       (splitLines ? `\n${splitLines}` : '')
     )) return;
 
     const success = await processReturn(
       activeReturnOrder.id, returnsArray, primary, refundSplit,
-      { refundDate, deduction: fee },
+      { refundDate },
     );
     if (success) {
       alert('تم إرجاع المنتجات المحددة بنجاح!');
@@ -2191,13 +2188,17 @@ export default function POS() {
       ? maxDebtDeduction
       : Math.max(0, Math.min(returnDebtDeduction, maxDebtDeduction));
     const cashToRefund = Math.max(0, totalReturnValue - debtSettled);
-    const cashRatio = totalReturnValue > 0 ? cashToRefund / totalReturnValue : 0;
+    const fee = Math.min(Math.max(0, parseFloat(refundFeeStr) || 0), cashToRefund);
+    const netToCustomer = Math.max(0, cashToRefund - fee);
+    const netCashRatio = totalReturnValue > 0 ? netToCustomer / totalReturnValue : 0;
 
     if (!confirm(
       `استرجاع الفاتورة بالكامل؟\n` +
+      `تاريخ المرتجع: ${refundDate}\n` +
       `قيمة المرتجع: ${totalReturnValue.toFixed(2)} ${storeSettings.currency}\n` +
-      `يُخصم من المديونية: ${debtSettled.toFixed(2)} ${storeSettings.currency}\n` +
-      `يُرد كاش للعميل: ${cashToRefund.toFixed(2)} ${storeSettings.currency}`
+      (debtSettled > 0 ? `يُخصم من المديونية: ${debtSettled.toFixed(2)} ${storeSettings.currency}\n` : '') +
+      (fee > 0 ? `خصم من المرتجع: ${fee.toFixed(2)} ${storeSettings.currency}\n` : '') +
+      `يُرد للعميل (يخرج من الخزنة): ${netToCustomer.toFixed(2)} ${storeSettings.currency}`
     )) return;
 
     const returnsArray = activeReturnOrder.items.map((item: any) => {
@@ -2206,28 +2207,21 @@ export default function POS() {
       return {
         productId: item.id,
         returnQty: available,
-        // Distribute the cash refund across items proportionally; the rest of
-        // each item's value is implicitly settled against the customer's debt.
-        refundAmount: itemValue * cashRatio
+        refundAmount: itemValue * netCashRatio
       };
     }).filter((r: any) => r.returnQty > 0);
 
     if (returnsArray.length > 0) {
-      // الخصم بيقلّل اللي بيخرج للعميل بس؛ قيمة المرتجع على الفاتورة بتفضل كاملة.
-      const fee = Math.min(Math.max(0, parseFloat(refundFeeStr) || 0), cashToRefund);
-      const netToCustomer = Math.max(0, cashToRefund - fee);
       if (netToCustomer > 0 && refundSplitMode && Math.abs(refundSplitTotal - netToCustomer) >= 0.01) {
         alert(`مجموع التقسيمة (${refundSplitTotal.toFixed(2)}) مش مساوي المبلغ المردود (${netToCustomer.toFixed(2)}). ظبّط الأرقام الأول.`);
         return;
       }
       const netSplit = buildRefundSplit(netToCustomer);
       const primary = netToCustomer > 0 ? primaryRefundMethod(netSplit) : refundMethod;
-      // نفس المنطق: المتخزّن يغطّي المرتجع كامل، والخصم يرجع كإيراد.
       const refundSplit: Record<string, number> = { ...netSplit };
-      if (fee > 0) refundSplit[primary] = (refundSplit[primary] || 0) + fee;
       await processReturn(
         activeReturnOrder.id, returnsArray, primary, refundSplit,
-        { refundDate, deduction: fee },
+        { refundDate },
       );
       alert('تم استرجاع الفاتورة بالكامل بنجاح');
       const updatedOrder = useStore.getState().orders.find(o => o.id === activeReturnOrder.id);
@@ -3414,7 +3408,7 @@ export default function POS() {
                             onChange={(e) => setRefundFeeStr(e.target.value)}
                             className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-sm font-bold text-center focus:ring-2 focus:ring-indigo-400 outline-none"
                           />
-                          <p className="text-[10px] font-bold text-slate-400 mt-1">بيقلّل اللي العميل هياخده ويفضل في الدرج كإيراد</p>
+                          <p className="text-[10px] font-bold text-slate-400 mt-1">يُخصم من قيمة المرتجع ويخرج من الخزنة الصافي فقط</p>
                         </div>
                       </div>
                     )}

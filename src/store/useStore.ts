@@ -3223,29 +3223,10 @@ export const useStore = create<CashierStore>((set, get) => ({
         console.warn('Could not store refunded_at (column may be missing — run db/36):', refundedAtError.message);
       }
 
-      // ── خصم من المرتجع (رسوم/تلف يفضل في الدرج) ─────────────────────────
-      // الفاتورة بتتعكس بقيمة المرتجع **كاملة** (البضاعة رجعت والبيع اتلغى)،
-      // والمبلغ المخصوم بيتسجّل **إيراد مستقل**. ليه مش بس نقلّل المرتجع؟
-      // لأن الصنف راجع بالكامل، فالمستحق على الفاتورة بيبقى صفر — ولو سيبنا
-      // المخصوم ضمن «المدفوع» كان هيبان كأنه رصيد للعميل عندنا، وده غلط.
-      // بالشكل ده: المخزون رجع، البيع اتعكس، والفرق ظاهر كإيراد باسمه.
-      const deduction = Math.max(0, Number(opts?.deduction) || 0);
-      if (deduction > 0.004) {
-        const dedSplit: Record<string, number> = {};
-        ALL_PAYMENT_KEYS.forEach((k) => { dedSplit[k] = 0; });
-        // بيتسجّل على نفس وسيلة الاسترداد الأساسية — الفلوس اللي ما خرجتش.
-        dedSplit[refundMethod] = deduction;
-        await get().addExpense({
-          category: 'خصم مرتجع',
-          amount: -deduction, // سالب = إيراد داخل للخزنة
-          paid_cash: dedSplit.cash, paid_visa: dedSplit.visa,
-          paid_wallet: dedSplit.wallet, paid_instapay: dedSplit.instapay,
-          paid_method5: dedSplit.method5, paid_method6: dedSplit.method6,
-          payment_method: refundMethod as any,
-          note: opts?.deductionNote?.trim() || `خصم من مرتجع فاتورة #${orderId}`,
-          created_at: refundedAt,
-        } as any);
-      }
+      // ── خصم من المرتجع ──────────────────────────────────────────
+      // تم إلغاء تسجيل خصم المرتجع كإيراد مستقل؛
+      // الخصم أصبح يقلل المبلغ المردود للعميل مباشرة في returnsArray دون تسجيل إيراد منفصل.
+
 
       const updatedOrders = state.orders.map((o, idx) =>
         idx === orderIndex
