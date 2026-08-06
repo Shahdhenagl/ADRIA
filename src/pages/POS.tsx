@@ -3317,27 +3317,27 @@ export default function POS() {
       )}
 
       {showReturnsModal && (
-        <div className="fixed inset-0 z-[150] bg-black/50 backdrop-blur-sm flex items-start md:items-center justify-center p-4 pt-8 md:pt-4 pb-20 md:pb-4">
-          <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col border border-gray-200 dark:border-slate-700">
-            <div className="p-6 bg-gradient-to-r from-red-500 to-orange-500 text-white flex justify-between items-center">
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                <ArrowRightLeft size={24} /> نظام المرتجعات
+        <div className="fixed inset-0 z-[150] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-t-3xl sm:rounded-3xl shadow-2xl w-full max-w-2xl max-h-[92vh] sm:max-h-[85vh] overflow-y-auto sm:overflow-hidden flex flex-col border border-gray-200 dark:border-slate-700">
+            <div className="p-4 sm:p-6 bg-gradient-to-r from-red-500 to-orange-500 text-white flex justify-between items-center sticky top-0 z-10">
+              <h2 className="text-lg sm:text-xl font-bold flex items-center gap-2">
+                <ArrowRightLeft size={22} /> نظام المرتجعات
               </h2>
               <button onClick={() => setShowReturnsModal(false)} className="hover:bg-white/20 p-2 rounded-full transition">
-                <X size={24} />
+                <X size={22} />
               </button>
             </div>
-            <div className="p-6 flex-1 flex flex-col gap-4">
-              <div className="flex gap-2">
+            <div className="p-4 sm:p-6 flex-1 flex flex-col gap-4 overflow-y-auto">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <input
                   type="text"
                   placeholder="أدخل رقم الفاتورة للبحث..."
-                  className="flex-1 bg-gray-100 dark:bg-slate-700 dark:text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500 font-mono text-left"
+                  className="w-full sm:flex-1 bg-gray-100 dark:bg-slate-700 dark:text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-red-500 font-mono text-left text-base sm:text-sm min-h-[44px]"
                   dir="ltr"
                   value={returnSearchQuery}
                   onChange={(e) => setReturnSearchQuery(e.target.value)}
                 />
-                <button onClick={handleSearchOrder} className="bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-bold transition shadow-lg shrink-0">بحث برقم الفاتورة</button>
+                <button onClick={handleSearchOrder} className="w-full sm:w-auto bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-bold transition shadow-lg shrink-0 min-h-[44px]">بحث برقم الفاتورة</button>
               </div>
 
               {activeReturnOrder && (() => {
@@ -3368,34 +3368,34 @@ export default function POS() {
                 return (
                   <>
                     {/* Financial Summary Card */}
-                    <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-3 sm:p-4 border border-slate-200 dark:border-slate-700 grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4 mb-3 sm:mb-4">
                       <div className="flex flex-col">
                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">العميل</span>
-                        <span className="text-sm font-black text-slate-800 dark:text-slate-200">{activeReturnOrder.customer?.name || 'عميل نقدي'}</span>
+                        <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200 truncate">{activeReturnOrder.customer?.name || 'عميل نقدي'}</span>
                       </div>
                       <div className="flex flex-col">
                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">إجمالي الفاتورة (بعد الخصم)</span>
-                        <span className="text-sm font-black text-slate-800 dark:text-slate-200">{activeReturnOrder.total.toFixed(2)} {storeSettings.currency}</span>
+                        <span className="text-xs sm:text-sm font-black text-slate-800 dark:text-slate-200">{activeReturnOrder.total.toFixed(2)} {storeSettings.currency}</span>
                       </div>
                       <div className="flex flex-col">
                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">المبلغ المدفوع</span>
-                        <span className="text-sm font-black text-green-600 dark:text-green-400">{activeReturnOrder.paid_amount.toFixed(2)} {storeSettings.currency}</span>
+                        <span className="text-xs sm:text-sm font-black text-green-600 dark:text-green-400">{activeReturnOrder.paid_amount.toFixed(2)} {storeSettings.currency}</span>
                       </div>
                       <div className="flex flex-col">
                         <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">نسبة خصم الفاتورة</span>
-                        <span className="text-sm font-black text-indigo-600 dark:text-indigo-400">{((1 - discountRatio) * 100).toFixed(1)}%</span>
+                        <span className="text-xs sm:text-sm font-black text-indigo-600 dark:text-indigo-400">{((1 - discountRatio) * 100).toFixed(1)}%</span>
                       </div>
                     </div>
 
                     {/* تاريخ المرتجع + الخصم — قبل بطاقات الأرقام عشان يبانوا */}
                     {selectedReturnValue > 0 && (
-                      <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                         <div className="bg-slate-50 dark:bg-slate-900/50 rounded-xl p-3 border border-slate-200 dark:border-slate-700">
                           <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">تاريخ المرتجع</label>
                           <input
                             type="date" value={refundDate}
                             onChange={(e) => setRefundDate(e.target.value)}
-                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-sm font-bold focus:ring-2 focus:ring-indigo-400 outline-none"
+                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-2 text-base sm:text-sm font-bold focus:ring-2 focus:ring-indigo-400 outline-none min-h-[44px]"
                           />
                           {refundDate !== businessDateStr(storeSettings) && (
                             <p className="text-[10px] font-bold text-amber-600 mt-1">هيتسجّل على تقفيل يوم {refundDate}</p>
@@ -3406,7 +3406,7 @@ export default function POS() {
                           <input
                             type="number" dir="ltr" placeholder="0.00" value={refundFeeStr}
                             onChange={(e) => setRefundFeeStr(e.target.value)}
-                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1.5 text-sm font-bold text-center focus:ring-2 focus:ring-indigo-400 outline-none"
+                            className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-2 text-base sm:text-sm font-bold text-center focus:ring-2 focus:ring-indigo-400 outline-none min-h-[44px]"
                           />
                           <p className="text-[10px] font-bold text-slate-400 mt-1">يُخصم من قيمة المرتجع ويخرج من الخزنة الصافي فقط</p>
                         </div>
@@ -3415,7 +3415,7 @@ export default function POS() {
 
                     {/* Return split: debt settlement vs cash to customer */}
                     {selectedReturnValue > 0 && (
-                      <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                         <div className="bg-slate-100 dark:bg-slate-800 rounded-xl p-3 text-center border border-slate-200 dark:border-slate-700">
                           <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">قيمة المرتجع</div>
                           <div className="text-lg font-black text-slate-800 dark:text-slate-200">{selectedReturnValue.toFixed(2)}</div>
@@ -3434,11 +3434,11 @@ export default function POS() {
                                   const v = parseFloat(e.target.value);
                                   setReturnDebtDeduction(isNaN(v) ? 0 : Math.max(0, Math.min(v, maxDebtDeduction)));
                                 }}
-                                className="w-full mt-1 bg-white dark:bg-slate-700 border border-amber-300 dark:border-amber-700 rounded-lg px-2 py-1 text-center text-lg font-black text-amber-700 dark:text-amber-400 focus:ring-2 focus:ring-amber-400 outline-none"
+                                className="w-full mt-1 bg-white dark:bg-slate-700 border border-amber-300 dark:border-amber-700 rounded-lg px-2 py-1 text-center text-lg font-black text-amber-700 dark:text-amber-400 focus:ring-2 focus:ring-amber-400 outline-none min-h-[44px]"
                               />
-                              <div className="flex gap-1 mt-1 justify-center">
-                                <button type="button" onClick={() => setReturnDebtDeduction(0)} className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200">بدون خصم</button>
-                                <button type="button" onClick={() => setReturnDebtDeduction(null)} className="text-[9px] font-bold px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200">تلقائي</button>
+                              <div className="flex gap-1 mt-1.5 justify-center">
+                                <button type="button" onClick={() => setReturnDebtDeduction(0)} className="text-[10px] font-bold px-2.5 py-1 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 min-h-[32px]">بدون خصم</button>
+                                <button type="button" onClick={() => setReturnDebtDeduction(null)} className="text-[10px] font-bold px-2.5 py-1 rounded bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300 hover:bg-amber-200 min-h-[32px]">تلقائي</button>
                               </div>
                             </>
                           ) : (
@@ -3449,7 +3449,7 @@ export default function POS() {
                           <div className="text-[10px] font-bold uppercase tracking-wider opacity-90">تدّي العميل</div>
                           <div className="text-lg font-black">{cashToCustomer.toFixed(2)}</div>
                           {cashToCustomer > 0 && !refundSplitMode && (
-                            <div className="flex flex-wrap gap-1 mt-2 justify-center">
+                            <div className="flex flex-wrap gap-1.5 mt-2 justify-center">
                               {/* الوسائل المفعّلة من الإعدادات — مش قايمة ثابتة، عشان
                                   الطريقتين الإضافيتين (5/6) يظهروا هنا كمان. */}
                               {activePayKeys.map((m) => (
@@ -3457,7 +3457,7 @@ export default function POS() {
                                   key={m}
                                   type="button"
                                   onClick={() => setRefundMethod(m as any)}
-                                  className={`text-[9px] font-bold px-2 py-0.5 rounded transition ${refundMethod === m ? 'bg-white text-emerald-700' : 'bg-emerald-600/60 text-white hover:bg-emerald-600'}`}
+                                  className={`text-xs sm:text-[9px] font-bold px-2.5 py-1 rounded transition min-h-[32px] ${refundMethod === m ? 'bg-white text-emerald-700' : 'bg-emerald-600/60 text-white hover:bg-emerald-600'}`}
                                 >
                                   {payLabel(m)}
                                 </button>
@@ -3474,7 +3474,7 @@ export default function POS() {
                                 // المختارة — الكاشير بيعدّل منها بدل ما يكتب من الأول.
                                 setRefundSplitInput(next ? { [refundMethod]: cashToCustomer.toFixed(2) } : {});
                               }}
-                              className="mt-2 text-[9px] font-black px-2 py-0.5 rounded bg-emerald-700/70 hover:bg-emerald-700 text-white transition"
+                              className="mt-2 text-xs sm:text-[9px] font-black px-2.5 py-1 rounded bg-emerald-700/70 hover:bg-emerald-700 text-white transition min-h-[32px]"
                             >
                               {refundSplitMode ? '↩ وسيلة واحدة' : '⇄ تقسيم على أكتر من وسيلة'}
                             </button>
@@ -3483,7 +3483,7 @@ export default function POS() {
 
                         {/* خانات التقسيم — بتاخد عرض الصف كله عشان الأرقام تبان */}
                         {refundSplitMode && cashToCustomer > 0 && (
-                          <div className="col-span-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3">
+                          <div className="col-span-1 sm:col-span-3 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl p-3">
                             <div className="flex items-center justify-between mb-2">
                               <span className="text-[11px] font-black text-emerald-700 dark:text-emerald-400">وزّع {cashToCustomer.toFixed(2)} {storeSettings.currency} على الوسائل</span>
                               <span className={`text-[11px] font-black ${Math.abs(refundSplitTotal - cashToCustomer) < 0.01 ? 'text-emerald-600' : 'text-red-500'}`}>
@@ -3499,7 +3499,7 @@ export default function POS() {
                                     type="number" dir="ltr" placeholder="0.00"
                                     value={refundSplitInput[k] ?? ''}
                                     onChange={(e) => setRefundSplitInput((s) => ({ ...s, [k]: e.target.value }))}
-                                    className="w-full bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-700 rounded-lg px-2 py-1.5 text-sm font-bold text-center focus:ring-2 focus:ring-emerald-400 outline-none"
+                                    className="w-full bg-white dark:bg-slate-800 border border-emerald-200 dark:border-emerald-700 rounded-lg px-2 py-1.5 text-base sm:text-sm font-bold text-center focus:ring-2 focus:ring-emerald-400 outline-none min-h-[44px]"
                                   />
                                 </div>
                               ))}
@@ -3510,22 +3510,22 @@ export default function POS() {
                     )}
 
                     <div className="flex-1 border border-gray-200 dark:border-slate-700 flex flex-col rounded-xl overflow-hidden">
-                      <div className="bg-gray-100 dark:bg-slate-700 p-4 flex justify-between items-center border-b border-gray-200 dark:border-slate-600">
+                      <div className="bg-gray-100 dark:bg-slate-700 p-3 sm:p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-200 dark:border-slate-600 gap-3">
                         <div className="flex flex-col">
-                          <span className="font-bold text-gray-700 dark:text-gray-200 font-mono tracking-wider">الأصناف المتاحة للإرجاع</span>
+                          <span className="font-bold text-gray-700 dark:text-gray-200 font-mono tracking-wider whitespace-nowrap break-keep">الأصناف المتاحة للإرجاع</span>
                           <span className="text-[10px] text-slate-500 font-bold">رقم الفاتورة: #{activeReturnOrder.id} | المرتجع مسبقاً: {pastRefunds.toFixed(2)} {storeSettings.currency}</span>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 w-full sm:w-auto">
                           <button
                             onClick={handleReturnAll}
-                            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg transition-all"
+                            className="flex-1 sm:flex-initial bg-red-600 hover:bg-red-700 text-white px-3 sm:px-4 py-2.5 rounded-xl text-xs font-black shadow-lg transition-all min-h-[40px]"
                           >
                             إرجاع الفاتورة بالكامل
                           </button>
                           <button
                             onClick={handleConfirmReturns}
                             disabled={Object.values(pendingReturns).filter(pr => pr.returnQty > 0).length === 0}
-                            className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg transition-all"
+                            className="flex-1 sm:flex-initial bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 sm:px-4 py-2.5 rounded-xl text-xs font-black shadow-lg transition-all min-h-[40px]"
                           >
                             تأكيد المرتجعات المحددة
                           </button>
