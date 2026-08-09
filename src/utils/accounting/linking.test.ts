@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { findLinkedSalaryExpense, findLinkedEmployeeTx } from '../salaryLink';
-import { refundPartsOf, refundShareOfMethod, applySplit } from '../treasury';
+import { refundPartsOf, refundShareOfMethod, refundRecordOf, applySplit } from '../treasury';
 
 /**
  * ── تستات الربط بين الطرفين ──────────────────────────────────────────────────
@@ -111,6 +111,20 @@ describe('تقسيمة المرتجع (db/67)', () => {
       payment_method: 'cash',
     };
     expect(refundPartsOf(order, 100)).toEqual([['wallet', 100]]);
+  });
+
+  it('مرتجع فاتورة اتسجل كاش ثم اتعدل لمحفظة يخرج من المحفظة لا الكاش', () => {
+    const order = {
+      refund_method: 'wallet',
+      refunded_cash: 580,
+      refunded_wallet: 0,
+      payment_method: 'cash',
+    };
+    expect(refundRecordOf(order, 580)).toMatchObject({
+      payment_method: 'wallet',
+      paid_cash: 0,
+      paid_wallet: 580,
+    });
   });
 
   it('من غير أي تقسيمة بيقع على payment_method', () => {

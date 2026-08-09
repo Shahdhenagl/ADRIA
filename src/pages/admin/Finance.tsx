@@ -12,7 +12,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers, refundShareOfMethod } from '../../utils/treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers, refundRecordOf, refundShareOfMethod } from '../../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
@@ -343,19 +343,19 @@ export default function Finance() {
     periodTransactions.refundOrders.forEach(o => {
       const returnedVal = calculateCashRefunded(o);
       if (returnedVal <= 0) return;
-      const primaryMethod = o.refund_method || getPrimaryMethod(o);
+      const refundRec = refundRecordOf(o, returnedVal);
+      const primaryMethod = refundRec.payment_method || getPrimaryMethod(o);
+      const split: Record<string, number> = {};
+      activePaymentKeys(storeSettings as any).forEach((k) => {
+        split[k] = Number(refundRec[`paid_${k}`]) || 0;
+      });
       const rDate = refundDateOf(o);
       list.push({
         id: `${o.id}-return`,
         type: 'مرتجع مبيعات',
         amount: returnedVal,
         method: primaryMethod,
-        split: {
-          cash: primaryMethod === 'cash' ? returnedVal : 0,
-          visa: primaryMethod === 'visa' ? returnedVal : 0,
-          wallet: primaryMethod === 'wallet' ? returnedVal : 0,
-          instapay: primaryMethod === 'instapay' ? returnedVal : 0
-        },
+        split,
         note: `مرتجع من فاتورة #${o.id}`,
         isOut: true,
         time: new Date(rDate).toLocaleString('ar-EG', { calendar: 'gregory' }),
@@ -461,7 +461,7 @@ export default function Finance() {
   // تقسيمة (method5/6 أو صف قديم) نرجع لوسيلة الدفع الأساسية.
   const txMatchesMethod = (t: any, mk: string) => {
     const s = t.split || {};
-    const hasSplit = ['cash', 'visa', 'wallet', 'instapay'].some((k) => (s[k] || 0) !== 0);
+    const hasSplit = activePaymentKeys(storeSettings as any).some((k) => (s[k] || 0) !== 0);
     if (hasSplit) return (s[mk] || 0) !== 0;
     return t.method === mk;
   };
