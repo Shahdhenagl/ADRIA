@@ -44,8 +44,10 @@ async function provisionCashierAuth(id: string, password: string, table?: string
 // ─── Types ───────────────────────────────────────────────────
 export interface Product {
   id: string;
+  product_id?: string; // used in joined/order-item payloads from the DB
   name: string;
   barcode: string;
+  code?: string; // alternate product code used in reports and imports
   purchase_price: number;
   average_purchase_price: number;
   sale_price: number;

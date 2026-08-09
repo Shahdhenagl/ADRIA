@@ -29,7 +29,11 @@ cogs as (
   where coalesce(o.is_deleted, false) = false
 ),
 intakes as (
-  select coalesce(sum(coalesce(total_value, 0)), 0) as v from stock_intakes
+  -- Stocktake surplus is already represented in stock_adjustments; counting it
+  -- here as an intake too would explain the same quantity twice.
+  select coalesce(sum(coalesce(total_value, 0)), 0) as v
+  from stock_intakes
+  where coalesce(source, '') <> 'stocktake'
 ),
 devo as (
   select coalesce(sum(coalesce(quantity,0) * coalesce(unit_cost,0)), 0) as v from devo_items

@@ -17,7 +17,14 @@
 create or replace view v_stock_gap as
 with
 purchased as (select product_id, sum(coalesce(quantity,0)) q from purchase_items group by 1),
-intaken   as (select product_id, sum(coalesce(quantity,0)) q from stock_intakes  group by 1),
+-- Stocktake surplus is already represented in stock_adjustments; counting it
+-- here as an intake too would explain the same quantity twice.
+intaken   as (
+  select product_id, sum(coalesce(quantity,0)) q
+  from stock_intakes
+  where coalesce(source, '') <> 'stocktake'
+  group by 1
+),
 produced  as (select product_id, sum(coalesce(quantity,0)) q from production_orders group by 1),
 sold      as (select oi.product_id, sum(coalesce(oi.quantity,0) - coalesce(oi.returned_quantity,0)) q
               from order_items oi join orders o on o.id = oi.order_id

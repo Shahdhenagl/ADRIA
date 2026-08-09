@@ -16,7 +16,12 @@ purchased as (
   from purchase_items pi_item group by 1
 ),
 intaken as (
-  select product_id, sum(coalesce(quantity,0)) as q from stock_intakes group by 1
+  -- Stocktake surplus is already represented in stock_adjustments; counting it
+  -- here as an intake too would explain the same quantity twice.
+  select product_id, sum(coalesce(quantity,0)) as q
+  from stock_intakes
+  where coalesce(source, '') <> 'stocktake'
+  group by 1
 ),
 produced as (
   select product_id, sum(coalesce(quantity,0)) as q from production_orders group by 1

@@ -61,6 +61,19 @@ export function applyInternalTransferNet(net: Bucket, rec: any): void {
  */
 export function refundRecordOf(order: any, refundedTotal: number): any {
   const keys = ALL_PAYMENT_KEYS as readonly string[];
+  const refundSplits = keys.map((k) => [k, Number(order?.['refunded_' + k]) || 0] as const);
+  const positiveRefundSplits = refundSplits.filter(([, amount]) => amount > 0.001);
+  const refundSplitTotal = positiveRefundSplits.reduce((sum, [, amount]) => sum + amount, 0);
+
+  if (positiveRefundSplits.length > 1 || (
+    positiveRefundSplits.length === 1
+    && Math.abs(refundSplitTotal - refundedTotal) < 0.01
+    && positiveRefundSplits[0][0] === order?.refund_method
+  )) {
+    const rec: any = { paid_amount: refundedTotal, payment_method: primaryMethod(splitFromRow(order) as any) };
+    ALL_PAYMENT_KEYS.forEach((k) => { rec['paid_' + k] = Number(order?.['refunded_' + k]) || 0; });
+    return rec;
+  }
   // ترتيب الرجوع للفواتير القديمة (من غير تقسيمة مرتجع):
   //   1) refund_method لو متسجّل وصالح — هو الموثوقية الأعلى، خصوصاً بعد تعديل
   //      طريقة المرتجع يدويّاً من كاش لوسيلة أخرى. في هذه الحالة لا نسمح بقيم

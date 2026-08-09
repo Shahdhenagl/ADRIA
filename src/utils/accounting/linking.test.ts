@@ -91,6 +91,16 @@ describe('تقسيمة المرتجع (db/67)', () => {
     expect(refundPartsOf(order, 100)).toEqual([['wallet', 100]]);
   });
 
+  it('بيحافظ على تقسيمة المرتجع الفعلية حتى لو refund_method فيه الوسيلة الأساسية', () => {
+    const order = {
+      refund_method: 'cash',
+      refunded_cash: 60,
+      refunded_wallet: 40,
+      payment_method: 'cash',
+    };
+    expect(refundPartsOf(order, 100)).toEqual(expect.arrayContaining([['cash', 60], ['wallet', 40]]));
+  });
+
   it('لو تم تغيير refund_method بعد تسجيل مرتجع كاش، يفضّل الوسيلة الجديدة على القيم القديمة', () => {
     const order = {
       refund_method: 'wallet',
