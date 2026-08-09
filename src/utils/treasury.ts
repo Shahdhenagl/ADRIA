@@ -62,7 +62,9 @@ export function applyInternalTransferNet(net: Bucket, rec: any): void {
 export function refundRecordOf(order: any, refundedTotal: number): any {
   const keys = ALL_PAYMENT_KEYS as readonly string[];
   // ترتيب الرجوع للفواتير القديمة (من غير تقسيمة مرتجع):
-  //   1) refund_method لو متسجّل وصالح.
+  //   1) refund_method لو متسجّل وصالح — هو الموثوقية الأعلى، خصوصاً بعد تعديل
+  //      طريقة المرتجع يدويّاً من كاش لوسيلة أخرى. في هذه الحالة لا نسمح بقيم
+  //      refunded_* القديمة أن تعود وتدفعنا لوسيلة سابقة.
   //   2) أكبر وسيلة في **تقسيمة دفع الفاتورة نفسها** — الفلوس بترجع زي ما جت.
   //      (مهم: فاتورة اتدفعت 300 كاش + 700 فيزا، payment_method = 'cash'؛
   //       الاعتماد على payment_method كان بينقل المرتجع للوسيلة الغلط.)
@@ -70,11 +72,18 @@ export function refundRecordOf(order: any, refundedTotal: number): any {
   let fallback: string;
   if (order?.refund_method && keys.includes(order.refund_method)) {
     fallback = order.refund_method;
-  } else if (keys.some((k) => (Number(order?.['paid_' + k]) || 0) !== 0)) {
+    const rec: any = { paid_amount: refundedTotal, payment_method: fallback };
+    ALL_PAYMENT_KEYS.forEach((k) => { rec['paid_' + k] = 0; });
+    rec['paid_' + fallback] = refundedTotal;
+    return rec;
+  }
+
+  if (keys.some((k) => (Number(order?.['paid_' + k]) || 0) !== 0)) {
     fallback = primaryMethod(splitFromRow(order) as any);
   } else {
     fallback = keys.includes(order?.payment_method) ? order.payment_method : 'cash';
   }
+
   const rec: any = { paid_amount: refundedTotal, payment_method: fallback };
   ALL_PAYMENT_KEYS.forEach((k) => { rec['paid_' + k] = Number(order?.['refunded_' + k]) || 0; });
   return rec;

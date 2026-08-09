@@ -91,6 +91,18 @@ describe('تقسيمة المرتجع (db/67)', () => {
     expect(refundPartsOf(order, 100)).toEqual([['wallet', 100]]);
   });
 
+  it('لو تم تغيير refund_method بعد تسجيل مرتجع كاش، يفضّل الوسيلة الجديدة على القيم القديمة', () => {
+    const order = {
+      refund_method: 'wallet',
+      refunded_cash: 100,
+      refunded_visa: 0,
+      refunded_wallet: 0,
+      refunded_instapay: 0,
+      payment_method: 'cash',
+    };
+    expect(refundPartsOf(order, 100)).toEqual([['wallet', 100]]);
+  });
+
   it('من غير أي تقسيمة بيقع على payment_method', () => {
     expect(refundPartsOf({ payment_method: 'instapay' }, 50)).toEqual([['instapay', 50]]);
   });
