@@ -4865,17 +4865,8 @@ setupRealtime: () => {
   },
 
   logStockIntake: async (rows) => {
-    const payload = rows
-      .map((r) => ({
-        product_id: r.product_id,
-        product_name: r.product_name || '',
-        quantity: Number(r.quantity) || 0,
-        unit_cost: Number(r.unit_cost) || 0,
-        source: r.source,
-        note: r.note || null,
-      }))
-      .filter((r) => r.quantity > 0)
-      .map((r) => ({ ...r, total_value: r.quantity * r.unit_cost }));
+    const { prepareStockIntakePayload } = await import('../utils/stockIntake');
+    const payload = prepareStockIntakePayload(rows);
     if (!payload.length) return;
     const { data, error } = await supabase.from('stock_intakes').insert(payload).select();
     if (error) { console.error('logStockIntake error:', error); return; }

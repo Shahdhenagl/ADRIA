@@ -7,16 +7,19 @@ import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } 
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundRecordOf } from '../../utils/treasury';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
+import { intakeSourceLabel } from '../../utils/stockIntake';
 
 export default function Reports() {
-  const { storeSettings } = useStore();
+  const { storeSettings, products = [], suppliers = [], stockIntakes = [] } = useStore();
   const cur = storeSettings.currency;
   // الوسائل المعروضة = الأربع الأساسية + أي طريقة إضافية (5/6) مفعّلة في الإعدادات
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => [k, payLabelOf(storeSettings as any, k)] as const);
   const currentBusinessDay = () => businessDateStr(storeSettings as any);
   const [from, setFrom] = useState(currentBusinessDay());
   const [to, setTo] = useState(currentBusinessDay());
-  const [tab, setTab] = useState<'sales' | 'methods' | 'treasury'>('sales');
+  const [tab, setTab] = useState<'sales' | 'product-analysis' | 'methods' | 'treasury'>('sales');
+  const [productMode, setProductMode] = useState<'sales' | 'purchases' | 'inventory' | 'stock-intakes'>('sales');
+  const [selectedProductId, setSelectedProductId] = useState<string>('all');
   const [extra, setExtra] = useState<{ expenses: any[]; purchases: any[]; salaries: any[] }>({ expenses: [], purchases: [], salaries: [] });
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -133,6 +136,109 @@ export default function Reports() {
 
   const fmt = (n: number) => `${(n || 0).toFixed(2)} ${cur}`;
 
+  const productSalesRows = useMemo(() => {
+    const rows: any[] = [];
+    orders.filter((o: any) => !o.is_deleted && o.type === 'sale' && inRange(o.date)).forEach((o: any) => {
+      const orderTotal = Number(o.total || 0);
+      const discountAmount = Number(o.discount_amount || 0);
+      (o.items || []).forEach((it: any) => {
+        const qty = Math.max(0, Number(it.quantity || 0) - Number(it.returned_quantity || 0));
+        if (qty <= 0) return;
+        const product = products.find((p: any) => p.id === it.product_id) || (it as any).products || {};
+        const lineValue = qty * Number(it.sale_price || 0);
+        const rowDiscount = orderTotal > 0 ? discountAmount * (lineValue / orderTotal) : 0;
+        const rowNet = lineValue - rowDiscount;
+        if (selectedProductId !== 'all' && String(it.product_id) !== String(selectedProductId)) return;
+        rows.push({
+          date: o.date,
+          invoiceId: o.id,
+          customer: o.customer?.name || 'نقدي',
+          salesperson: o.salesperson_name || '-',
+          productId: it.product_id,
+          productName: product.name || 'منتج غير معروف',
+          productCode: product.barcode || product.code || '-',
+          qty,
+          salePrice: Number(it.sale_price || 0),
+          gross: lineValue,
+          discount: rowDiscount,
+          net: rowNet,
+        });
+      });
+    });
+    return rows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [orders, products, selectedProductId, from, to]);
+
+  const productSalesTotal = useMemo(() => productSalesRows.reduce((acc, row) => {
+    acc.gross += row.gross;
+    acc.discount += row.discount;
+    acc.net += row.net;
+    return acc;
+  }, { gross: 0, discount: 0, net: 0 }), [productSalesRows]);
+
+  const productPurchaseRows = useMemo(() => {
+    const rows: any[] = [];
+    extra.purchases.filter((inv: any) => !inv.is_deleted && inRange(inv.created_at)).forEach((inv: any) => {
+      const items = inv.items || inv.purchase_items || [];
+      const supplier = suppliers.find((s: any) => s.id === inv.supplier_id);
+      items.forEach((it: any) => {
+        const product = products.find((p: any) => p.id === it.product_id) || (it as any).products || {};
+        const qty = Number(it.quantity || 0);
+        if (qty <= 0) return;
+        rows.push({
+          date: inv.created_at,
+          supplier: supplier?.name || 'غير محدد',
+          invoiceId: inv.invoice_number,
+          productName: product.name || 'منتج غير معروف',
+          productCode: product.barcode || product.code || '-',
+          qty,
+          unitPrice: Number(it.purchase_price || 0),
+          total: qty * Number(it.purchase_price || 0),
+        });
+      });
+    });
+    return rows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [extra.purchases, products, suppliers, from, to]);
+
+  const inventoryRows = useMemo(() => products
+    .filter((p: any) => !p.is_hidden)
+    .map((p: any) => ({
+      productName: p.name,
+      productCode: p.barcode || p.code || '-',
+      supplier: p.supplier_name || 'غير محدد',
+      unitPrice: Number(p.average_purchase_price || p.purchase_price || 0),
+      stock: Number(p.stock_quantity || 0),
+      display: Number(p.display_quantity || 0),
+      totalValue: (Number(p.average_purchase_price || p.purchase_price || 0)) * (Number(p.stock_quantity || 0)),
+    }))
+    .sort((a, b) => b.totalValue - a.totalValue), [products]);
+
+  const stockIntakeRows = useMemo(() => {
+    const rows: any[] = [];
+    stockIntakes.forEach((row: any) => {
+      const product = products.find((p: any) => p.id === row.product_id);
+      const qty = Number(row.quantity || 0);
+      if (selectedProductId !== 'all' && String(row.product_id) !== String(selectedProductId)) return;
+      rows.push({
+        date: row.created_at,
+        productId: row.product_id,
+        productName: row.product_name || product?.name || 'منتج غير معروف',
+        productCode: product?.barcode || '-',
+        qty,
+        unitPrice: Number(row.unit_cost || 0),
+        total: Number(row.total_value || 0),
+        source: row.source,
+        note: row.note || '',
+      });
+    });
+    return rows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [stockIntakes, products, selectedProductId]);
+
+  const stockIntakeTotal = useMemo(() => stockIntakeRows.reduce((acc, row) => {
+    acc.qty += Number(row.qty || 0);
+    acc.total += Number(row.total || 0);
+    return acc;
+  }, { qty: 0, total: 0 }), [stockIntakeRows]);
+
   const printReport = () => {
     let title = '', body = '';
     if (tab === 'sales') {
@@ -140,6 +246,28 @@ export default function Reports() {
       body = `<table><thead><tr><th>الفاتورة</th><th>التاريخ</th><th>العميل</th><th>مسؤول المبيعات</th><th>الإجمالي</th><th>المدفوع</th><th>الباقي</th><th>الربح</th></tr></thead><tbody>
         ${sales.map((o: any) => `<tr><td>#${o.id}</td><td>${new Date(o.date).toLocaleString('ar-EG')}</td><td>${escapeHtml(o.customer?.name || 'نقدي')}</td><td>${escapeHtml(o.salesperson_name || '-')}</td><td>${effectiveTotalOf(o).toFixed(2)}</td><td>${originalPaidOf(o).toFixed(2)}</td><td>${(effectiveTotalOf(o) - originalPaidOf(o)).toFixed(2)}</td><td>${profitOf(o).toFixed(2)}</td></tr>`).join('')}
         </tbody><tfoot><tr><td colspan="4">الإجمالي (${sales.length} فاتورة)</td><td>${salesTotals.total.toFixed(2)}</td><td>${salesTotals.paid.toFixed(2)}</td><td>${(salesTotals.total - salesTotals.paid).toFixed(2)}</td><td>${salesTotals.profit.toFixed(2)}</td></tr></tfoot></table>`;
+    } else if (tab === 'product-analysis') {
+      if (productMode === 'sales') {
+        title = 'كشف تحليلي لمبيعات منتج';
+        body = `<table><thead><tr><th>التاريخ</th><th>المنتج</th><th>كود الصنف</th><th>الكمية</th><th>سعر البيع</th><th>إجمالي البيع</th><th>الخصم</th><th>الصافي</th></tr></thead><tbody>
+          ${productSalesRows.map((row: any) => `<tr><td>${new Date(row.date).toLocaleString('ar-EG')}</td><td>${escapeHtml(row.productName)}</td><td>${escapeHtml(row.productCode)}</td><td>${row.qty}</td><td>${row.salePrice.toFixed(2)}</td><td>${row.gross.toFixed(2)}</td><td>${row.discount.toFixed(2)}</td><td>${row.net.toFixed(2)}</td></tr>`).join('') || '<tr><td colspan="8">لا توجد بيانات</td></tr>'}
+          </tbody><tfoot><tr><td colspan="5">الإجمالي</td><td>${productSalesTotal.gross.toFixed(2)}</td><td>${productSalesTotal.discount.toFixed(2)}</td><td>${productSalesTotal.net.toFixed(2)}</td></tr></tfoot></table>`;
+      } else if (productMode === 'purchases') {
+        title = 'كشف شراء كل منتج';
+        body = `<table><thead><tr><th>التاريخ</th><th>المورد</th><th>المنتج</th><th>كود الصنف</th><th>الكمية</th><th>سعر الشراء</th><th>الإجمالي</th></tr></thead><tbody>
+          ${productPurchaseRows.map((row: any) => `<tr><td>${new Date(row.date).toLocaleString('ar-EG')}</td><td>${escapeHtml(row.supplier)}</td><td>${escapeHtml(row.productName)}</td><td>${escapeHtml(row.productCode)}</td><td>${row.qty}</td><td>${row.unitPrice.toFixed(2)}</td><td>${row.total.toFixed(2)}</td></tr>`).join('') || '<tr><td colspan="7">لا توجد بيانات</td></tr>'}
+          </tbody></table>`;
+      } else if (productMode === 'stock-intakes') {
+        title = 'كشف المنتجات الداخلة بدون شراء';
+        body = `<table><thead><tr><th>التاريخ</th><th>المنتج</th><th>كود الصنف</th><th>الكمية</th><th>سعر الوحدة</th><th>القيمة</th><th>المصدر</th><th>ملاحظة</th></tr></thead><tbody>
+          ${stockIntakeRows.map((row: any) => `<tr><td>${new Date(row.date).toLocaleString('ar-EG')}</td><td>${escapeHtml(row.productName)}</td><td>${escapeHtml(row.productCode)}</td><td>${row.qty}</td><td>${row.unitPrice.toFixed(2)}</td><td>${row.total.toFixed(2)}</td><td>${escapeHtml(intakeSourceLabel(row.source))}</td><td>${escapeHtml(row.note || '-')}</td></tr>`).join('') || '<tr><td colspan="8">لا توجد بيانات</td></tr>'}
+          </tbody><tfoot><tr><td colspan="3">الإجمالي</td><td>${stockIntakeTotal.qty.toFixed(2)}</td><td></td><td>${stockIntakeTotal.total.toFixed(2)}</td><td colspan="2"></td></tr></tfoot></table>`;
+      } else {
+        title = 'كشف المنتجات الحالية';
+        body = `<table><thead><tr><th>المنتج</th><th>كود الصنف</th><th>المورد</th><th>سعر الشراء</th><th>الكمية</th><th>الإجمالي</th></tr></thead><tbody>
+          ${inventoryRows.map((row: any) => `<tr><td>${escapeHtml(row.productName)}</td><td>${escapeHtml(row.productCode)}</td><td>${escapeHtml(row.supplier)}</td><td>${row.unitPrice.toFixed(2)}</td><td>${row.stock}</td><td>${row.totalValue.toFixed(2)}</td></tr>`).join('') || '<tr><td colspan="6">لا توجد بيانات</td></tr>'}
+          </tbody></table>`;
+      }
     } else if (tab === 'methods') {
       title = 'كشف وسائل الدفع (مدين / دائن)';
       body = `<table><thead><tr><th>الوسيلة</th><th>مدين (داخل)</th><th>دائن (خارج)</th><th>الصافي</th></tr></thead><tbody>
@@ -177,7 +305,7 @@ export default function Reports() {
     openPrintWindow(html);
   };
 
-  const TABS = [['sales', 'كشف المبيعات'], ['methods', 'وسائل الدفع (مدين/دائن)'], ['treasury', 'الخزينة']] as const;
+  const TABS = [['sales', 'كشف المبيعات'], ['product-analysis', 'تحليل المنتجات'], ['methods', 'وسائل الدفع (مدين/دائن)'], ['treasury', 'الخزينة']] as const;
 
   return (
     <div className="p-6 md:p-8 space-y-5 animate-fade-in">
@@ -233,6 +361,114 @@ export default function Reports() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {tab === 'product-analysis' && (
+        <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex flex-wrap gap-3 items-center">
+            <select value={productMode} onChange={(e) => setProductMode(e.target.value as any)} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-bold">
+              <option value="sales">مبيعات منتج</option>
+              <option value="purchases">شراء كل منتج</option>
+              <option value="inventory">المنتجات الحالية</option>
+              <option value="stock-intakes">دخل بدون شراء</option>
+            </select>
+            <select value={selectedProductId} onChange={(e) => setSelectedProductId(e.target.value)} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-bold">
+              <option value="all">كل المنتجات</option>
+              {products.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </div>
+
+          {productMode === 'sales' && (
+            <div className="overflow-x-auto max-h-[60vh]">
+              <table className="w-full text-right text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 sticky top-0"><tr><th className="p-2">التاريخ</th><th className="p-2">المنتج</th><th className="p-2">كود الصنف</th><th className="p-2">الكمية</th><th className="p-2">سعر البيع</th><th className="p-2">إجمالي البيع</th><th className="p-2">الخصم</th><th className="p-2">الصافي</th></tr></thead>
+                <tbody>
+                  {productSalesRows.length === 0 ? <tr><td colSpan={8} className="text-center text-slate-400 py-8">لا توجد مبيعات للمنتج في هذه الفترة</td></tr> : productSalesRows.map((row: any) => (
+                    <tr key={`${row.invoiceId}-${row.productId}-${row.date}`} className="border-b border-slate-100 dark:border-slate-700/50">
+                      <td className="p-2 text-xs">{new Date(row.date).toLocaleString('ar-EG')}</td>
+                      <td className="p-2 font-bold">{row.productName}</td>
+                      <td className="p-2 font-mono">{row.productCode}</td>
+                      <td className="p-2">{row.qty}</td>
+                      <td className="p-2">{row.salePrice.toFixed(2)}</td>
+                      <td className="p-2">{row.gross.toFixed(2)}</td>
+                      <td className="p-2 text-red-600">{row.discount.toFixed(2)}</td>
+                      <td className="p-2 text-emerald-600 font-bold">{row.net.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot className="bg-slate-50 dark:bg-slate-900/40 font-black"><tr><td colSpan={5} className="p-2 text-center">الإجمالي</td><td className="p-2">{productSalesTotal.gross.toFixed(2)}</td><td className="p-2 text-red-600">{productSalesTotal.discount.toFixed(2)}</td><td className="p-2 text-emerald-700">{productSalesTotal.net.toFixed(2)}</td></tr></tfoot>
+              </table>
+            </div>
+          )}
+
+          {productMode === 'purchases' && (
+            <div className="overflow-x-auto max-h-[60vh]">
+              <table className="w-full text-right text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 sticky top-0"><tr><th className="p-2">التاريخ</th><th className="p-2">المورد</th><th className="p-2">المنتج</th><th className="p-2">كود الصنف</th><th className="p-2">الكمية</th><th className="p-2">سعر الشراء</th><th className="p-2">الإجمالي</th></tr></thead>
+                <tbody>
+                  {productPurchaseRows.length === 0 ? <tr><td colSpan={7} className="text-center text-slate-400 py-8">لا توجد مشتريات في هذه الفترة</td></tr> : productPurchaseRows.map((row: any) => (
+                    <tr key={`${row.invoiceId}-${row.productName}-${row.date}`} className="border-b border-slate-100 dark:border-slate-700/50">
+                      <td className="p-2 text-xs">{new Date(row.date).toLocaleString('ar-EG')}</td>
+                      <td className="p-2">{row.supplier}</td>
+                      <td className="p-2 font-bold">{row.productName}</td>
+                      <td className="p-2 font-mono">{row.productCode}</td>
+                      <td className="p-2">{row.qty}</td>
+                      <td className="p-2">{row.unitPrice.toFixed(2)}</td>
+                      <td className="p-2 font-bold">{row.total.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {productMode === 'inventory' && (
+            <div className="overflow-x-auto max-h-[60vh]">
+              <table className="w-full text-right text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 sticky top-0"><tr><th className="p-2">المنتج</th><th className="p-2">كود الصنف</th><th className="p-2">المورد</th><th className="p-2">سعر الشراء</th><th className="p-2">الكمية</th><th className="p-2">الإجمالي</th></tr></thead>
+                <tbody>
+                  {inventoryRows.length === 0 ? <tr><td colSpan={6} className="text-center text-slate-400 py-8">لا توجد منتجات</td></tr> : inventoryRows.map((row: any) => (
+                    <tr key={row.productCode} className="border-b border-slate-100 dark:border-slate-700/50">
+                      <td className="p-2 font-bold">{row.productName}</td>
+                      <td className="p-2 font-mono">{row.productCode}</td>
+                      <td className="p-2">{row.supplier}</td>
+                      <td className="p-2">{row.unitPrice.toFixed(2)}</td>
+                      <td className="p-2">{row.stock}</td>
+                      <td className="p-2 font-bold">{row.totalValue.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {productMode === 'stock-intakes' && (
+            <div className="overflow-x-auto max-h-[60vh]">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 p-4 border-b border-slate-200 dark:border-slate-700">
+                <Stat label="عدد القيود" value={String(stockIntakeRows.length)} />
+                <Stat label="إجمالي الكمية" value={stockIntakeTotal.qty.toFixed(2)} />
+                <Stat label="إجمالي القيمة" value={fmt(stockIntakeTotal.total)} />
+              </div>
+              <table className="w-full text-right text-sm">
+                <thead className="bg-slate-50 dark:bg-slate-900/50 text-slate-500 sticky top-0"><tr><th className="p-2">التاريخ</th><th className="p-2">المنتج</th><th className="p-2">كود الصنف</th><th className="p-2">الكمية</th><th className="p-2">سعر الوحدة</th><th className="p-2">القيمة</th><th className="p-2">المصدر</th><th className="p-2">ملاحظة</th></tr></thead>
+                <tbody>
+                  {stockIntakeRows.length === 0 ? <tr><td colSpan={8} className="text-center text-slate-400 py-8">لا توجد قيود داخل بدون شراء</td></tr> : stockIntakeRows.map((row: any, index: number) => (
+                    <tr key={`${row.productId}-${row.date}-${index}`} className="border-b border-slate-100 dark:border-slate-700/50">
+                      <td className="p-2 text-xs">{new Date(row.date).toLocaleString('ar-EG')}</td>
+                      <td className="p-2 font-bold">{row.productName}</td>
+                      <td className="p-2 font-mono">{row.productCode}</td>
+                      <td className={`p-2 ${Number(row.qty) < 0 ? 'text-red-600 font-bold' : 'text-slate-700'}`}>{row.qty.toFixed(2)}</td>
+                      <td className="p-2">{row.unitPrice.toFixed(2)}</td>
+                      <td className={`p-2 font-bold ${Number(row.total) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{row.total.toFixed(2)}</td>
+                      <td className="p-2"><span className="text-[11px] font-bold bg-slate-100 text-slate-600 rounded-lg px-2 py-1">{intakeSourceLabel(row.source)}</span></td>
+                      <td className="p-2">{row.note || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

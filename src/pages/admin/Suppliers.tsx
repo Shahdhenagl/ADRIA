@@ -724,13 +724,15 @@ export default function Suppliers() {
 
     const itemsHtml = (inv.items || []).map((item: any, index: number) => {
       const product = products.find(p => p.id === item.product_id);
+      const productCode = product?.barcode || product?.id || '—';
       return `
         <tr>
           <td style="text-align:center;">${index + 1}</td>
           <td style="text-align:right;font-weight:bold;">${escapeHtml(product?.name || 'منتج غير معروف')}</td>
+          <td style="text-align:center; font-weight:700; color:#334155;">${escapeHtml(productCode)}</td>
           <td style="text-align:center;">${item.quantity}</td>
-          <td style="text-align:center;">${item.purchase_price.toFixed(2)}</td>
-          <td style="text-align:left;font-weight:bold;">${(item.purchase_price * item.quantity).toFixed(2)}</td>
+          <td style="text-align:center;">${Number(item.purchase_price || 0).toFixed(2)}</td>
+          <td style="text-align:left;font-weight:bold;">${(Number(item.purchase_price || 0) * Number(item.quantity || 0)).toFixed(2)}</td>
         </tr>
       `;
     }).join('');
@@ -801,6 +803,7 @@ export default function Suppliers() {
     <thead><tr>
       <th style="width:40px">#</th>
       <th style="text-align:right">المنتج</th>
+      <th style="width:85px">كود الصنف</th>
       <th style="width:60px">الكمية</th>
       <th style="width:80px">سعر الشراء</th>
       <th style="width:100px;text-align:left">الإجمالي</th>
@@ -1656,7 +1659,10 @@ export default function Suppliers() {
             for (const o of orders) {
               if (o.is_deleted || o.type !== 'sale') continue;
               for (const oi of (o.items || [])) {
-                if (oi.id === s.product_id) sold += (Number(oi.quantity) || 0) - (Number(oi.returned_quantity) || 0);
+                const itemProductId = (oi as any).product_id ?? oi.id;
+                if (String(itemProductId) === String(s.product_id)) {
+                  sold += (Number(oi.quantity) || 0) - (Number(oi.returned_quantity) || 0);
+                }
               }
             }
             return {

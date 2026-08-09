@@ -15,6 +15,20 @@ export const INTAKE_SOURCE_LABELS: Record<string, string> = {
 export const intakeSourceLabel = (s?: string) => INTAKE_SOURCE_LABELS[s || ''] || 'أخرى';
 
 /** إجمالي قيمة ما دخل المخزون بدون فاتورة شراء (تراكمي). */
+export function prepareStockIntakePayload(rows: Array<{ product_id: string; product_name?: string | null; quantity: number; unit_cost: number; source: string; note?: string | null }>) {
+  return rows
+    .map((r) => ({
+      product_id: r.product_id,
+      product_name: r.product_name || '',
+      quantity: Number(r.quantity) || 0,
+      unit_cost: Number(r.unit_cost) || 0,
+      source: r.source,
+      note: r.note || null,
+    }))
+    .filter((r) => r.quantity !== 0)
+    .map((r) => ({ ...r, total_value: r.quantity * r.unit_cost }));
+}
+
 export function totalIntakeValue(intakes: StockIntake[], productIds?: Set<string>): number {
   return intakes.reduce((s, i) => {
     if (productIds && !productIds.has(i.product_id)) return s;
