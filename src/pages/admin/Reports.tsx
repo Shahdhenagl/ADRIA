@@ -8,6 +8,7 @@ import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/re
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundRecordOf } from '../../utils/treasury';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 import { intakeSourceLabel } from '../../utils/stockIntake';
+import { normalizeArabic } from '../../utils/textUtils';
 
 export default function Reports() {
   const { storeSettings, products = [], suppliers = [], stockIntakes = [] } = useStore();
@@ -19,7 +20,8 @@ export default function Reports() {
   const [to, setTo] = useState(currentBusinessDay());
   const [tab, setTab] = useState<'sales' | 'product-analysis' | 'methods' | 'treasury'>('sales');
   const [productMode, setProductMode] = useState<'sales' | 'purchases' | 'inventory' | 'stock-intakes'>('sales');
-  const [selectedProductId, setSelectedProductId] = useState<string>('all');
+  const [productFilter, setProductFilter] = useState('');
+  const [selectedSupplierId, setSelectedSupplierId] = useState<string>('all');
   const [extra, setExtra] = useState<{ expenses: any[]; purchases: any[]; salaries: any[] }>({ expenses: [], purchases: [], salaries: [] });
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -135,6 +137,23 @@ export default function Reports() {
   const salesTotals = useMemo(() => sales.reduce((acc: any, o: any) => { acc.total += effectiveTotalOf(o); acc.paid += originalPaidOf(o); acc.profit += profitOf(o); return acc; }, { total: 0, paid: 0, profit: 0 }), [sales, orders]);
 
   const fmt = (n: number) => `${(n || 0).toFixed(2)} ${cur}`;
+  const productFilterText = productFilter.trim();
+  const selectedSupplier = suppliers.find((s: any) => String(s.id) === String(selectedSupplierId));
+  const matchesProductFilter = (product: any, productId?: string | null) => {
+    if (!productFilterText) return true;
+    const raw = productFilterText.toLowerCase();
+    const candidates = [productId, product?.id, product?.barcode, product?.code]
+      .filter(Boolean)
+      .map((v) => String(v).toLowerCase());
+    if (candidates.some((v) => v === raw || v.includes(raw))) return true;
+    return normalizeArabic(product?.name || '').includes(normalizeArabic(productFilterText));
+  };
+  const matchesSupplierFilter = (product: any, supplierId?: string | null, supplierName?: string | null) => {
+    if (selectedSupplierId === 'all') return true;
+    if (supplierId && String(supplierId) === String(selectedSupplierId)) return true;
+    const wanted = normalizeArabic(selectedSupplier?.name || '');
+    return Boolean(wanted) && normalizeArabic(product?.supplier_name || supplierName || '').includes(wanted);
+  };
 
   const productSalesRows = useMemo(() => {
     const rows: any[] = [];
@@ -148,7 +167,8 @@ export default function Reports() {
         const lineValue = qty * Number(it.sale_price || 0);
         const rowDiscount = orderTotal > 0 ? discountAmount * (lineValue / orderTotal) : 0;
         const rowNet = lineValue - rowDiscount;
-        if (selectedProductId !== 'all' && String(it.product_id) !== String(selectedProductId)) return;
+        if (!matchesProductFilter(product, it.product_id)) return;
+        if (!matchesSupplierFilter(product)) return;
         rows.push({
           date: o.date,
           invoiceId: o.id,
@@ -166,7 +186,7 @@ export default function Reports() {
       });
     });
     return rows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [orders, products, selectedProductId, from, to]);
+  }, [orders, products, productFilterText, selectedSupplierId, suppliers, from, to]);
 
   const productSalesTotal = useMemo(() => productSalesRows.reduce((acc, row) => {
     acc.gross += row.gross;
@@ -178,14 +198,17 @@ export default function Reports() {
   const productPurchaseRows = useMemo(() => {
     const rows: any[] = [];
     extra.purchases.filter((inv: any) => !inv.is_deleted && inRange(inv.created_at)).forEach((inv: any) => {
+      if (!matchesSupplierFilter({}, inv.supplier_id)) return;
       const items = inv.items || inv.purchase_items || [];
       const supplier = suppliers.find((s: any) => s.id === inv.supplier_id);
       items.forEach((it: any) => {
         const product = products.find((p: any) => p.id === it.product_id) || (it as any).products || {};
         const qty = Number(it.quantity || 0);
         if (qty <= 0) return;
+        if (!matchesProductFilter(product, it.product_id)) return;
         rows.push({
           date: inv.created_at,
+          supplierId: inv.supplier_id,
           supplier: supplier?.name || 'غير محدد',
           invoiceId: inv.invoice_number,
           productName: product.name || 'منتج غير معروف',
@@ -197,10 +220,12 @@ export default function Reports() {
       });
     });
     return rows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [extra.purchases, products, suppliers, from, to]);
+  }, [extra.purchases, products, suppliers, productFilterText, selectedSupplierId, from, to]);
 
   const inventoryRows = useMemo(() => products
     .filter((p: any) => !p.is_hidden)
+    .filter((p: any) => matchesProductFilter(p, p.id))
+    .filter((p: any) => matchesSupplierFilter(p))
     .map((p: any) => ({
       productName: p.name,
       productCode: p.barcode || p.code || '-',
@@ -210,14 +235,15 @@ export default function Reports() {
       display: Number(p.display_quantity || 0),
       totalValue: (Number(p.average_purchase_price || p.purchase_price || 0)) * (Number(p.stock_quantity || 0)),
     }))
-    .sort((a, b) => b.totalValue - a.totalValue), [products]);
+    .sort((a, b) => b.totalValue - a.totalValue), [products, productFilterText, selectedSupplierId, suppliers]);
 
   const stockIntakeRows = useMemo(() => {
     const rows: any[] = [];
     stockIntakes.forEach((row: any) => {
       const product = products.find((p: any) => p.id === row.product_id);
       const qty = Number(row.quantity || 0);
-      if (selectedProductId !== 'all' && String(row.product_id) !== String(selectedProductId)) return;
+      if (!matchesProductFilter(product, row.product_id)) return;
+      if (!matchesSupplierFilter(product)) return;
       rows.push({
         date: row.created_at,
         productId: row.product_id,
@@ -231,7 +257,7 @@ export default function Reports() {
       });
     });
     return rows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  }, [stockIntakes, products, selectedProductId]);
+  }, [stockIntakes, products, productFilterText, selectedSupplierId, suppliers]);
 
   const stockIntakeTotal = useMemo(() => stockIntakeRows.reduce((acc, row) => {
     acc.qty += Number(row.qty || 0);
@@ -373,10 +399,24 @@ export default function Reports() {
               <option value="inventory">المنتجات الحالية</option>
               <option value="stock-intakes">دخل بدون شراء</option>
             </select>
-            <select value={selectedProductId} onChange={(e) => setSelectedProductId(e.target.value)} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-bold">
-              <option value="all">كل المنتجات</option>
-              {products.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            <input
+              value={productFilter}
+              onChange={(e) => setProductFilter(e.target.value)}
+              placeholder="رقم / باركود المنتج..."
+              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-bold outline-none focus:ring-2 focus:ring-indigo-500/20 min-w-[220px]"
+            />
+            <select value={selectedSupplierId} onChange={(e) => setSelectedSupplierId(e.target.value)} className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-bold">
+              <option value="all">كل الموردين</option>
+              {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
+            {(productFilter || selectedSupplierId !== 'all') && (
+              <button
+                onClick={() => { setProductFilter(''); setSelectedSupplierId('all'); }}
+                className="bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-black transition"
+              >
+                مسح الفلاتر
+              </button>
+            )}
           </div>
 
           {productMode === 'sales' && (
