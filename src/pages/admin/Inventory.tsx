@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
 import { useStore, type Product } from '../../store/useStore';
-import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight, Layers, Trash2 } from 'lucide-react';
+import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight, Layers, Trash2, History } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { splitStockValueBySource, totalIntakeValue, intakeSourceLabel } from '../../utils/stockIntake';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
@@ -10,9 +10,18 @@ import jsPDF from 'jspdf';
 // html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها وتكسر تصدير PDF).
 import html2canvas from 'html2canvas-pro';
 
+type StockMovementLine = {
+  at?: string | null;
+  source: string;
+  ref: string;
+  qty: number;
+  cost: number;
+  note?: string | null;
+};
+
 export default function Inventory() {
   const { products, categories, storeSettings, addProduct, updateProduct, orders, suppliers, addSupplier,
-    stockIntakes, purchaseInvoices, logStockIntake, deleteStockIntake } = useStore();
+    stockIntakes, purchaseInvoices, productionOrders, devoItems, writeOffs, heldInvoices, logStockIntake, deleteStockIntake } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [stockLocation, setStockLocation] = useState<'all' | 'warehouse' | 'display'>('all');
   const [seasonFilter, setSeasonFilter] = useState<'all' | 'summer' | 'winter' | 'annual'>('all');
@@ -26,6 +35,10 @@ export default function Inventory() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [scanSuccess, setScanSuccess] = useState(false);
+  const [movementProductId, setMovementProductId] = useState<string | null>(null);
+  const [movementAdjustments, setMovementAdjustments] = useState<any[]>([]);
+  const [movementLoading, setMovementLoading] = useState(false);
+  const [movementError, setMovementError] = useState('');
 
   const playSuccessSound = () => {
     try {
@@ -150,6 +163,185 @@ export default function Inventory() {
   );
 
   const fmtMoney = (n: number) => Math.round(n).toLocaleString();
+  const movementProduct = useMemo(
+    () => products.find(p => p.id === movementProductId) || null,
+    [products, movementProductId]
+  );
+
+  const openMovementModal = async (product: Product) => {
+    setMovementProductId(product.id);
+    setMovementAdjustments([]);
+    setMovementError('');
+    setMovementLoading(true);
+    try {
+      const { supabase } = await import('../../lib/supabase');
+      const { data, error } = await supabase
+        .from('stock_adjustments')
+        .select('*')
+        .eq('product_id', product.id)
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      setMovementAdjustments(data || []);
+    } catch (e: any) {
+      console.warn('Could not load stock adjustments:', e);
+      setMovementError('تعذر تحميل تسويات الجرد لهذا المنتج، فالكشف قد ينقصه جزء التسويات.');
+    } finally {
+      setMovementLoading(false);
+    }
+  };
+
+  const closeMovementModal = () => {
+    setMovementProductId(null);
+    setMovementAdjustments([]);
+    setMovementError('');
+  };
+
+  const movementLines = useMemo<StockMovementLine[]>(() => {
+    if (!movementProduct) return [];
+    const pid = movementProduct.id;
+    const rows: StockMovementLine[] = [];
+
+    purchaseInvoices.forEach((inv: any) => {
+      (inv.items || []).forEach((item: any) => {
+        if (item.product_id !== pid) return;
+        const qty = Number(item.quantity) || 0;
+        rows.push({
+          at: inv.created_at,
+          source: inv.source_invoice_id ? 'مرتجع مورد' : 'فاتورة شراء',
+          ref: inv.invoice_number || inv.id,
+          qty,
+          cost: Number(item.purchase_price) || 0,
+          note: inv.source_invoice_id ? `مرتجع من فاتورة ${inv.source_invoice_id}` : (inv.notes || null),
+        });
+      });
+    });
+
+    stockIntakes
+      .filter((intake: any) => intake.product_id === pid)
+      .forEach((intake: any) => {
+        const source = String(intake.source || 'manual');
+        rows.push({
+          at: intake.created_at,
+          source: intakeSourceLabel(source),
+          ref: intake.id,
+          qty: source === 'stocktake' ? 0 : (Number(intake.quantity) || 0),
+          cost: Number(intake.unit_cost) || 0,
+          note: source === 'stocktake'
+            ? `${intake.note || 'زيادة جرد'} - قيد قيمة فقط، الكمية محسوبة من تسوية الجرد`
+            : intake.note,
+        });
+      });
+
+    orders
+      .filter((order: any) => !order.is_deleted && order.type !== 'payment')
+      .forEach((order: any) => {
+        (order.items || []).forEach((item: any) => {
+          if ((item.id || item.product_id) !== pid) return;
+          const soldQty = Number(item.quantity) || 0;
+          const returnedQty = Number(item.returned_quantity) || 0;
+          const cost = Number(item.purchase_price ?? item.average_purchase_price) || 0;
+          if (soldQty) {
+            rows.push({
+              at: order.date,
+              source: 'بيع',
+              ref: order.id,
+              qty: -soldQty,
+              cost,
+              note: order.customer?.name ? `فاتورة عميل: ${order.customer.name}` : null,
+            });
+          }
+          if (returnedQty) {
+            rows.push({
+              at: order.refunded_at || order.date,
+              source: 'مرتجع عميل',
+              ref: order.id,
+              qty: returnedQty,
+              cost,
+              note: 'مرتجع على نفس الفاتورة',
+            });
+          }
+        });
+      });
+
+    heldInvoices
+      .filter((held: any) => ['held', 'shipped', 'money_pending'].includes(held.status || 'held'))
+      .forEach((held: any) => {
+        (held.items || []).forEach((item: any) => {
+          if (item.id !== pid) return;
+          rows.push({
+            at: held.created_at,
+            source: 'حجز نشط',
+            ref: held.id,
+            qty: -(Number(item.quantity) || 0),
+            cost: Number(item.purchase_price ?? item.average_purchase_price) || 0,
+            note: held.customer_name ? `عميل: ${held.customer_name}` : null,
+          });
+        });
+      });
+
+    productionOrders
+      .filter((order: any) => order.product_id === pid)
+      .forEach((order: any) => {
+        rows.push({
+          at: order.created_at,
+          source: 'تصنيع',
+          ref: order.id,
+          qty: Number(order.quantity) || 0,
+          cost: Number(order.cost_per_piece) || 0,
+          note: order.notes || 'إنتاج من التصنيع',
+        });
+      });
+
+    devoItems
+      .filter((item: any) => item.product_id === pid && ['pending', 'at_factory', 'closed'].includes(item.status || 'pending'))
+      .forEach((item: any) => {
+        rows.push({
+          at: item.created_at,
+          source: `ديفو - ${item.status || 'pending'}`,
+          ref: item.id,
+          qty: -(Number(item.quantity) || 0),
+          cost: Number(item.unit_cost) || 0,
+          note: item.note || item.reason || null,
+        });
+      });
+
+    writeOffs
+      .filter((item: any) => item.product_id === pid)
+      .forEach((item: any) => {
+        rows.push({
+          at: item.created_at,
+          source: 'تالف',
+          ref: item.id,
+          qty: -(Number(item.quantity) || 0),
+          cost: Number(item.unit_cost) || 0,
+          note: item.reason || null,
+        });
+      });
+
+    movementAdjustments.forEach((adj: any) => {
+      rows.push({
+        at: adj.created_at,
+        source: 'تسوية جرد',
+        ref: adj.id,
+        qty: Number(adj.diff) || 0,
+        cost: Number(adj.cost) || 0,
+        note: `سيستم ${Number(adj.system_qty) || 0} / جرد ${Number(adj.counted_qty) || 0}${adj.note ? ` - ${adj.note}` : ''}`,
+      });
+    });
+
+    return rows.sort((a, b) => {
+      const at = a.at ? new Date(a.at).getTime() : 0;
+      const bt = b.at ? new Date(b.at).getTime() : 0;
+      return at - bt;
+    });
+  }, [movementProduct, purchaseInvoices, stockIntakes, orders, heldInvoices, productionOrders, devoItems, writeOffs, movementAdjustments]);
+
+  const movementExpectedStock = movementLines.reduce((sum, line) => sum + line.qty, 0);
+  const movementCurrentStock = movementProduct ? Number(movementProduct.stock_quantity) || 0 : 0;
+  const movementDisplayStock = movementProduct ? dispOf(movementProduct) : 0;
+  const movementWarehouseStock = Math.max(0, movementCurrentStock - movementDisplayStock);
+  const movementUnexplainedQty = movementCurrentStock - movementExpectedStock;
+  const movementDate = (value?: string | null) => value ? new Date(value).toLocaleString('ar-EG') : '—';
 
   // ── طباعة باركود لأكتر من منتج مع بعض ────────────────────────────────────
   // بدل ما تطبع صنف صنف: تختار الأصناف، تحدّد عدد الملصقات لكل واحد، وتطبعهم
@@ -1138,6 +1330,109 @@ export default function Inventory() {
         </div>
       )}
 
+      {/* PRODUCT STOCK MOVEMENT MODAL */}
+      {movementProduct && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
+            <div className="p-5 border-b flex justify-between items-start gap-4 bg-slate-50 shrink-0">
+              <div className="min-w-0">
+                <h2 className="text-xl font-black text-slate-800 flex items-center gap-2">
+                  <History size={22} className="text-emerald-600" /> كشف حركة المنتج
+                </h2>
+                <p className="text-sm text-slate-500 mt-1 truncate">
+                  {movementProduct.name} · باركود {movementProduct.barcode || 'بدون باركود'}
+                </p>
+              </div>
+              <button onClick={closeMovementModal} className="text-slate-400 hover:text-slate-600 bg-white p-2 rounded-xl shadow-sm border border-slate-200 shrink-0"><X size={20} /></button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-4">
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                  <p className="text-[11px] font-bold text-slate-400">الرصيد الحالي</p>
+                  <p className="text-lg font-black text-slate-800">{formatQty(movementCurrentStock, movementProduct.unit)}</p>
+                </div>
+                <div className="bg-emerald-50 border border-emerald-100 rounded-2xl p-3">
+                  <p className="text-[11px] font-bold text-emerald-600">المتوقع من الحركة</p>
+                  <p className="text-lg font-black text-emerald-700">{formatQty(movementExpectedStock, movementProduct.unit)}</p>
+                </div>
+                <div className={`border rounded-2xl p-3 ${Math.abs(movementUnexplainedQty) > 0.001 ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
+                  <p className={`text-[11px] font-bold ${Math.abs(movementUnexplainedQty) > 0.001 ? 'text-amber-600' : 'text-slate-400'}`}>فرق غير مفسر</p>
+                  <p className={`text-lg font-black ${Math.abs(movementUnexplainedQty) > 0.001 ? 'text-amber-700' : 'text-slate-600'}`}>
+                    {movementUnexplainedQty > 0 ? '+' : ''}{formatQty(movementUnexplainedQty, movementProduct.unit)}
+                  </p>
+                </div>
+                <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3">
+                  <p className="text-[11px] font-bold text-indigo-600">المستودع</p>
+                  <p className="text-lg font-black text-indigo-700">{formatQty(movementWarehouseStock, movementProduct.unit)}</p>
+                </div>
+                <div className="bg-purple-50 border border-purple-100 rounded-2xl p-3">
+                  <p className="text-[11px] font-bold text-purple-600">المحل</p>
+                  <p className="text-lg font-black text-purple-700">{formatQty(movementDisplayStock, movementProduct.unit)}</p>
+                </div>
+              </div>
+
+              {movementLoading && (
+                <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 text-sm font-bold text-slate-500">
+                  جاري تحميل تسويات الجرد...
+                </div>
+              )}
+              {movementError && (
+                <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-sm font-bold text-amber-700">
+                  {movementError}
+                </div>
+              )}
+              {Math.abs(movementUnexplainedQty) > 0.001 && (
+                <div className="bg-amber-50 border border-amber-100 rounded-xl p-3 text-sm text-amber-800 leading-relaxed">
+                  الفرق ده معناه إن الرصيد الحالي فيه كمية مش طالعة من الحركات المحملة قدامك. غالبا بتكون من استيراد/تصفير قديم اتسجل مباشرة في جدول المنتجات بدون قيد حركة، أو تسوية جرد غير مقروءة.
+                </div>
+              )}
+
+              <div className="overflow-x-auto border border-slate-100 rounded-2xl">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-slate-500">
+                    <tr>
+                      <th className="p-3 text-right font-bold">التاريخ</th>
+                      <th className="p-3 text-right font-bold">المصدر</th>
+                      <th className="p-3 text-center font-bold">الكمية</th>
+                      <th className="p-3 text-center font-bold">تكلفة الوحدة</th>
+                      <th className="p-3 text-center font-bold">قيمة الحركة</th>
+                      <th className="p-3 text-right font-bold min-w-[240px]">ملاحظة</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {movementLines.length === 0 && (
+                      <tr>
+                        <td colSpan={6} className="p-8 text-center text-slate-400 font-bold">
+                          لا توجد حركات مسجلة لهذا المنتج.
+                        </td>
+                      </tr>
+                    )}
+                    {movementLines.map((line, idx) => (
+                      <tr key={`${line.source}-${line.ref}-${idx}`} className="border-b border-slate-100 last:border-0 hover:bg-slate-50/60">
+                        <td className="p-3 text-slate-500 whitespace-nowrap">{movementDate(line.at)}</td>
+                        <td className="p-3">
+                          <span className="text-[11px] font-black bg-slate-100 text-slate-700 rounded-lg px-2 py-1">{line.source}</span>
+                          <span className="block mt-1 text-[10px] font-mono text-slate-400 truncate max-w-[180px]">{line.ref}</span>
+                        </td>
+                        <td className={`p-3 text-center font-black ${line.qty > 0 ? 'text-emerald-600' : line.qty < 0 ? 'text-red-600' : 'text-slate-400'}`}>
+                          {line.qty > 0 ? '+' : ''}{formatQty(line.qty, movementProduct.unit)}
+                        </td>
+                        <td className="p-3 text-center text-slate-600">{fmtMoney(line.cost)} {storeSettings.currency}</td>
+                        <td className={`p-3 text-center font-bold ${(line.qty * line.cost) > 0 ? 'text-emerald-600' : (line.qty * line.cost) < 0 ? 'text-red-600' : 'text-slate-400'}`}>
+                          {fmtMoney(line.qty * line.cost)} {storeSettings.currency}
+                        </td>
+                        <td className="p-3 text-slate-500 leading-relaxed">{line.note || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CATEGORIES SECTION */}
       <div className="mb-8">
         <div className="flex justify-between items-center mb-4">
@@ -1362,6 +1657,9 @@ export default function Inventory() {
                       <div className="flex items-center justify-center gap-2">
                         <button onClick={() => openEditModal(product)} className="p-2 text-indigo-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition" title="تعديل المنتج">
                           <Edit2 size={18} />
+                        </button>
+                        <button onClick={() => openMovementModal(product)} className="p-2 text-emerald-500 hover:bg-emerald-50 hover:text-emerald-700 rounded-lg transition" title="كشف حركة المنتج">
+                          <History size={18} />
                         </button>
                         <button
                           onClick={() => {
