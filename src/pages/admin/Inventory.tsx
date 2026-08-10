@@ -344,6 +344,7 @@ export default function Inventory() {
   const movementDisplayStock = movementProduct ? dispOf(movementProduct) : 0;
   const movementWarehouseStock = Math.max(0, movementCurrentStock - movementDisplayStock);
   const movementUnexplainedQty = movementCurrentStock - movementExpectedStock;
+  const movementTotalSold = movementLines.filter(line => line.source === 'بيع').reduce((sum, line) => sum + Math.abs(line.qty), 0);
   const movementDate = (value?: string | null) => value ? new Date(value).toLocaleString('ar-EG') : '—';
 
   // ── طباعة باركود لأكتر من منتج مع بعض ────────────────────────────────────
@@ -1398,7 +1399,7 @@ export default function Inventory() {
             </div>
 
             <div className="p-5 overflow-y-auto space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
                 <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
                   <p className="text-[11px] font-bold text-slate-400">الرصيد الحالي</p>
                   <p className="text-lg font-black text-slate-800">{formatQty(movementCurrentStock, movementProduct.unit)}</p>
@@ -1412,6 +1413,10 @@ export default function Inventory() {
                   <p className={`text-lg font-black ${Math.abs(movementUnexplainedQty) > 0.001 ? 'text-amber-700' : 'text-slate-600'}`}>
                     {movementUnexplainedQty > 0 ? '+' : ''}{formatQty(movementUnexplainedQty, movementProduct.unit)}
                   </p>
+                </div>
+                <div className="bg-sky-50 border border-sky-100 rounded-2xl p-3">
+                  <p className="text-[11px] font-bold text-sky-600">القطع المباعة</p>
+                  <p className="text-lg font-black text-sky-700">{formatQty(movementTotalSold, movementProduct.unit)}</p>
                 </div>
                 <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3">
                   <p className="text-[11px] font-bold text-indigo-600">المستودع</p>
