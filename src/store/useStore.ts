@@ -2165,7 +2165,7 @@ export const useStore = create<CashierStore>((set, get) => ({
 
   updatePrice: (productId, price) =>
     set((state) => ({
-      cart: state.cart.map((i) => (i.id === productId ? { ...i, sale_price: price } : i))
+      cart: state.cart.map((i) => (i.id === productId ? { ...i, sale_price: Math.max(0, Number(price) || 0) } : i))
     })),
 
   clearCart: () => set({ cart: [] }),
