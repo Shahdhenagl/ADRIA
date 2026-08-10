@@ -257,9 +257,9 @@ export default function Savings() {
   const requestDeleteOtp = async (t: any) => {
     if (t.source === 'day_closing') {
       const dStr = businessDateStr(storeSettings, new Date(t.created_at));
-      if (confirm(`معاملة «تقفيل يوم ${dStr}».\n\nهل ترغب في إعادة فتح هذا اليوم للتعديل وإلغاء التقفيل؟`)) {
+      if (confirm(`معاملة «تقفيل يوم ${dStr}».\n\nهل ترغب في إعادة فتح هذا اليوم والأيام التالية له للتعديل وإلغاء التقفيل؟`)) {
         const ok = await reopenDay(dStr);
-        if (ok) alert('تم إعادة فتح اليوم بنجاح ✅ يمكنك الآن التعديل والإضافة على هذا اليوم.');
+        if (ok) alert('تم إعادة فتح اليوم والأيام التالية له بنجاح ✅ يمكنك الآن التعديل والإضافة.');
       }
       return;
     }

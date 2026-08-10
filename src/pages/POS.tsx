@@ -3038,16 +3038,16 @@ export default function POS() {
                           <span className="text-sm font-black text-amber-900 dark:text-amber-300 flex items-center gap-1.5"><Unlock size={18} /> إعادة فتح هذا اليوم للتعديل</span>
                         </div>
                         <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold leading-relaxed">
-                          اليوم ({dayBudgetDate}) مقفول حالياً. لإضافة أو تعديل أو حذف أي فاتورة أو حركة مالية في هذا اليوم، يمكنك إلغاء التقفيل وإعادة فتح اليوم.
+                          اليوم ({dayBudgetDate}) والأيام التالية له مقفولة. لإضافة أو تعديل أو حذف أي حركة في هذا اليوم، سيتم إلغاء تقفيل هذا اليوم وجميع الأيام التالية له ليتسنى لك تعديل الحسابات وإعادة التقفيل بالترتيب.
                         </p>
                         <button
                           onClick={async () => {
-                            if (!confirm(`هل أنت متأكد من إعادة فتح يوم ${dayBudgetDate}؟\n\nسيتم إلغاء تحويل التقفيل وإعادة اليوم لحالة "مفتوح للتعديل".`)) return;
+                            if (!confirm(`هل أنت متأكد من إعادة فتح يوم ${dayBudgetDate} والأيام التالية له؟\n\nسيتم إلغاء تقفيل هذا اليوم وجميع الأيام التالية له وإعادتها لحالة "مفتوح للتعديل".`)) return;
                             setReopenBusy(true);
                             const ok = await reopenDay(dayBudgetDate);
                             setReopenBusy(false);
                             if (ok) {
-                              alert('تم إعادة فتح اليوم بنجاح ✅ يمكنك الآن التعديل والإضافة على هذا اليوم.');
+                              alert('تم إعادة فتح اليوم والأيام التالية له بنجاح ✅ يمكنك الآن التعديل والإضافة.');
                               computeDayBudget(dayBudgetDate);
                             }
                           }}
@@ -3055,7 +3055,7 @@ export default function POS() {
                           className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition"
                         >
                           <Unlock size={18} />
-                          {reopenBusy ? 'جاري إعادة فتح اليوم...' : '🔓 إعادة فتح هذا اليوم للتعديل'}
+                          {reopenBusy ? 'جاري إعادة فتح الأيام...' : '🔓 إعادة فتح هذا اليوم والأيام التالية'}
                         </button>
                       </div>
                     </div>

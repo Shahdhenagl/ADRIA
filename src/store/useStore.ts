@@ -5310,21 +5310,19 @@ setupRealtime: () => {
   reopenDay: async (dayStr: string) => {
     const state = get();
     if (!dayStr) return false;
-    const { start, end } = businessDayRange(dayStr, state.storeSettings);
+    const { start } = businessDayRange(dayStr, state.storeSettings);
     const startIso = start.toISOString();
-    const endIso = end.toISOString();
 
-    // 1. Fetch closing expenses for this business day
+    // 1. Fetch closing expenses for this business day and all subsequent days
     const { data: closingExpenses, error: expErr } = await supabase
       .from('expenses')
       .select('*')
       .eq('category', DAY_CLOSING_CATEGORY)
-      .gte('created_at', startIso)
-      .lt('created_at', endIso);
+      .gte('created_at', startIso);
 
     if (expErr) {
       console.error('reopenDay: failed to fetch closing expenses:', expErr);
-      alert('تعذّر جلب بيانات التقفيل لليوم: ' + expErr.message);
+      alert('تعذّر جلب بيانات التقفيل: ' + expErr.message);
       return false;
     }
 
@@ -5336,7 +5334,7 @@ setupRealtime: () => {
       if (gid) groupIds.push(gid);
     });
 
-    // 2. Delete closing expenses
+    // 2. Delete closing expenses for target day and all subsequent days
     if (expenseIds.length > 0) {
       const { error: delExpErr } = await supabase
         .from('expenses')
@@ -5349,7 +5347,7 @@ setupRealtime: () => {
       }
     }
 
-    // 3. Delete savings_transactions corresponding to day closing
+    // 3. Delete savings_transactions corresponding to day closing for target day and all subsequent days
     if (groupIds.length > 0) {
       await supabase.from('savings_transactions').delete().in('group_id', groupIds);
     }
@@ -5357,8 +5355,7 @@ setupRealtime: () => {
       .from('savings_transactions')
       .delete()
       .eq('source', 'day_closing')
-      .gte('created_at', startIso)
-      .lt('created_at', endIso);
+      .gte('created_at', startIso);
 
     // 4. Update local state & notify Telegram
     set((s) => ({
@@ -5369,7 +5366,7 @@ setupRealtime: () => {
       type: 'savings_out',
       actor: getActorName(state),
       currency: state.storeSettings.currency,
-      description: `إعادة فتح اليوم المغلق: ${dayStr} (تم إلغاء التقفيل وإتاحة اليوم للتعديل)`,
+      description: `إعادة فتح اليوم والأيام التالية: ${dayStr} (تم إلغاء تقفيل هذا اليوم والأيام التالية له للتعديل)`,
       amount: 0,
       date: new Date().toISOString(),
     });
