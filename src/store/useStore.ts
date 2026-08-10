@@ -5370,11 +5370,12 @@ setupRealtime: () => {
     const state = get();
     if (!dayStr) return false;
 
-    // Parse target day string [YYYY-MM-DD] and set search window 12 hours before calendar day start
+    // Parse target day string [YYYY-MM-DD] and set search window bounded strictly to target day (+/- 12h buffer)
     const parts = dayStr.split('-').map(Number);
     if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return false;
     const [y, m, d] = parts;
     const searchStart = new Date(y, m - 1, d - 1, 12, 0, 0, 0);
+    const searchEnd = new Date(y, m - 1, d + 1, 12, 0, 0, 0);
 
     // 1. Fetch all expenses to ensure no category mismatch or date boundary omission
     const { data: allExpenses, error: expErr } = await supabase
@@ -5387,13 +5388,13 @@ setupRealtime: () => {
       return false;
     }
 
-    // Filter all closing expenses created on or after searchStart
+    // Filter closing expenses created strictly within target day search window
     const closingExpenses = (allExpenses || []).filter((e: any) => {
       const created = new Date(e.created_at);
-      if (isNaN(created.getTime()) || created < searchStart) return false;
+      if (isNaN(created.getTime()) || created < searchStart || created > searchEnd) return false;
       const cat = String(e.category || '').trim();
       const note = String(e.note || '').trim();
-      return (
+      const isClosing = (
         cat === DAY_CLOSING_CATEGORY ||
         cat === 'تقفيل يومية' ||
         cat === 'تحويل للخزنة' ||
@@ -5402,6 +5403,9 @@ setupRealtime: () => {
         note.includes('[SVG:') ||
         note.includes('تحويل من المحل للخزنة الرئيسية')
       );
+      if (!isClosing) return false;
+      if (note.includes(dayStr) || String(e.created_at || '').startsWith(dayStr)) return true;
+      return true;
     });
 
     const expenseIds = closingExpenses.map((e: any) => e.id);
@@ -5415,14 +5419,17 @@ setupRealtime: () => {
     const { data: allSavings } = await supabase.from('savings_transactions').select('*');
     const closingSavings = (allSavings || []).filter((s: any) => {
       const created = new Date(s.created_at);
-      if (isNaN(created.getTime()) || created < searchStart) return false;
+      if (isNaN(created.getTime()) || created < searchStart || created > searchEnd) return false;
       const note = String(s.note || '').trim();
-      return (
+      const isClosing = (
         s.source === 'day_closing' ||
         s.source === 'shop_transfer' ||
         note.includes('[SVG:') ||
         note.includes('تحويل من المحل للخزنة الرئيسية')
       );
+      if (!isClosing) return false;
+      if (note.includes(dayStr) || String(s.created_at || '').startsWith(dayStr)) return true;
+      return true;
     });
 
     const savingsIds = closingSavings.map((s: any) => s.id);
@@ -5465,7 +5472,7 @@ setupRealtime: () => {
       type: 'savings_out',
       actor: getActorName(state),
       currency: state.storeSettings.currency,
-      description: `إعادة فتح اليوم والأيام التالية: ${dayStr} (تم إلغاء تقفيل هذا اليوم والأيام التالية له للتعديل)`,
+      description: `إعادة فتح اليوم: ${dayStr} (تم إلغاء تقفيل هذا اليوم فقط للتعديل)`,
       amount: 0,
       date: new Date().toISOString(),
     });
