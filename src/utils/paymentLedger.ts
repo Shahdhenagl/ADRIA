@@ -92,22 +92,51 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
       }
     }
 
-    // مرتجع / استرداد نقدي (صادر) على وسيلة الاسترداد
+    // مرتجع / استرداد نقدي (صادر) على وسيلة الاسترداد — بنفس موعد الخروج (refunded_at)
     const refunded = calculateCashRefunded(o);
     if (refunded > 0.001) {
       // المرتجع ممكن يترد على أكتر من وسيلة (db/67) — بيتحوّل لسطر لكل وسيلة
-      // بدل سطر واحد، وإلا الكشف بيحمّل المبلغ كله على وسيلة واحدة غلط.
       const rows = refundPartsOf(o, refunded);
+      const returnDate = o.refunded_at || o.date;
       rows.forEach(([rm, amount]) => {
-      entries.push({
-        id: `${o.id}:refund:${rm}`,
-        date: o.date,
-        method: rm as PaymentKey,
-        desc: `مرتجع فاتورة #${shortId(o.id)}`,
-        inAmount: 0,
-        outAmount: amount,
-        kind: 'return',
+        entries.push({
+          id: `${o.id}:refund:${rm}`,
+          date: returnDate,
+          method: rm as PaymentKey,
+          desc: `مرتجع فاتورة #${shortId(o.id)}`,
+          inAmount: 0,
+          outAmount: amount,
+          kind: 'return',
+        });
       });
+    }
+
+    // الاستبدالات — بتسمّع بنفس موعد الخروج/الاستبدال (exchange_data.date)
+    if (o.exchange_data) {
+      const history = Array.isArray(o.exchange_data.history) ? o.exchange_data.history : [];
+      const exchanges = [...history, o.exchange_data];
+      exchanges.forEach((x: any, idx: number) => {
+        const xDate = x.date || o.refunded_at || o.date;
+        const diff = Number(x.netDifference ?? x.difference ?? 0);
+        const xSplitSum = ALL_PAYMENT_KEYS.reduce((s, k) => s + Math.abs(Number(x[`paid_${k}`]) || 0), 0);
+        if (Math.abs(diff) > 0.001 || xSplitSum > 0.001) {
+          for (const k of ALL_PAYMENT_KEYS) {
+            const rawVal = Number(x[`paid_${k}`]) || 0;
+            const amt = xSplitSum > 0 ? Math.abs(rawVal) : shareOf(x, k, Math.abs(diff));
+            if (amt > 0.001) {
+              const isIn = rawVal !== 0 ? rawVal > 0 : diff > 0;
+              entries.push({
+                id: `${o.id}:exchange:${idx}:${k}`,
+                date: xDate,
+                method: k,
+                desc: `استبدال فاتورة #${shortId(o.id)}`,
+                inAmount: isIn ? amt : 0,
+                outAmount: isIn ? 0 : amt,
+                kind: 'return',
+              });
+            }
+          }
+        }
       });
     }
   }

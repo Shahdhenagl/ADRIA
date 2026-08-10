@@ -2101,6 +2101,25 @@ export const useStore = create<CashierStore>((set, get) => ({
 
     new BroadcastChannel('cashier-sync').postMessage('sync_products');
     get().syncOfflineReturnsQueue();
+
+    // Sync offline held invoices
+    try {
+      const heldQueue = JSON.parse(localStorage.getItem('cashier_offline_held_queue') || '[]');
+      if (heldQueue.length > 0) {
+        const remainingHeld: any[] = [];
+        for (const item of heldQueue) {
+          const { id, isOffline, ...cleanData } = item;
+          const { error } = await supabase.from('held_invoices').insert(cleanData);
+          if (error) {
+            console.error('Failed to sync offline held invoice:', error);
+            remainingHeld.push(item);
+          }
+        }
+        localStorage.setItem('cashier_offline_held_queue', JSON.stringify(remainingHeld));
+      }
+    } catch (e) {
+      console.error('sync offline held queue error:', e);
+    }
   },
 
   // ── Cart ───────────────────────────────────────────────────
@@ -2536,10 +2555,6 @@ export const useStore = create<CashierStore>((set, get) => ({
     const state = get();
     if (state.cart.length === 0) return false;
     try {
-      if (typeof navigator !== 'undefined' && !navigator.onLine) {
-        alert('حفظ الفواتير المعلقة غير متاح بدون اتصال بالإنترنت.');
-        return false;
-      }
       const sp = state.salesperson;
       const total = state.cart.reduce((sum, i) => sum + i.sale_price * i.quantity, 0);
       const items: HeldInvoiceItem[] = state.cart.map((i) => ({
@@ -2556,11 +2571,14 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       const depAmt = Math.max(0, Number(deposit) || 0);
       const depSplit = depositSplit || {};
-      if (depAmt > 0 && !(await ensureAccountingDayOpen(state, new Date()))) return false;
+      const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
-      const { data, error } = await supabase
-        .from('held_invoices')
-        .insert({
+      if (!isOffline && depAmt > 0 && !(await ensureAccountingDayOpen(state, new Date()))) return false;
+
+      let data: any = null;
+      if (isOffline) {
+        data = {
+          id: 'offline_held_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
           customer_name: customerName?.trim() || null,
           customer_phone: customerPhone?.trim() || null,
           customer_custom_id: customerCustomId?.trim() || null,
@@ -2577,23 +2595,52 @@ export const useStore = create<CashierStore>((set, get) => ({
           status: 'held',
           customer_address: customerAddress?.trim() || null,
           shipping_note: shippingNote?.trim() || null,
-        })
-        .select()
-        .single();
+          created_at: new Date().toISOString(),
+          isOffline: true,
+        };
+        const queue = JSON.parse(localStorage.getItem('cashier_offline_held_queue') || '[]');
+        localStorage.setItem('cashier_offline_held_queue', JSON.stringify([...queue, data]));
+      } else {
+        const { data: resData, error } = await supabase
+          .from('held_invoices')
+          .insert({
+            customer_name: customerName?.trim() || null,
+            customer_phone: customerPhone?.trim() || null,
+            customer_custom_id: customerCustomId?.trim() || null,
+            items,
+            total,
+            invoice_type: state.invoiceType,
+            salesperson_id: sp?.id || null,
+            salesperson_name: sp?.name || null,
+            cashier_name: getActorName(state),
+            notes: notes?.trim() || null,
+            deposit: depAmt,
+            deposit_split: depAmt > 0 ? depSplit : null,
+            kind: kind || 'shop',
+            status: 'held',
+            customer_address: customerAddress?.trim() || null,
+            shipping_note: shippingNote?.trim() || null,
+          })
+          .select()
+          .single();
 
-      if (error || !data) {
-        console.error('Hold invoice error:', error);
-        alert('تعذّر حفظ الفاتورة المعلقة: ' + (error?.message || 'خطأ غير معروف'));
-        return false;
+        if (error || !resData) {
+          console.error('Hold invoice error:', error);
+          alert('تعذّر حفظ الفاتورة المعلقة: ' + (error?.message || 'خطأ غير معروف'));
+          return false;
+        }
+        data = resData;
       }
 
       // Reserve stock (والمعروض ينزل معاه زي البيع).
-      for (const item of state.cart) {
-        const prod = state.products.find((p) => p.id === item.id);
-        const newQty = Math.max(0, (prod?.stock_quantity ?? 0) - item.quantity);
-        await supabase.from('products')
-          .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty) })
-          .eq('id', item.id);
+      if (!isOffline) {
+        for (const item of state.cart) {
+          const prod = state.products.find((p) => p.id === item.id);
+          const newQty = Math.max(0, (prod?.stock_quantity ?? 0) - item.quantity);
+          await supabase.from('products')
+            .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty) })
+            .eq('id', item.id);
+        }
       }
 
       const updatedProducts = state.products.map((p) => {
@@ -5277,8 +5324,20 @@ setupRealtime: () => {
     // نُدرجه أولاً ونفحص الخطأ — عشان لو فشل الإدراج (مثلاً عمود group_id غير موجود)
     // ما نسجّلش مصروف خزنة المحل ونسيب الحسابات مختلّة (كان الإدراج بدون فحص قبل كده).
     const rows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
-      .filter((m) => s[m] > 0)
-      .map((m) => ({ direction, amount: s[m], method: m, source: source || 'manual', note: note || null, group_id: groupId, ...(dateISO ? { created_at: dateISO } : {}) }));
+      .filter((m) => Math.abs(s[m] || 0) > 0.001)
+      .map((m) => {
+        const val = s[m] || 0;
+        const actualDir = val < 0 ? (direction === 'in' ? 'out' : 'in') : direction;
+        return {
+          direction: actualDir,
+          amount: Math.abs(val),
+          method: m,
+          source: source || 'manual',
+          note: note || null,
+          group_id: groupId,
+          ...(dateISO ? { created_at: dateISO } : {})
+        };
+      });
     if (rows.length) {
       const { error } = await supabase.from('savings_transactions').insert(rows);
       if (error) { console.error('savingsTransfer savings insert error:', error); alert('تعذّر تسجيل حركة الخزنة الرئيسية' + (String(error.message || '').includes('group_id') ? ' — شغّلي db/39_savings_group_id.sql أولاً.' : '')); return false; }

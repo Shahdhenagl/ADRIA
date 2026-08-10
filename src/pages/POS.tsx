@@ -2993,7 +2993,7 @@ export default function POS() {
                         setShowSaveXfer(true);
                         const a = dayBudget.shopAvail || {};
                         const next: Record<string, string> = {};
-                        activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = String(Math.max(0, a[k] || 0) || ''); });
+                        activePaymentKeys(storeSettings as any).forEach((k) => { next[k] = a[k] !== undefined && a[k] !== null ? String(a[k]) : ''; });
                         setSaveXfer(next);
                       }} disabled={dayBudget.isClosed} className={`w-full font-black py-3 rounded-xl flex items-center justify-center gap-2 text-white ${dayBudget.isClosed ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}>🏦 {dayBudget.isClosed ? 'اليوم مقفول - لا يمكن التقفيل مرة أخرى' : 'تحويل للخزنة الرئيسية'}</button>
                     ) : (
@@ -3002,12 +3002,12 @@ export default function POS() {
                           <span className="text-sm font-black text-indigo-800 dark:text-indigo-300">تحويل للخزنة الرئيسية</span>
                           <button onClick={() => { setShowSaveXfer(false); setSaveXferSent(false); }} className="text-xs font-bold text-slate-500">إغلاق</button>
                         </div>
-                        <p className="text-[11px] text-slate-500">المبالغ مملوءة بكامل الموجود في خزنة المحل — عدّليها لو عايزة مبلغ محدد (مش أكبر من المتاح). كل طريقة بتتحوّل بنفسها.</p>
+                        <p className="text-[11px] text-slate-500">المبالغ مملوءة بكامل الموجود في خزنة المحل — عدّليها لو عايزة مبلغ محدد. كل طريقة بتتحوّل بنفسها (وتقيد بالسالب لو الخزنة بالسالب).</p>
                         <div className="grid grid-cols-2 gap-2">
                           {PAY_KEYS.map(([k]) => (
                             <div key={k}>
                               <label className="text-[11px] font-bold text-slate-500">{payLabel(k)} <span className="text-slate-400">(متاح {((dayBudget.shopAvail?.[k]) || 0).toFixed(0)})</span></label>
-                              <input className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-bold" type="number" min="0" value={saveXfer[k]} onChange={(e) => { setSaveXfer((s) => ({ ...s, [k]: e.target.value })); setSaveXferSent(false); }} />
+                              <input className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-bold" type="number" value={saveXfer[k]} onChange={(e) => { setSaveXfer((s) => ({ ...s, [k]: e.target.value })); setSaveXferSent(false); }} />
                             </div>
                           ))}
                         </div>
