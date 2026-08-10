@@ -4,12 +4,13 @@ import { PiggyBank, ArrowLeftRight, Banknote, Save, Trash2 } from 'lucide-react'
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
 import { computeShopAvailable, markMainTreasuryNote, markSavingsGroupNote } from '../../utils/treasury';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
+import { businessDateStr } from '../../utils/businessDay';
 
 type Split = Record<string, number>;
 const zero = (): Split => { const z: Split = {}; ALL_PAYMENT_KEYS.forEach((k) => { z[k] = 0; }); return z; };
 
 export default function Savings() {
-  const { storeSettings, savingsTransfer, savingsConvert, updateSettings, addExpense, recordMainTreasuryIn, recordMainTreasuryOut, deleteSavingsOperation } = useStore();
+  const { storeSettings, savingsTransfer, reopenDay, savingsConvert, updateSettings, addExpense, recordMainTreasuryIn, recordMainTreasuryOut, deleteSavingsOperation } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
@@ -23,6 +24,7 @@ export default function Savings() {
   // income/expense = معاملة مالية للخزنة الرئيسية نفسها (فلوس داخلة/خارجة من بره).
   const [mode, setMode] = useState<'in' | 'out' | 'convert' | 'income' | 'expense'>('in');
   const direction: 'in' | 'out' = mode === 'out' ? 'out' : 'in';
+
   const isFinancial = mode === 'income' || mode === 'expense';
   const hasCap = mode !== 'income'; // الإيراد فلوس جاية من بره → مفيش سقف
   const [category, setCategory] = useState('عام');
@@ -253,7 +255,14 @@ export default function Savings() {
                 : t.direction === 'in' ? 'إيداع/تحويل للرئيسية' : 'سحب/تحويل للمحل';
 
   const requestDeleteOtp = async (t: any) => {
-    if (t.source === 'day_closing') { alert('معاملة «تقفيل يوم» لا يمكن حذفها من هنا — أعيدي فتح اليوم من شاشة تقفيل اليوم.'); return; }
+    if (t.source === 'day_closing') {
+      const dStr = businessDateStr(storeSettings, new Date(t.created_at));
+      if (confirm(`معاملة «تقفيل يوم ${dStr}».\n\nهل ترغب في إعادة فتح هذا اليوم للتعديل وإلغاء التقفيل؟`)) {
+        const ok = await reopenDay(dStr);
+        if (ok) alert('تم إعادة فتح اليوم بنجاح ✅ يمكنك الآن التعديل والإضافة على هذا اليوم.');
+      }
+      return;
+    }
     if (delBusy) return;
     setDelBusy(true);
     try {

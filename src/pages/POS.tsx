@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useStore, HELD_STATUS_LABEL, type HeldInvoice, type HeldStatus, type Product } from '../store/useStore';
 import { HeldReturnModal } from '../components/HeldReturnModal';
 import { EditInvoiceModal } from '../components/EditInvoiceModal';
-import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Truck, Hourglass, Play } from 'lucide-react';
+import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Truck, Hourglass, Play, Unlock } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { printBarcodeLabelsBatch, generateBarcode } from '../utils/printBarcodeLabels';
@@ -108,7 +108,8 @@ async function loadDayBudgetSource(dayStr: string, start: Date, end: Date, local
 }
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, reopenDay, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
+  const [reopenBusy, setReopenBusy] = useState(false);
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
   const [saveXfer, setSaveXfer] = useState<Record<string, string>>({ cash: '', visa: '', wallet: '', instapay: '' });
@@ -3027,6 +3028,37 @@ export default function POS() {
                       </div>
                     )}
                   </div>
+                  )}
+
+                  {/* إعادة فتح اليوم المغلق */}
+                  {dayBudget.isClosed && perm('savings') && (
+                    <div className="border-t border-slate-100 dark:border-slate-700 pt-3">
+                      <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-2xl p-4 space-y-2 text-right">
+                        <div className="flex items-center justify-between">
+                          <span className="text-sm font-black text-amber-900 dark:text-amber-300 flex items-center gap-1.5"><Unlock size={18} /> إعادة فتح هذا اليوم للتعديل</span>
+                        </div>
+                        <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold leading-relaxed">
+                          اليوم ({dayBudgetDate}) مقفول حالياً. لإضافة أو تعديل أو حذف أي فاتورة أو حركة مالية في هذا اليوم، يمكنك إلغاء التقفيل وإعادة فتح اليوم.
+                        </p>
+                        <button
+                          onClick={async () => {
+                            if (!confirm(`هل أنت متأكد من إعادة فتح يوم ${dayBudgetDate}؟\n\nسيتم إلغاء تحويل التقفيل وإعادة اليوم لحالة "مفتوح للتعديل".`)) return;
+                            setReopenBusy(true);
+                            const ok = await reopenDay(dayBudgetDate);
+                            setReopenBusy(false);
+                            if (ok) {
+                              alert('تم إعادة فتح اليوم بنجاح ✅ يمكنك الآن التعديل والإضافة على هذا اليوم.');
+                              computeDayBudget(dayBudgetDate);
+                            }
+                          }}
+                          disabled={reopenBusy}
+                          className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition"
+                        >
+                          <Unlock size={18} />
+                          {reopenBusy ? 'جاري إعادة فتح اليوم...' : '🔓 إعادة فتح هذا اليوم للتعديل'}
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </>
               )}
