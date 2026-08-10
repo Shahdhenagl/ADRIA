@@ -139,6 +139,7 @@ export default function Inventory() {
   // ومع ذلك بتتخصم كتكلفة وقت البيع — فلازم تكون مقيّدة عشان الربح يبقى مقابل رأس مال.
   const [showIntakeModal, setShowIntakeModal] = useState(false);
   const [intakeProductId, setIntakeProductId] = useState('');
+  const [intakeSearch, setIntakeSearch] = useState('');
   const [intakeQty, setIntakeQty] = useState('');
   const [intakeCost, setIntakeCost] = useState('');
   const [intakeNote, setIntakeNote] = useState('');
@@ -1199,14 +1200,16 @@ export default function Inventory() {
               <div className="bg-white border border-slate-200 rounded-2xl p-4">
                 <p className="text-sm font-bold text-slate-700 mb-1">إضافة قيد يدوي</p>
                 <p className="text-[11px] text-slate-400 mb-3">بيسجّل <b>قيمة</b> بضاعة دخلت بدون شراء فقط — مش بيغيّر كمية المخزون.</p>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+                  <input type="text" placeholder="بحث بالكود/الاسم" value={intakeSearch} onChange={(e) => setIntakeSearch(e.target.value)}
+                    className="p-3 border border-slate-200 rounded-xl text-sm bg-slate-50" />
                   <select value={intakeProductId} onChange={(e) => {
                     setIntakeProductId(e.target.value);
                     const p = products.find(x => x.id === e.target.value);
                     if (p && !intakeCost) setIntakeCost(String(p.average_purchase_price || p.purchase_price || 0));
                   }} className="md:col-span-2 p-3 border border-slate-200 rounded-xl text-sm bg-slate-50">
                     <option value="">اختر المنتج…</option>
-                    {products.filter(p => !p.is_hidden).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    {products.filter(p => !p.is_hidden).filter(p => !intakeSearch || p.name.includes(intakeSearch) || (p.barcode && p.barcode.includes(intakeSearch))).map(p => <option key={p.id} value={p.id}>{p.name} {p.barcode ? `(${p.barcode})` : ''}</option>)}
                   </select>
                   <input type="number" step="any" placeholder="الكمية" value={intakeQty} onChange={(e) => setIntakeQty(e.target.value)}
                     className="p-3 border border-slate-200 rounded-xl text-sm bg-slate-50" />
@@ -1229,6 +1232,7 @@ export default function Inventory() {
                     <tr>
                       <th className="p-3 text-right font-bold">التاريخ</th>
                       <th className="p-3 text-right font-bold">المنتج</th>
+                      <th className="p-3 text-right font-bold">الكود</th>
                       <th className="p-3 text-right font-bold">الكمية</th>
                       <th className="p-3 text-right font-bold">تكلفة الوحدة</th>
                       <th className="p-3 text-right font-bold">القيمة</th>
@@ -1238,7 +1242,7 @@ export default function Inventory() {
                   </thead>
                   <tbody>
                     {visibleIntakes.length === 0 && (
-                      <tr><td colSpan={7} className="p-6 text-center text-slate-400 font-bold">لا توجد قيود.</td></tr>
+                      <tr><td colSpan={8} className="p-6 text-center text-slate-400 font-bold">لا توجد قيود.</td></tr>
                     )}
                     {visibleIntakes.map(i => (
                       <tr key={i.id} className="border-b border-slate-100">
@@ -1247,6 +1251,7 @@ export default function Inventory() {
                           {i.product_name || '—'}
                           {i.note && <span className="block text-[11px] font-normal text-slate-400">{i.note}</span>}
                         </td>
+                        <td className="p-3 font-mono text-slate-500 text-xs">{products.find(p => p.id === i.product_id)?.barcode || '—'}</td>
                         <td className="p-3 text-slate-600">{formatQty(Number(i.quantity), products.find(p => p.id === i.product_id)?.unit)}</td>
                         <td className="p-3 text-slate-600">{Number(i.unit_cost).toLocaleString()}</td>
                         <td className="p-3 font-black text-amber-600">{fmtMoney(Number(i.total_value))}</td>
