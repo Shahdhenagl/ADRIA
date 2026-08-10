@@ -142,6 +142,7 @@ export default function Inventory() {
   const [showIntakeModal, setShowIntakeModal] = useState(false);
   const [intakeProductId, setIntakeProductId] = useState('');
   const [intakeSearch, setIntakeSearch] = useState('');
+  const [intakeTableSearch, setIntakeTableSearch] = useState('');
   const [intakeQty, setIntakeQty] = useState('');
   const [intakeCost, setIntakeCost] = useState('');
   const [intakeNote, setIntakeNote] = useState('');
@@ -1224,9 +1225,21 @@ export default function Inventory() {
                   className="w-full mt-2 p-3 border border-slate-200 rounded-xl text-sm bg-slate-50" />
               </div>
 
-              <div className="flex items-center justify-between bg-amber-50 border border-amber-100 rounded-2xl px-4 py-3">
-                <span className="text-sm font-bold text-amber-800">الإجمالي المقيّد</span>
-                <span className="text-xl font-black text-amber-700">{fmtMoney(noPurchaseTotal)} {storeSettings.currency}</span>
+              <div className="flex flex-col md:flex-row md:items-center justify-between bg-amber-50 border border-amber-100 rounded-2xl p-4 gap-3">
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold text-amber-800">الإجمالي المقيّد</span>
+                  <span className="text-xl font-black text-amber-700">{fmtMoney(noPurchaseTotal)} {storeSettings.currency}</span>
+                </div>
+                <div className="relative w-full md:w-1/2">
+                  <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                  <input
+                    type="text"
+                    placeholder="ابحث في السجل بالكود أو الاسم..."
+                    value={intakeTableSearch}
+                    onChange={(e) => setIntakeTableSearch(e.target.value)}
+                    className="w-full bg-white border border-slate-200 py-2.5 pr-10 pl-4 rounded-xl text-sm focus:ring-2 focus:ring-amber-400 focus:outline-none"
+                  />
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -1244,10 +1257,20 @@ export default function Inventory() {
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleIntakes.length === 0 && (
+                    {visibleIntakes.filter(i => {
+                      if (!intakeTableSearch) return true;
+                      const q = intakeTableSearch.toLowerCase();
+                      const p = products.find(x => x.id === i.product_id);
+                      return (i.product_name && i.product_name.toLowerCase().includes(q)) || (p && p.barcode && p.barcode.toLowerCase().includes(q));
+                    }).length === 0 && (
                       <tr><td colSpan={8} className="p-6 text-center text-slate-400 font-bold">لا توجد قيود.</td></tr>
                     )}
-                    {visibleIntakes.map(i => (
+                    {visibleIntakes.filter(i => {
+                      if (!intakeTableSearch) return true;
+                      const q = intakeTableSearch.toLowerCase();
+                      const p = products.find(x => x.id === i.product_id);
+                      return (i.product_name && i.product_name.toLowerCase().includes(q)) || (p && p.barcode && p.barcode.toLowerCase().includes(q));
+                    }).map(i => (
                       <tr key={i.id} className="border-b border-slate-100">
                         <td className="p-3 text-slate-500">{new Date(i.created_at).toLocaleDateString()}</td>
                         <td className="p-3 font-bold text-slate-700">
