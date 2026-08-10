@@ -5310,32 +5310,70 @@ setupRealtime: () => {
   reopenDay: async (dayStr: string) => {
     const state = get();
     if (!dayStr) return false;
-    const { start } = businessDayRange(dayStr, state.storeSettings);
-    // 4-hour buffer to safely capture early/late timestamped closing entries across timezone offsets
-    const searchStart = new Date(start.getTime() - 4 * 60 * 60 * 1000).toISOString();
 
-    // 1. Fetch closing expenses for this business day and all subsequent days
-    const { data: closingExpenses, error: expErr } = await supabase
+    // Parse target day string [YYYY-MM-DD] and set search window 12 hours before calendar day start
+    const parts = dayStr.split('-').map(Number);
+    if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return false;
+    const [y, m, d] = parts;
+    const searchStart = new Date(y, m - 1, d - 1, 12, 0, 0, 0);
+
+    // 1. Fetch all expenses to ensure no category mismatch or date boundary omission
+    const { data: allExpenses, error: expErr } = await supabase
       .from('expenses')
-      .select('*')
-      .in('category', [DAY_CLOSING_CATEGORY, 'تقفيل يومية', 'تحويل للخزنة'])
-      .gte('created_at', searchStart);
+      .select('*');
 
     if (expErr) {
-      console.error('reopenDay: failed to fetch closing expenses:', expErr);
-      alert('تعذّر جلب بيانات التقفيل: ' + expErr.message);
+      console.error('reopenDay: failed to fetch expenses:', expErr);
+      alert('تعذّر جلب بيانات المصروفات: ' + expErr.message);
       return false;
     }
 
+    // Filter all closing expenses created on or after searchStart
+    const closingExpenses = (allExpenses || []).filter((e: any) => {
+      const created = new Date(e.created_at);
+      if (isNaN(created.getTime()) || created < searchStart) return false;
+      const cat = String(e.category || '').trim();
+      const note = String(e.note || '').trim();
+      return (
+        cat === DAY_CLOSING_CATEGORY ||
+        cat === 'تقفيل يومية' ||
+        cat === 'تحويل للخزنة' ||
+        cat.includes('تحويل للخزنة') ||
+        cat.includes('تقفيل') ||
+        note.includes('[SVG:') ||
+        note.includes('تحويل من المحل للخزنة الرئيسية')
+      );
+    });
+
+    const expenseIds = closingExpenses.map((e: any) => e.id);
     const groupIds: string[] = [];
-    const expenseIds: string[] = [];
-    (closingExpenses || []).forEach((e: any) => {
-      expenseIds.push(e.id);
+    closingExpenses.forEach((e: any) => {
       const gid = savingsGroupIdOf(e.note);
       if (gid) groupIds.push(gid);
     });
 
-    // 2. Delete closing expenses for target day and all subsequent days
+    // 2. Fetch all savings_transactions to ensure no closing entries are missed
+    const { data: allSavings } = await supabase.from('savings_transactions').select('*');
+    const closingSavings = (allSavings || []).filter((s: any) => {
+      const created = new Date(s.created_at);
+      if (isNaN(created.getTime()) || created < searchStart) return false;
+      const note = String(s.note || '').trim();
+      return (
+        s.source === 'day_closing' ||
+        s.source === 'shop_transfer' ||
+        note.includes('[SVG:') ||
+        note.includes('تحويل من المحل للخزنة الرئيسية')
+      );
+    });
+
+    const savingsIds = closingSavings.map((s: any) => s.id);
+    closingSavings.forEach((s: any) => {
+      if (s.group_id) groupIds.push(s.group_id);
+    });
+
+    const uniqueGroupIds = Array.from(new Set(groupIds));
+
+    // 3. Perform deletes on Supabase
     if (expenseIds.length > 0) {
       const { error: delExpErr } = await supabase
         .from('expenses')
@@ -5348,15 +5386,12 @@ setupRealtime: () => {
       }
     }
 
-    // 3. Delete savings_transactions corresponding to day closing for target day and all subsequent days
-    if (groupIds.length > 0) {
-      await supabase.from('savings_transactions').delete().in('group_id', groupIds);
+    if (uniqueGroupIds.length > 0) {
+      await supabase.from('savings_transactions').delete().in('group_id', uniqueGroupIds);
     }
-    await supabase
-      .from('savings_transactions')
-      .delete()
-      .eq('source', 'day_closing')
-      .gte('created_at', searchStart);
+    if (savingsIds.length > 0) {
+      await supabase.from('savings_transactions').delete().in('id', savingsIds);
+    }
 
     // 4. Update local state, clear budget cache, & notify Telegram
     set((s) => ({
