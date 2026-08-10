@@ -3038,16 +3038,16 @@ export default function POS() {
                           <span className="text-sm font-black text-amber-900 dark:text-amber-300 flex items-center gap-1.5"><Unlock size={18} /> إعادة فتح هذا اليوم للتعديل</span>
                         </div>
                         <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold leading-relaxed">
-                          اليوم ({dayBudgetDate}) والأيام التالية له مقفولة. لإضافة أو تعديل أو حذف أي حركة في هذا اليوم، سيتم إلغاء تقفيل هذا اليوم وجميع الأيام التالية له ليتسنى لك تعديل الحسابات وإعادة التقفيل بالترتيب.
+                          اليوم ({dayBudgetDate}) والأيام التالية له مقفولة. عند فتح الأيام، <b>تظل جميع الفواتير والمبيعات والمصروفات والبيانات مسجلة كما هي 100% دون تصفير أو حذف</b>، ويتم فقط فتح الأيام لتتمكن من التعديل عليها وإعادة تقفيلها.
                         </p>
                         <button
                           onClick={async () => {
-                            if (!confirm(`هل أنت متأكد من إعادة فتح يوم ${dayBudgetDate} والأيام التالية له؟\n\nسيتم إلغاء تقفيل هذا اليوم وجميع الأيام التالية له وإعادتها لحالة "مفتوح للتعديل".`)) return;
+                            if (!confirm(`هل أنت متأكد من إعادة فتح يوم ${dayBudgetDate} والأيام التالية له؟\n\nتنويه: جميع المبيعات والفواتير والمصروفات محفوظة 100% ولن تتأثر أو تتصفّر، سيتم فقط تحويل الأيام لحالة "مفتوح للتعديل".`)) return;
                             setReopenBusy(true);
                             const ok = await reopenDay(dayBudgetDate);
                             setReopenBusy(false);
                             if (ok) {
-                              alert('تم إعادة فتح اليوم والأيام التالية له بنجاح ✅ يمكنك الآن التعديل والإضافة.');
+                              alert('تم إعادة فتح الأيام بنجاح ✅ كافة البيانات والمبيعات محفوظة ويمكنك الآن التعديل عليها بحرية.');
                               computeDayBudget(dayBudgetDate);
                             }
                           }}
