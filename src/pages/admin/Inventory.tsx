@@ -346,6 +346,7 @@ export default function Inventory() {
   const movementWarehouseStock = Math.max(0, movementCurrentStock - movementDisplayStock);
   const movementUnexplainedQty = movementCurrentStock - movementExpectedStock;
   const movementTotalSold = movementLines.filter(line => line.source === 'بيع').reduce((sum, line) => sum + Math.abs(line.qty), 0);
+  const movementTotalReturned = movementLines.filter(line => line.source === 'مرتجع عميل').reduce((sum, line) => sum + Math.abs(line.qty), 0);
   const movementDate = (value?: string | null) => value ? new Date(value).toLocaleString('ar-EG') : '—';
 
   // ── طباعة باركود لأكتر من منتج مع بعض ────────────────────────────────────
@@ -1440,6 +1441,10 @@ export default function Inventory() {
                 <div className="bg-sky-50 border border-sky-100 rounded-2xl p-3">
                   <p className="text-[11px] font-bold text-sky-600">القطع المباعة</p>
                   <p className="text-lg font-black text-sky-700">{formatQty(movementTotalSold, movementProduct.unit)}</p>
+                </div>
+                <div className="bg-rose-50 border border-rose-100 rounded-2xl p-3">
+                  <p className="text-[11px] font-bold text-rose-600">المرتجعات</p>
+                  <p className="text-lg font-black text-rose-700">{formatQty(movementTotalReturned, movementProduct.unit)}</p>
                 </div>
                 <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3">
                   <p className="text-[11px] font-bold text-indigo-600">المستودع</p>
