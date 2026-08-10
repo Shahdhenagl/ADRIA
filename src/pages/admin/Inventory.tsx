@@ -75,6 +75,8 @@ export default function Inventory() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   // استبدال مخزون: نقل كمية من منتج لآخر بنفس سعر البيع
   const [showSwapModal, setShowSwapModal] = useState(false);
+  const [showQuickMovementModal, setShowQuickMovementModal] = useState(false);
+  const [quickMovementSearch, setQuickMovementSearch] = useState('');
   const [swapFromId, setSwapFromId] = useState('');
   const [swapToId, setSwapToId] = useState('');
   const [swapQty, setSwapQty] = useState('');
@@ -1335,6 +1337,50 @@ export default function Inventory() {
         </div>
       )}
 
+      {/* QUICK MOVEMENT SEARCH MODAL */}
+      {showQuickMovementModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+            <div className="p-6 border-b flex justify-between items-center bg-indigo-50 shrink-0">
+              <h2 className="text-xl font-bold text-indigo-800 flex items-center gap-2"><ScanLine size={22} className="text-indigo-600" /> كشف حركة (بحث سريع)</h2>
+              <button onClick={() => setShowQuickMovementModal(false)} className="text-slate-400 hover:text-slate-600 bg-white p-2 rounded-xl shadow-sm border border-slate-200"><X size={20} /></button>
+            </div>
+            <div className="p-6 flex flex-col min-h-0">
+              <input
+                autoFocus
+                type="text"
+                placeholder="مرر الباركود هنا أو ابحث بالاسم..."
+                value={quickMovementSearch}
+                onChange={(e) => {
+                  setQuickMovementSearch(e.target.value);
+                  const p = products.find(x => x.barcode === e.target.value);
+                  if (p) {
+                    setShowQuickMovementModal(false);
+                    setQuickMovementSearch('');
+                    openMovementModal(p);
+                  }
+                }}
+                className="w-full bg-slate-50 border border-slate-200 p-4 rounded-xl text-center font-bold text-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none mb-4"
+              />
+              <div className="overflow-y-auto space-y-2 flex-1">
+                {products
+                  .filter(p => !p.is_hidden)
+                  .filter(p => quickMovementSearch && (p.name.includes(quickMovementSearch) || (p.barcode && p.barcode.includes(quickMovementSearch))))
+                  .map(p => (
+                   <button key={p.id} onClick={() => { setShowQuickMovementModal(false); setQuickMovementSearch(''); openMovementModal(p); }} className="w-full text-right p-3 bg-slate-50 hover:bg-indigo-50 border border-slate-100 hover:border-indigo-200 rounded-xl transition">
+                     <div className="font-bold text-slate-800">{p.name}</div>
+                     <div className="text-xs text-slate-500 font-mono mt-1">{p.barcode || 'بدون كود'}</div>
+                   </button>
+                ))}
+                {quickMovementSearch && products.filter(p => !p.is_hidden && (p.name.includes(quickMovementSearch) || (p.barcode && p.barcode.includes(quickMovementSearch)))).length === 0 && (
+                  <div className="text-center text-slate-400 font-bold py-4">لا يوجد منتج مطابق.</div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* PRODUCT STOCK MOVEMENT MODAL */}
       {movementProduct && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1542,6 +1588,10 @@ export default function Inventory() {
           <button onClick={() => { setBatchRows([]); setBatchSearch(''); setShowBatchPrint(true); }} className="bg-slate-700 hover:bg-slate-800 text-white px-5 py-3 rounded-xl font-bold transition flex items-center gap-2 shadow-lg">
             <Printer size={20} />
             طباعة باركود
+          </button>
+          <button onClick={() => { setQuickMovementSearch(''); setShowQuickMovementModal(true); }} className="bg-indigo-50 hover:bg-indigo-100 text-indigo-700 px-5 py-3 rounded-xl font-bold transition flex items-center gap-2 shadow-sm border border-indigo-100">
+            <ScanLine size={20} />
+            كشف حركة
           </button>
           <button onClick={() => { setSwapFromId(''); setSwapToId(''); setSwapQty(''); setShowSwapModal(true); }} className="bg-orange-500 hover:bg-orange-600 text-white px-5 py-3 rounded-xl font-bold transition flex items-center gap-2 shadow-lg">
             <ArrowLeftRight size={20} />
