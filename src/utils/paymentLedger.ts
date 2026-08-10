@@ -52,8 +52,8 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
   // مدفوعات الآجل لكل فاتورة — لصافي الفواتير القديمة اللي مالهاش تقسيم مسجّل.
   const debtByInvoice = new Map<string, number>();
   for (const o of active) {
-    if (o.type === 'payment' && o.notes?.includes('سداد أجل للفاتورة رقم #')) {
-      const m = o.notes.match(/سداد أجل للفاتورة رقم #([\w-]+)/);
+    if (o.type === 'payment') {
+      const m = o.notes?.match(/#([\w-]+)/);
       if (m?.[1]) debtByInvoice.set(m[1], (debtByInvoice.get(m[1]) || 0) + (o.paid_amount || 0));
     }
   }

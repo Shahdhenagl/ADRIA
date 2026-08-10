@@ -85,6 +85,28 @@ describe('Human-Like Manual QA — Mutation-Tested Business Logic Suite', () => 
     expect(exchangeEntries).toHaveLength(1);
     expect(exchangeEntries[0].date).toBe(exchangeDate);
     expect(exchangeEntries[0].inAmount).toBe(200);
+
+    // Downgrade exchange: Product A (700) -> Product B (500), difference = -200 (outflow from store)
+    const downgradeOrder = {
+      id: 'ord-501',
+      type: 'sale',
+      total: 500,
+      paid_amount: 500,
+      paid_cash: 500,
+      payment_method: 'cash',
+      date: '2026-08-05T10:00:00.000Z',
+      exchange_data: {
+        date: exchangeDate,
+        oldTotal: 700,
+        newTotal: 500,
+        netDifference: -200,
+      }
+    };
+    const ledgerDowngrade = buildPaymentLedger([downgradeOrder], [], []);
+    const downgradeEntries = ledgerDowngrade.filter(e => e.desc.includes('استبدال'));
+    expect(downgradeEntries).toHaveLength(1);
+    expect(downgradeEntries[0].outAmount).toBe(200);
+    expect(downgradeEntries[0].inAmount).toBe(0);
   });
 
   // ── JOURNEY #5: Negative Day Closing Balance ───────────────────────────
