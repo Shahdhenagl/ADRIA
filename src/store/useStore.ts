@@ -5311,14 +5311,15 @@ setupRealtime: () => {
     const state = get();
     if (!dayStr) return false;
     const { start } = businessDayRange(dayStr, state.storeSettings);
-    const startIso = start.toISOString();
+    // 4-hour buffer to safely capture early/late timestamped closing entries across timezone offsets
+    const searchStart = new Date(start.getTime() - 4 * 60 * 60 * 1000).toISOString();
 
     // 1. Fetch closing expenses for this business day and all subsequent days
     const { data: closingExpenses, error: expErr } = await supabase
       .from('expenses')
       .select('*')
-      .eq('category', DAY_CLOSING_CATEGORY)
-      .gte('created_at', startIso);
+      .in('category', [DAY_CLOSING_CATEGORY, 'تقفيل يومية', 'تحويل للخزنة'])
+      .gte('created_at', searchStart);
 
     if (expErr) {
       console.error('reopenDay: failed to fetch closing expenses:', expErr);
@@ -5355,12 +5356,16 @@ setupRealtime: () => {
       .from('savings_transactions')
       .delete()
       .eq('source', 'day_closing')
-      .gte('created_at', startIso);
+      .gte('created_at', searchStart);
 
-    // 4. Update local state & notify Telegram
+    // 4. Update local state, clear budget cache, & notify Telegram
     set((s) => ({
       expenses: s.expenses.filter((e) => !expenseIds.includes(e.id)),
     }));
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('cashier_day_budget_cache');
+    }
 
     sendTelegramAlert({
       type: 'savings_out',
