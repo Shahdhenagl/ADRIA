@@ -1118,7 +1118,8 @@ async function nextOpenAccountingTimestamp(
   settings: StoreSettings,
   maxDays = 60,
 ): Promise<{ iso: string; day: string; shifted: boolean } | null> {
-  const cursor = new Date(`${businessDateStr(settings)}T00:00:00`);
+  const parts = businessDateStr(settings).split('-').map(Number);
+  const cursor = new Date(parts[0], parts[1] - 1, parts[2], 12, 0, 0);
   for (let i = 0; i < maxDays; i++) {
     const day = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`;
     const iso = timestampForBusinessDate(day, settings);

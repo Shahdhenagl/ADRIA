@@ -30,8 +30,12 @@ export function businessDateStr(settings?: { dayStartHour?: number } | null, now
  */
 export function businessDayRange(dayStr: string, settings?: { dayStartHour?: number } | null): { start: Date; end: Date } {
   const hour = dayStartHour(settings);
-  const start = new Date(`${dayStr}T00:00:00`);
-  start.setHours(hour, 0, 0, 0);
+  const cleanStr = (dayStr || '').trim().slice(0, 10);
+  const parts = cleanStr.split('-').map(Number);
+  const y = parts[0] || new Date().getFullYear();
+  const m = parts[1] ? parts[1] - 1 : new Date().getMonth();
+  const d = parts[2] || new Date().getDate();
+  const start = new Date(y, m, d, hour, 0, 0, 0);
   const end = new Date(start);
   end.setDate(end.getDate() + 1);
   return { start, end };
