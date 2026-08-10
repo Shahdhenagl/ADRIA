@@ -1060,13 +1060,14 @@ async function ensureAccountingDayOpen(state: CashierStore, value?: string | Dat
  */
 async function restoreHeldStockToCart(state: CashierStore, held: HeldInvoice) {
   for (const item of held.items) {
-    const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', item.id).single();
+    const { data: prodData } = await supabase.from('products').select('stock_quantity, display_quantity').eq('id', item.id).single();
     const currentStock = (prodData as any)?.stock_quantity ?? 0;
-    await supabase.from('products').update({ stock_quantity: currentStock + item.quantity }).eq('id', item.id);
+    const currentDisplay = (prodData as any)?.display_quantity ?? 0;
+    await supabase.from('products').update({ stock_quantity: currentStock + item.quantity, display_quantity: currentDisplay + item.quantity }).eq('id', item.id);
   }
   const restoredProducts = state.products.map((p) => {
     const it = held.items.find((i) => i.id === p.id);
-    return it ? { ...p, stock_quantity: p.stock_quantity + it.quantity } : p;
+    return it ? { ...p, stock_quantity: p.stock_quantity + it.quantity, display_quantity: (p.display_quantity || 0) + it.quantity } : p;
   });
   const cartItems: OrderItem[] = held.items.map((it) => {
     const prod = restoredProducts.find((p) => p.id === it.id);
@@ -2760,13 +2761,14 @@ export const useStore = create<CashierStore>((set, get) => ({
         return false;
       }
       for (const item of held.items) {
-        const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', item.id).single();
+        const { data: prodData } = await supabase.from('products').select('stock_quantity, display_quantity').eq('id', item.id).single();
         const currentStock = (prodData as any)?.stock_quantity ?? 0;
-        await supabase.from('products').update({ stock_quantity: currentStock + item.quantity }).eq('id', item.id);
+        const currentDisplay = (prodData as any)?.display_quantity ?? 0;
+        await supabase.from('products').update({ stock_quantity: currentStock + item.quantity, display_quantity: currentDisplay + item.quantity }).eq('id', item.id);
       }
       const restoredProducts = state.products.map((p) => {
         const it = held.items.find((i) => i.id === p.id);
-        return it ? { ...p, stock_quantity: p.stock_quantity + it.quantity } : p;
+        return it ? { ...p, stock_quantity: p.stock_quantity + it.quantity, display_quantity: (p.display_quantity || 0) + it.quantity } : p;
       });
       // رد العربون للعميل: مرتجع من الدرج يوم الإلغاء (category='حجز', amount موجب).
       const depAmt = Math.max(0, Number(held.deposit) || 0);
@@ -2840,13 +2842,14 @@ export const useStore = create<CashierStore>((set, get) => ({
       // 1) رجّع الكميات المرتجعة للمخزون.
       for (const b of back) {
         if (b.qty <= 0) continue;
-        const { data: prodData } = await supabase.from('products').select('stock_quantity').eq('id', b.it.id).single();
+        const { data: prodData } = await supabase.from('products').select('stock_quantity, display_quantity').eq('id', b.it.id).single();
         const currentStock = (prodData as any)?.stock_quantity ?? 0;
-        await supabase.from('products').update({ stock_quantity: currentStock + b.qty }).eq('id', b.it.id);
+        const currentDisplay = (prodData as any)?.display_quantity ?? 0;
+        await supabase.from('products').update({ stock_quantity: currentStock + b.qty, display_quantity: currentDisplay + b.qty }).eq('id', b.it.id);
       }
       const restoredProducts = state.products.map((p) => {
         const b = back.find((x) => x.it.id === p.id && x.qty > 0);
-        return b ? { ...p, stock_quantity: p.stock_quantity + b.qty } : p;
+        return b ? { ...p, stock_quantity: p.stock_quantity + b.qty, display_quantity: (p.display_quantity || 0) + b.qty } : p;
       });
 
       // 2) سجّل المرتجع على صف الطلب.
@@ -3413,18 +3416,21 @@ export const useStore = create<CashierStore>((set, get) => ({
       for (const item of stockRestores) {
         const productIndex = updatedProducts.findIndex((p) => p.id === item.productId);
         const localStock = productIndex >= 0 ? updatedProducts[productIndex].stock_quantity : 0;
+        const localDisplay = productIndex >= 0 ? (updatedProducts[productIndex].display_quantity || 0) : 0;
 
         const { data: prodData } = await supabase
           .from('products')
-          .select('stock_quantity')
+          .select('stock_quantity, display_quantity')
           .eq('id', item.productId)
           .maybeSingle();
 
         const dbStock = (prodData?.stock_quantity ?? localStock) as number;
+        const dbDisplay = (prodData?.display_quantity ?? localDisplay) as number;
         const newStock = dbStock + item.quantity;
+        const newDisplay = dbDisplay + item.quantity;
         const { error: productError } = await supabase
           .from('products')
-          .update({ stock_quantity: newStock })
+          .update({ stock_quantity: newStock, display_quantity: newDisplay })
           .eq('id', item.productId);
 
         if (productError) throw productError;
@@ -3433,6 +3439,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           updatedProducts[productIndex] = {
             ...updatedProducts[productIndex],
             stock_quantity: localStock + item.quantity,
+            display_quantity: localDisplay + item.quantity,
           };
         }
       }
@@ -3547,19 +3554,22 @@ export const useStore = create<CashierStore>((set, get) => ({
         
         const productIndex = updatedProducts.findIndex((p) => p.id === productId);
         const localStock = productIndex >= 0 ? updatedProducts[productIndex].stock_quantity : 0;
+        const localDisplay = productIndex >= 0 ? (updatedProducts[productIndex].display_quantity || 0) : 0;
 
         const { data: prodData } = await supabase
           .from('products')
-          .select('stock_quantity')
+          .select('stock_quantity, display_quantity')
           .eq('id', productId)
           .maybeSingle();
 
         const dbStock = (prodData?.stock_quantity ?? localStock) as number;
-        const newStock = dbStock + delta;
-        
+        const dbDisplay = (prodData?.display_quantity ?? localDisplay) as number;
+        const newStock = Math.max(0, dbStock + delta);
+        const newDisplay = delta > 0 ? dbDisplay + delta : displayAfterStockDrop({ stock_quantity: dbStock, display_quantity: dbDisplay }, newStock);
+
         const { error: productError } = await supabase
           .from('products')
-          .update({ stock_quantity: Math.max(0, newStock) })
+          .update({ stock_quantity: newStock, display_quantity: newDisplay })
           .eq('id', productId);
 
         if (productError) throw productError;
@@ -3568,6 +3578,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           updatedProducts[productIndex] = {
             ...updatedProducts[productIndex],
             stock_quantity: Math.max(0, localStock + delta),
+            display_quantity: delta > 0 ? localDisplay + delta : displayAfterStockDrop(updatedProducts[productIndex], Math.max(0, localStock + delta)),
           };
         }
       }
@@ -3752,16 +3763,20 @@ export const useStore = create<CashierStore>((set, get) => ({
 
           const { data: prodData, error: prodGetError } = await supabase
             .from('products')
-            .select('stock_quantity')
+            .select('stock_quantity, display_quantity')
             .eq('id', returnItem.productId)
             .single();
           
           if (prodGetError) throw prodGetError;
 
           const currentStock = prodData?.stock_quantity ?? 0;
+          const currentDisplay = prodData?.display_quantity ?? 0;
           const { error: prodError } = await supabase
             .from('products')
-            .update({ stock_quantity: currentStock + returnItem.returnQty })
+            .update({
+              stock_quantity: currentStock + returnItem.returnQty,
+              display_quantity: currentDisplay + returnItem.returnQty,
+            })
             .eq('id', returnItem.productId);
 
           if (prodError) throw prodError;

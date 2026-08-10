@@ -111,6 +111,20 @@ describe('سلامة المرتجعات', () => {
     }));
     expect(issues).toHaveLength(0);
   });
+
+  it('يحسب المبلغ المخصوم من الخزنة بدقة عند الإرجاع بواسطة refundRecordOf', async () => {
+    const { refundRecordOf } = await import('../treasury');
+    const order = {
+      id: 'inv-1',
+      total: 650,
+      paid_amount: 635,
+      paid_cash: 650,
+      refunded_cash: 635,
+      refund_method: 'cash',
+    };
+    const rec = refundRecordOf(order, 635);
+    expect(rec.paid_cash).toBe(635);
+  });
 });
 
 describe('تطابق تقسيمة الدفع', () => {
