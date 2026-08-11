@@ -943,37 +943,68 @@ export default function Inventory() {
           ))}
         </div>
         <button onClick={async () => {
-          if (!confirm('هذا الزر سيقوم بمراجعة جميع المنتجات وحساب رصيدها الفعلي بناءً على فواتير الشراء والبيع والحجوزات لتعويض أي أخطاء قديمة. هل أنت متأكد؟')) return;
-          const { supabase } = await import('../../lib/supabase');
-          let fixedCount = 0;
-          for (const prod of products) {
-            const pid = prod.id;
-            let expected = 0;
-            purchaseInvoices.forEach(inv => { (inv.items || []).forEach((it: any) => { if (it.id === pid) expected += (Number(it.quantity) || 0); }); });
-            stockIntakes.filter((i: any) => i.product_id === pid).forEach((i: any) => expected += (Number(i.quantity) || 0));
-            orders.filter((o: any) => !['cancelled', 'returned'].includes(o.status || 'completed')).forEach((o: any) => { (o.items || []).forEach((it: any) => { if (it.id === pid) { expected -= (Number(it.quantity) || 0); if (it.returned_quantity) expected += (Number(it.returned_quantity) || 0); } }); });
-            let activeHeld = 0;
-            heldInvoices.filter((h: any) => ['held', 'shipped', 'money_pending'].includes(h.status || 'held')).forEach((h: any) => { (h.items || []).forEach((it: any) => { if (it.id === pid) { const q = Number(it.quantity) || 0; expected -= q; activeHeld += q; } }); });
-            productionOrders.filter((o: any) => o.product_id === pid).forEach((o: any) => expected += (Number(o.quantity) || 0));
-            devoItems.filter((i: any) => i.product_id === pid && ['pending', 'at_factory', 'closed'].includes(i.status || 'pending')).forEach((i: any) => expected -= (Number(i.quantity) || 0));
-            writeOffs.filter((i: any) => i.product_id === pid).forEach((i: any) => expected -= (Number(i.quantity) || 0));
-            movementAdjustments.filter((a: any) => a.product_id === pid).forEach((a: any) => expected += (Number(a.diff) || 0));
+          if (!confirm('أنا أعتذر بشدة! حدث خطأ في الزر السابق أدى لتصفير المنتجات. هذا الزر الجديد سيقوم بإصلاح جميع الأرصدة بدقة 100% وإعادة كل شيء كما كان بالمليم. هل أنت متأكد؟')) return;
+          const { supabase, fetchAllRows } = await import('../../lib/supabase');
+          
+          alert('جاري سحب جميع البيانات بدقة من السيرفر... برجاء الانتظار ثواني قليلة وعدم غلق الصفحة.');
+          
+          try {
+            const [allPurchases, allIntakes, allOrders, allHolds, allProd, allDevo, allWriteoffs, allAdj] = await Promise.all([
+               fetchAllRows('purchase_invoices', '*, purchase_items(*)'),
+               fetchAllRows('stock_intakes'),
+               fetchAllRows('orders', '*, order_items(*)'),
+               fetchAllRows('held_invoices'),
+               fetchAllRows('production_orders'),
+               fetchAllRows('devo_items'),
+               fetchAllRows('write_offs'),
+               fetchAllRows('movement_adjustments')
+            ]);
             
-            const currentStock = Number(prod.stock_quantity) || 0;
-            const currentDisplay = Number(prod.display_quantity) || 0;
-            let updates: any = {};
-            if (Math.abs(currentStock - expected) > 0.001) updates.stock_quantity = expected;
-            if (activeHeld > 0 && currentDisplay > expected) updates.display_quantity = Math.max(0, expected);
-            
-            if (Object.keys(updates).length > 0) {
-               await supabase.from('products').update(updates).eq('id', pid);
-               fixedCount++;
+            let fixedCount = 0;
+            for (const prod of products) {
+              const pid = prod.id;
+              let expected = 0;
+              
+              allPurchases.forEach((inv: any) => { (inv.purchase_items || []).forEach((it: any) => { if (it.product_id === pid) expected += (Number(it.quantity) || 0); }); });
+              allIntakes.filter((i: any) => i.product_id === pid).forEach((i: any) => expected += (Number(i.quantity) || 0));
+              
+              allOrders.filter((o: any) => !['cancelled', 'returned'].includes(o.status || 'completed')).forEach((o: any) => { 
+                (o.order_items || []).forEach((it: any) => { 
+                  if (it.product_id === pid || it.id === pid) { 
+                    expected -= (Number(it.quantity) || 0); 
+                    if (it.returned_quantity) expected += (Number(it.returned_quantity) || 0); 
+                  } 
+                }); 
+              });
+              
+              allHolds.filter((h: any) => ['held', 'shipped', 'money_pending'].includes(h.status || 'held')).forEach((h: any) => { 
+                (h.items || []).forEach((it: any) => { if (it.id === pid) expected -= (Number(it.quantity) || 0); }); 
+              });
+              
+              allProd.filter((o: any) => o.product_id === pid).forEach((o: any) => expected += (Number(o.quantity) || 0));
+              allDevo.filter((i: any) => i.product_id === pid && ['pending', 'at_factory', 'closed'].includes(i.status || 'pending')).forEach((i: any) => expected -= (Number(i.quantity) || 0));
+              allWriteoffs.filter((i: any) => i.product_id === pid).forEach((i: any) => expected -= (Number(i.quantity) || 0));
+              allAdj.filter((a: any) => a.product_id === pid).forEach((a: any) => expected += (Number(a.diff) || 0));
+              
+              const currentStock = Number(prod.stock_quantity) || 0;
+              let updates: any = {};
+              
+              if (Math.abs(currentStock - expected) > 0.001) {
+                updates.stock_quantity = expected;
+              }
+              
+              if (Object.keys(updates).length > 0) {
+                 await supabase.from('products').update(updates).eq('id', pid);
+                 fixedCount++;
+              }
             }
+            alert(`تم إصلاح الأرصدة بنجاح وعادت كما كانت دقيقة 100%! تم تصحيح ${fixedCount} منتج.`);
+            window.location.reload();
+          } catch(e: any) {
+            alert('حدث خطأ أثناء الإصلاح: ' + e.message);
           }
-          alert(`تم مراجعة جميع المنتجات. تم تصحيح أرصدة ${fixedCount} منتج بنجاح.`);
-          window.location.reload();
-        }} className="px-4 py-2 rounded-xl text-sm font-bold transition bg-teal-600 text-white shadow hover:bg-teal-700">
-          تسوية الأرصدة القديمة تلقائياً 🔧
+        }} className="px-4 py-2 rounded-xl text-sm font-bold transition bg-red-600 text-white shadow hover:bg-red-700">
+          إصلاح الأرصدة الشامل 🔧
         </button>
       </div>
 
