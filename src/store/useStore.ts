@@ -3225,12 +3225,19 @@ export const useStore = create<CashierStore>((set, get) => ({
         if (product) {
           const { error: prodError } = await supabase
             .from('products')
-            .update({ stock_quantity: product.stock_quantity + ret.returnQty })
+            .update({ 
+              stock_quantity: product.stock_quantity + ret.returnQty,
+              display_quantity: (Number(product.display_quantity) || 0) + ret.returnQty 
+            })
             .eq('id', ret.productId);
           if (prodError) throw prodError;
           
           updatedProducts = updatedProducts.map((p) =>
-            p.id === ret.productId ? { ...p, stock_quantity: p.stock_quantity + ret.returnQty } : p
+            p.id === ret.productId ? { 
+              ...p, 
+              stock_quantity: p.stock_quantity + ret.returnQty,
+              display_quantity: (Number(p.display_quantity) || 0) + ret.returnQty 
+            } : p
           );
         }
 
