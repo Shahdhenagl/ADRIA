@@ -1681,6 +1681,181 @@ export default function Inventory() {
             >
               {loading ? '...جاري التصدير' : <><FileText size={16} /> PDF</>}
             </button>
+            <button
+              onClick={() => {
+                const userText = `159	defacto ballon	6
+438	sut qa 1373	1
+453	denim skirt 357-9	2
+496	afra pants	5
+507	faNTAZIA BLOUSE	3
+527	دريس زجزاج	1
+162	defacto wide b&s	1
+128	level strus jacket	4
+659	DRESS SAVA	2
+234	black wideleg hawaa	1
+169	flamingo 3947	1
+173	flamingo 4100	3
+160	defacto fit big	4
+161	defacto boyfrind	4
+644	shirt m&a 626	1
+645	shirt m&a 803	4
+652	BYE 9880	3
+654	BYE 9911	2
+656	CROCHET BLOUSE	5
+658	STRIPED SET	4
+612	blouse 539	8
+614	top ma	3
+615	shirt 8839	1
+617	blouse 797	5
+642	shirt m&a 805	1
+643	shirt m&a 812	4
+631	blouse 6026	3
+633	chemise 676	2
+634	chemise 384	2
+635	chemise mix 370	1
+636	fain 26141	2
+610	lamoda zara 700	4
+649	aura 1173	1
+650	aura 2258	2
+651	aura 1159	1
+628	pants zara 6001	3
+629	sut 2551	4
+630	blouse 6017	2
+660	bedaya new 1029	2
+661	VILLA CY	4
+259	wide melton Q	13
+646	aura 309	3
+647	aura 021	18
+648	aura 1177	1
+468	لافا 454 فستان	1
+479	long denim chemise	2
+436	chemise polo	2
+622	lamoda 705	1
+625	chemise b&s 2	5
+626	ardigan villa	3
+534	ruffled blouse 8011	2
+431	on touch pants	1
+432	wide olivia lekra	8
+433	wide olivia fashon	1
+434	wide olivia sada	2
+465	trendiva 264	1
+489	جيبه روزاين	3
+492	STYLISH LONG CHEMISE	1
+493	BLOUSE m&a	1
+515	shirt sada	2
+517	hi 263	-1
+520	afra top lenin	12
+574	بلوزه مطرز بانده مسحوره	1
+576	بلوزه دانتيل شداد	1
+577	-بلوزه كم مروحه	2
+578	قميص ساتان-اوفر سايز	8
+487	باور وايد خفيف	2
+488	بليزر بيلاكت	1
+592	sana chemise 1030	1
+594	skirt t&g	2
+524	mora 674	2
+571	تونك ص 1241	1
+572	بنطلون كسره استك ضهر	3
+573	فستان كت مطرز	5
+312	top jeans-wide leg	2
+313	top jeans-skinny	12
+584	chemise 525 m&a	1
+585	sut linen m&a	1
+588	butterfly teshirt	1
+589	dress dash	1
+356	وايدليج اوليقيا حزام-فتحه	5
+357	وايدليج اوليقيا تانية رجل	2
+358	وايدليج اوليقيا strait	6
+377	SUL - 11436	2
+439	sut qa1344	2
+292	chemise vikik h s	2
+597	trendy pants	2
+276	BERSHKA WIDE	2
+352	new jack-denim 1175	-1
+353	bedaya denim wideleg	3
+354	وايدليج ديفاكتو	2
+355	وايدليج ديفاكتو بنس	4
+413	blouse 1391	1
+426	فستان كتان مشجربني/ اسود	1
+390	شيميز كلاسيكQ	1
+566	fashonsta 4005	1
+437	aura collection	3
+596	vivron 553	1
+663	cotton wide leg	13
+664	LAMODA BLOUSE	6
+665	shirt adidas	10
+402	skirt denim roma	11
+411	dress 1364	2
+412	dress 1366	1
+579	set flory weare	1
+608	dress 529	5
+621	vest jeans	4
+627	chemise 5055	1
+638	velvel pants	4
+640	hirt m&A 811	2
+535	moon 1087	2
+544	ruffled blouse 8007	2
+560	breshka wide	10
+561	Q JEANS wide	5
+562	SKIRT AFRA	2
+569	2 بلوزه تومي	1
+498	flamingo هداس نولاب	6
+499	f دوسا تونسلارش	12
+500	flam صاخ تونسللاش	17
+501	flamingo دوسا بنيكس خ	3
+503	flam اركسوا دزوي دياو	7
+504	تاصق هبنيات دياو	4
+605	flamingo oskar 3996	2
+606	cardigan 710	2
+607	chemise sada500	1
+637	flamingo pants	26
+559	flamingo oskar 3996	3
+568	flamingo wide 4200	2
+601	ballon 4154	13
+602	flamingo skiny 2004	12
+603	flamingo black 2000	11
+604	flamingo long 4502	14
+505	flamingo شينوس	1
+554	flamingo wide 4008	2
+555	flamingo wide 3994	10
+556	flamingo un finish 4006	6
+557	streat leg 44018	3
+558	wide uset 3997	5`;
+                let report = '--- تقرير فروقات الجرد بتاريخ 11 أغسطس ---\n\n';
+                let diffCount = 0;
+                userText.trim().split('\n').forEach(line => {
+                  const parts = line.split('\t');
+                  if (parts.length >= 3) {
+                    const barcode = parts[0].trim();
+                    const name = parts[1].trim();
+                    const qty = parseInt(parts[2].trim(), 10);
+                    const prod = products.find(p => String(p.barcode) === barcode);
+                    if (!prod) {
+                      report += `❌ غير موجود بالنظام | الباركود: ${barcode} | الاسم: ${name} | الجرد الفعلي: ${qty}\n`;
+                      diffCount++;
+                    } else {
+                      const dbQty = Number(prod.stock_quantity) || 0;
+                      if (dbQty !== qty) {
+                        const diff = dbQty - qty;
+                        report += `⚠️ يوجد اختلاف | الباركود: ${barcode} | ${name} | الجرد الفعلي: ${qty} | في النظام: ${dbQty} | الفرق: ${diff > 0 ? '+' : ''}${diff}\n`;
+                        diffCount++;
+                      }
+                    }
+                  }
+                });
+                if (diffCount === 0) report += "✅ جميع أرصدة الجرد متطابقة 100% مع النظام!";
+                else report = `تم العثور على ${diffCount} اختلاف في المنتجات:\n\n` + report;
+                
+                // Copy to clipboard
+                navigator.clipboard.writeText(report).then(() => {
+                  alert('تم إنشاء التقرير بنجاح! تم نسخ التقرير، يمكنك الآن لصقه (Paste) في المحادثة لتريه.');
+                });
+              }}
+              className="flex items-center gap-2 bg-pink-600 text-white px-4 py-2 rounded-xl font-bold hover:bg-pink-700 transition text-sm"
+              title="مقارنة النص الذي أرسلتيه بالجرد الحالي"
+            >
+              <FileText size={16} /> مقارنة جرد 11/8
+            </button>
           </div>
           <button onClick={() => { setBatchRows([]); setBatchSearch(''); setShowBatchPrint(true); }} className="bg-slate-700 hover:bg-slate-800 text-white px-5 py-3 rounded-xl font-bold transition flex items-center gap-2 shadow-lg">
             <Printer size={20} />
