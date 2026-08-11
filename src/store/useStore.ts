@@ -1042,8 +1042,12 @@ async function isAccountingDayClosed(settings: StoreSettings, value?: string | D
  * كده display_quantity بيفضل أكبر من stock_quantity، وحساب «المستودع»
  * (الإجمالي − المعروض) بيطلع صفر بالغلط رغم إن في بضاعة في المخزن.
  */
-function displayAfterStockDrop(product: { stock_quantity?: number; display_quantity?: number } | undefined, newStock: number): number {
-  return Math.min(Number(product?.display_quantity) || 0, Math.max(0, newStock));
+function displayAfterStockDrop(product: { stock_quantity?: number; display_quantity?: number } | undefined, newStock: number, dropQty: number = 0): number {
+  const currentDisplay = Number(product?.display_quantity) || 0;
+  if (dropQty > 0) {
+    return Math.max(0, Math.min(newStock, currentDisplay - dropQty));
+  }
+  return Math.min(currentDisplay, Math.max(0, newStock));
 }
 
 async function ensureAccountingDayOpen(state: CashierStore, value?: string | Date | null): Promise<boolean> {
@@ -2075,7 +2079,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           const netQty = item.quantity - (item.returned_quantity || 0);
           const newStock = Math.max(0, currentStock - netQty);
           await supabase.from('products')
-            .update({ stock_quantity: newStock, display_quantity: displayAfterStockDrop(prodData as any, newStock) })
+            .update({ stock_quantity: newStock, display_quantity: displayAfterStockDrop(prodData as any, newStock, item.quantity) })
             .eq('id', item.id);
         }
 
@@ -2281,7 +2285,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         const cartItem = state.cart.find((c) => c.id === p.id);
         if (!cartItem) return p;
         const newStock = Math.max(0, p.stock_quantity - cartItem.quantity);
-        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock) };
+        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock, cartItem.quantity) };
       });
 
       const updatedCustomers = finalCustomer && !state.customers.find((c) => c.id === finalCustomer!.id)
@@ -2436,7 +2440,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         const prod = state.products.find((p) => p.id === item.id);
         const newQty = Math.max(0, (prod?.stock_quantity ?? 0) - item.quantity);
         await supabase.from('products')
-          .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty) })
+          .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty, item.quantity) })
           .eq('id', item.id);
       }
 
@@ -2467,7 +2471,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         const cartItem = state.cart.find((c) => c.id === p.id);
         if (!cartItem) return p;
         const newStock = Math.max(0, p.stock_quantity - cartItem.quantity);
-        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock) };
+        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock, cartItem.quantity) };
       });
 
       const updatedCustomers = finalCustomer && !state.customers.find((c) => c.id === finalCustomer!.id)
@@ -2638,7 +2642,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           const prod = state.products.find((p) => p.id === item.id);
           const newQty = Math.max(0, (prod?.stock_quantity ?? 0) - item.quantity);
           await supabase.from('products')
-            .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty) })
+            .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty, item.quantity) })
             .eq('id', item.id);
         }
       }
@@ -2647,7 +2651,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         const cartItem = state.cart.find((c) => c.id === p.id);
         if (!cartItem) return p;
         const newStock = Math.max(0, p.stock_quantity - cartItem.quantity);
-        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock) };
+        return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock, cartItem.quantity) };
       });
 
       // تحصيل العربون: يدخل الخزنة كإيراد حجز (category='حجز', amount سالب).
@@ -3613,7 +3617,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         const dbStock = (prodData?.stock_quantity ?? localStock) as number;
         const dbDisplay = (prodData?.display_quantity ?? localDisplay) as number;
         const newStock = Math.max(0, dbStock + delta);
-        const newDisplay = delta > 0 ? dbDisplay + delta : displayAfterStockDrop({ stock_quantity: dbStock, display_quantity: dbDisplay }, newStock);
+        const newDisplay = delta > 0 ? dbDisplay + delta : displayAfterStockDrop({ stock_quantity: dbStock, display_quantity: dbDisplay }, newStock, Math.abs(delta));
 
         const { error: productError } = await supabase
           .from('products')
@@ -3626,7 +3630,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           updatedProducts[productIndex] = {
             ...updatedProducts[productIndex],
             stock_quantity: Math.max(0, localStock + delta),
-            display_quantity: delta > 0 ? localDisplay + delta : displayAfterStockDrop(updatedProducts[productIndex], Math.max(0, localStock + delta)),
+            display_quantity: delta > 0 ? localDisplay + delta : displayAfterStockDrop(updatedProducts[productIndex], Math.max(0, localStock + delta), Math.abs(delta)),
           };
         }
       }
