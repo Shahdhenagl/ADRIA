@@ -968,7 +968,7 @@ export default function Inventory() {
               allPurchases.forEach((inv: any) => { (inv.purchase_items || []).forEach((it: any) => { if (it.product_id === pid) expected += (Number(it.quantity) || 0); }); });
               allIntakes.filter((i: any) => i.product_id === pid).forEach((i: any) => expected += (Number(i.quantity) || 0));
               
-              allOrders.filter((o: any) => !['cancelled', 'returned'].includes(o.status || 'completed')).forEach((o: any) => { 
+              allOrders.filter((o: any) => !['cancelled', 'returned'].includes(o.status || 'completed') && !o.is_deleted && o.type !== 'payment').forEach((o: any) => { 
                 (o.order_items || []).forEach((it: any) => { 
                   if (it.product_id === pid || it.id === pid) { 
                     expected -= (Number(it.quantity) || 0); 
@@ -977,7 +977,7 @@ export default function Inventory() {
                 }); 
               });
               
-              allHolds.filter((h: any) => ['held', 'shipped', 'money_pending'].includes(h.status || 'held')).forEach((h: any) => { 
+              allHolds.filter((h: any) => ['held', 'shipped', 'money_pending'].includes(h.status || 'held') && !h.is_deleted).forEach((h: any) => { 
                 (h.items || []).forEach((it: any) => { if (it.id === pid) expected -= (Number(it.quantity) || 0); }); 
               });
               
