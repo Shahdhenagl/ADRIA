@@ -2,8 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { buildPaymentLedger } from './paymentLedger';
 import { computeShopAvailable } from './treasury';
 import { heldPaymentBreakdown } from './invoicePayments';
+import { isFullyPrepaidOnlineHeld } from './heldInvoiceLifecycle';
 
 describe('held invoice accounting', () => {
+  it('recognizes a fully prepaid online held invoice as status-only delivery', () => {
+    expect(isFullyPrepaidOnlineHeld({ kind: 'online', total: 500, deposit: 500, discount_amount: 0 })).toBe(true);
+    expect(isFullyPrepaidOnlineHeld({ kind: 'online', total: 500, deposit: 100, discount_amount: 0 })).toBe(false);
+    expect(isFullyPrepaidOnlineHeld({ kind: 'shop', total: 500, deposit: 500, discount_amount: 0 })).toBe(false);
+  });
   const sale = {
     id: '9001',
     type: 'sale',

@@ -9,6 +9,7 @@ import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTre
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassword, hasOfflinePassword } from '../utils/offlineCache';
 import { withTimeout, isNetworkError, NET_TIMEOUT } from '../utils/net';
+import { isFullyPrepaidOnlineHeld } from '../utils/heldInvoiceLifecycle';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -2824,9 +2825,22 @@ export const useStore = create<CashierStore>((set, get) => ({
       return false;
     }
 
-    // لازم نتأكد إن اليوم مفتوح **قبل** confirmHeldInvoice، لأنه بيحذف صف الحجز
-    // ويرجّع المخزون. لو checkout فشل بعد كده (يوم مقفول) الطلب بيضيع: لا حجز
-    // ولا فاتورة.
+    // الطلب الأونلاين المدفوع بالكامل اتقفلت حركته المالية وقت الدفع. يوم التسليم
+    // هنا مجرد تغيير lifecycle؛ لا ننشئ sale جديد ولا نطلب فتح يوم محاسبي قديم.
+    // هذا يمنع ظهور فاتورة جديدة بتاريخ الاستلام (مثل 11/8 بدل تاريخ الدفع 4/8).
+    if (isFullyPrepaidOnlineHeld(held) && paid <= 0.01) {
+      const { error } = await supabase.from('held_invoices').update({
+        status: 'delivered',
+        status_at: new Date().toISOString(),
+        status_note: 'تم التسليم — مدفوع بالكامل عند إنشاء الطلب',
+      }).eq('id', id);
+      if (error) { alert('تعذّر تحديث حالة الطلب: ' + error.message); return false; }
+      set((s) => ({ heldInvoices: s.heldInvoices.filter((h) => h.id !== id) }));
+      return true;
+    }
+
+    // لازم نتأكد إن اليوم مفتوح **قبل** إنشاء sale جديد للباقي المحصل عند التسليم.
+    // لو اليوم مقفول، لا ننشئ فاتورة أو نحرك المخزون جزئيًا.
     if (!(await ensureAccountingDayOpen(state))) return false;
 
     // نحفظ حالة الكاشير ونرجّعها بعد الخلاص (الموديول في الأدمن، مينفعش يمسح سلة شغالة).
