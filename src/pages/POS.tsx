@@ -878,6 +878,8 @@ export default function POS() {
   const [heldFilter, setHeldFilter] = useState<'all' | 'shop' | HeldStatus>('all');
   const [returningHeld, setReturningHeld] = useState<HeldInvoice | null>(null);
   const [holdBusy, setHoldBusy] = useState(false);
+  // يظل ثابتًا داخل نفس نموذج الحجز حتى لا تعيد retry إنشاء حجز أو عربون جديد.
+  const [holdRequestKey, setHoldRequestKey] = useState('');
   // نموذج حفظ فاتورة معلّقة مع عربون
   const [showHoldForm, setShowHoldForm] = useState(false);
   const [holdDepositPay, setHoldDepositPay] = useState<Record<string, string>>({});
@@ -1896,6 +1898,9 @@ export default function POS() {
   const openHoldForm = () => {
     if (cart.length === 0 || pricesHidden || holdBusy) return;
     setHoldDepositPay({});
+    setHoldRequestKey(typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `held_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
     setShowHoldForm(true);
   };
 
@@ -1914,12 +1919,14 @@ export default function POS() {
       deposit,
       depositSplit,
       kind: holdKind,
+      idempotencyKey: holdRequestKey,
       ...(holdKind === 'online' ? { customerAddress: holdAddress, shippingNote: holdShipNote } : {}),
     });
     setHoldBusy(false);
     if (ok) {
       setShowHoldForm(false);
       setHoldDepositPay({});
+      setHoldRequestKey('');
       setHoldKind('shop');
       setHoldAddress('');
       setHoldShipNote('');
