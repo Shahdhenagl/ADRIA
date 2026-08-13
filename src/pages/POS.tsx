@@ -16,7 +16,7 @@ import { categoriesFor, withAddedCategory } from '../utils/financeCategories';
 import { buildPagesQrBlock } from '../utils/pagesQr';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, refundRecordOf } from '../utils/treasury';
 import { calculateOrderReturnValue } from '../utils/returns';
-import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal } from '../utils/invoicePayments';
+import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal, heldPaymentBreakdown } from '../utils/invoicePayments';
 import { printShippingLabel } from '../utils/printShippingLabel';
 import { loadParkedCarts, addParkedCart, removeParkedCart, parkedAgeLabel, type ParkedCart } from '../utils/parkedCarts';
 import { saveDayBudgetCache, loadDayBudgetCache } from '../utils/offlineCache';
@@ -632,6 +632,7 @@ export default function POS() {
       couponDiscountAmount: order.discount_amount || 0,
       salesperson: order.salesperson_name || '',
       exchangeSettled: exchangeSettledTotal(order),
+      heldBreakdown: heldPaymentBreakdown(order, ALL_PAYMENT_KEYS as any),
     };
     printInvoice(order.id, details);
   };
@@ -1611,6 +1612,9 @@ export default function POS() {
     const invoiceUrl = `${window.location.origin}/view-invoice/${invId}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(invoiceUrl)}`;
     const pagesQrBlock = buildPagesQrBlock(storeSettings);
+    const held = orderDetails.heldBreakdown;
+    const heldDate = held?.depositDate ? new Date(held.depositDate).toLocaleDateString('ar-EG', { calendar: 'gregory' }) : '—';
+    const heldPaymentHtml = held ? `<div style="margin-top:5px;padding:5px;border:1px solid #000;border-radius:4px;font-size:10px;font-weight:700;"><div style="font-weight:900;border-bottom:1px dashed #000;padding-bottom:2px;margin-bottom:2px;">الدفع على جزئين — فاتورة معلقة</div><div class="summary-row"><span>العربون السابق (${heldDate}):</span><span>${held.deposit.toFixed(2)} ${currentSettings.currency}</span></div><div class="summary-row"><span>المحصّل عند التأكيد:</span><span>${held.later.toFixed(2)} ${currentSettings.currency}</span></div><div class="summary-row" style="font-weight:900;border-top:1px dashed #000;margin-top:2px;padding-top:2px;"><span>إجمالي المدفوع:</span><span>${(held.deposit + held.later).toFixed(2)} ${currentSettings.currency}</span></div></div>` : '';
 
     const debtLine = (orderDetails.totalDebt || 0) > 0.5
       ? `<div class="info-item" style="border-top:1px dashed #000;padding-top:3px;margin-top:2px;"><strong>إجمالي المديونية الحالية:</strong> <span style="color:#000;font-weight:900;font-size:14px;">${(orderDetails.totalDebt || 0).toFixed(2)} ${currentSettings.currency}</span></div>`
@@ -1719,6 +1723,8 @@ export default function POS() {
     ` : `
       <div class="payment-status status-paid">✓ تم سداد الفاتورة بالكامل</div>
     `}
+
+    ${heldPaymentHtml}
 
     ${orderDetails.notes ? `
       <div style="margin-top:5px; padding:4px 5px; border:1px solid #000; border-radius:4px;">

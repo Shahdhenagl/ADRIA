@@ -75,3 +75,41 @@ export function paidForDisplay(order: any, keys: string[]): number {
   // لو الفاتورة اتسدّد منها آجل بعد كده، paid_amount بيبقى أكبر — ناخد الأكبر.
   return Math.max(computed, 0);
 }
+
+export interface HeldPaymentBreakdown {
+  deposit: number;
+  later: number;
+  depositSplit: Record<string, number>;
+  laterSplit: Record<string, number>;
+  depositDate: string | null;
+}
+
+/**
+ * تفصيل فاتورة اتعملت من held invoice إلى دفعتين مستقلتين للعرض والطباعة.
+ * paid_* في الفاتورة النهائية قد يحتوي العربون والباقي معًا محاسبيًا، لذلك
+ * نستخدم held_deposit_* لفصل العربون دون تغيير أي قيد مالي محفوظ.
+ */
+export function heldPaymentBreakdown(order: any, keys: string[]): HeldPaymentBreakdown | null {
+  const rawDeposit = Number(order?.held_deposit_amount) || 0;
+  if (rawDeposit <= 0.009) return null;
+  const allSplit = paidSplitForDisplay(order, keys);
+  const depositSource = order?.held_deposit_split && typeof order.held_deposit_split === 'object'
+    ? order.held_deposit_split
+    : { cash: rawDeposit };
+  const depositSplit: Record<string, number> = {};
+  const laterSplit: Record<string, number> = {};
+  keys.forEach((k) => {
+    const dep = Math.max(0, Number(depositSource[k]) || 0);
+    depositSplit[k] = dep;
+    laterSplit[k] = (Number(allSplit[k]) || 0) - dep;
+  });
+  const deposit = Math.min(rawDeposit, keys.reduce((s, k) => s + (depositSplit[k] || 0), 0) || rawDeposit);
+  const totalPaid = Math.max(0, paidForDisplay(order, keys));
+  return {
+    deposit,
+    later: Math.max(0, totalPaid - deposit),
+    depositSplit,
+    laterSplit,
+    depositDate: order?.held_deposit_date || null,
+  };
+}

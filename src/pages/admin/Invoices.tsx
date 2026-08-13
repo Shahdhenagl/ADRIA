@@ -8,7 +8,7 @@ import { escapeHtml } from '../../utils/escapeHtml';
 import { printDocument } from '../../utils/printWindow';
 import { buildPagesQrBlock } from '../../utils/pagesQr';
 import { ALL_PAYMENT_KEYS, EXTRA_PAYMENT_KEYS, isPaymentKeyEnabled, payLabelOf } from '../../utils/paymentMethods';
-import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal } from '../../utils/invoicePayments';
+import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal, heldPaymentBreakdown } from '../../utils/invoicePayments';
 import * as XLSX from 'xlsx';
 
 import jsPDF from 'jspdf';
@@ -93,6 +93,17 @@ export default function Invoices() {
     const paidSplit = paidSplitForDisplay(order, ALL_PAYMENT_KEYS as any);
     const paidShown = paidForDisplay(order, ALL_PAYMENT_KEYS as any);
     const exchangeSettled = exchangeSettledTotal(order);
+    const heldBreakdown = heldPaymentBreakdown(order, ALL_PAYMENT_KEYS as any);
+    const fmtHeldDate = (value: string | null) => value ? new Date(value).toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+    const heldSplitLines = (split: Record<string, number>) => ALL_PAYMENT_KEYS.filter((k) => Math.abs(Number(split[k]) || 0) > 0.009).map((k) => `${escapeHtml(payLabelOf(storeSettings as any, k))}: ${(Number(split[k]) || 0).toFixed(2)}`).join(' ، ');
+    const heldPaymentHtml = heldBreakdown ? `<div style="margin-top:6px;padding:7px;border:1px solid #111;border-radius:6px;font-size:10px;">
+      <div style="font-weight:900;border-bottom:1px dashed #999;padding-bottom:3px;margin-bottom:3px;">الدفع على جزئين — فاتورة معلقة</div>
+      <div class="summary-row"><span>العربون السابق (${fmtHeldDate(heldBreakdown.depositDate)}):</span><span>${heldBreakdown.deposit.toFixed(2)} ${storeSettings.currency}</span></div>
+      <div style="font-size:9px;color:#555;margin-bottom:2px;">${heldSplitLines(heldBreakdown.depositSplit) || '—'}</div>
+      <div class="summary-row"><span>المحصّل عند التأكيد:</span><span>${heldBreakdown.later.toFixed(2)} ${storeSettings.currency}</span></div>
+      <div style="font-size:9px;color:#555;">${heldSplitLines(heldBreakdown.laterSplit) || '—'}</div>
+      <div class="summary-row" style="font-weight:900;border-top:1px dashed #999;margin-top:3px;padding-top:3px;"><span>إجمالي المدفوع:</span><span>${(heldBreakdown.deposit + heldBreakdown.later).toFixed(2)} ${storeSettings.currency}</span></div>
+    </div>` : '';
 
     const customerBlock = order.customer
       ? `<div class="customer-info-grid">
@@ -206,6 +217,7 @@ export default function Invoices() {
       <div class="payment-status status-paid">✓ تم سداد الفاتورة بالكامل</div>
     `}
 
+    ${heldPaymentHtml}
     <div style="margin-top:10px; padding:8px; background:#f9fafb; border-radius:8px; border:1px solid #eee;">
       <div style="font-size:11px; color:#64748b; margin-bottom:4px; border-bottom:1px solid #eee; padding-bottom:2px; text-align:right;">تفاصيل الدفع:</div>
       ${ALL_PAYMENT_KEYS.filter((k) => Math.abs(paidSplit[k] || 0) > 0.009).map((k) =>

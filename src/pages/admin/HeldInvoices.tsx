@@ -21,7 +21,7 @@ const STATUS_STYLE: Record<HeldStatus, string> = {
 type Filter = 'active' | HeldStatus | 'stale';
 
 export default function HeldInvoices() {
-  const { storeSettings, loadAllHeldInvoices, setHeldInvoiceStatus, deliverHeldInvoice, returnHeldInvoice, loadHeldInvoices } = useStore();
+  const { storeSettings, loadAllHeldInvoices, setHeldInvoiceStatus, deliverHeldInvoice, returnHeldInvoice, loadHeldInvoices, updateHeldInvoice } = useStore();
   const cur = storeSettings.currency;
   const payKeys = activePaymentKeys(storeSettings as any);
 
@@ -35,8 +35,12 @@ export default function HeldInvoices() {
   // مودال التحصيل عند التسليم
   const [collecting, setCollecting] = useState<HeldInvoice | null>(null);
   const [collectPay, setCollectPay] = useState<Record<string, string>>({});
+  const [collectDiscount, setCollectDiscount] = useState('');
+  const [collectDate, setCollectDate] = useState('');
   // مودال المرتجع (بيظهر بعد الشحن)
   const [returning, setReturning] = useState<HeldInvoice | null>(null);
+  const [editing, setEditing] = useState<HeldInvoice | null>(null);
+  const [editForm, setEditForm] = useState({ total: '', deposit: '', discount: '', date: '', notes: '' });
 
   const refresh = async () => {
     setLoading(true);
@@ -126,21 +130,61 @@ export default function HeldInvoices() {
   const openCollect = async (r: HeldInvoice) => {
     await loadHeldInvoices();
     setCollecting(r);
-    const remaining = Math.max(0, (Number(r.total) || 0) - (Number(r.deposit) || 0));
+    const discount = Number(r.discount_amount) || 0;
+    const remaining = Math.max(0, (Number(r.total) || 0) - discount - (Number(r.deposit) || 0));
+    setCollectDiscount(discount ? String(discount) : '');
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    setCollectDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`);
     setCollectPay({ [payKeys[0] || 'cash']: remaining ? String(remaining) : '' });
+  };
+
+  const openEdit = (r: HeldInvoice) => {
+    const d = new Date(r.created_at);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    setEditing(r);
+    setEditForm({
+      total: String(Number(r.total) || 0),
+      deposit: String(Number(r.deposit) || 0),
+      discount: String(Number(r.discount_amount) || 0),
+      date: Number.isNaN(d.getTime()) ? '' : `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`,
+      notes: r.notes || '',
+    });
+  };
+
+  const saveEdit = async () => {
+    if (!editing) return;
+    const d = new Date(editForm.date);
+    if (Number.isNaN(d.getTime())) { alert('تاريخ غير صحيح'); return; }
+    const total = Math.max(0, Number(editForm.total) || 0);
+    const discount = Math.max(0, Number(editForm.discount) || 0);
+    const deposit = Math.max(0, Number(editForm.deposit) || 0);
+    if (discount > total + 0.01) { alert('الخصم أكبر من الإجمالي'); return; }
+    if (deposit > total - discount + 0.01) { alert('العربون أكبر من صافي الفاتورة بعد الخصم'); return; }
+    setBusyId(editing.id);
+    try {
+      if (await updateHeldInvoice(editing.id, { total, deposit, discount_amount: discount, created_at: d.toISOString(), notes: editForm.notes })) {
+        setEditing(null);
+        await refresh();
+      }
+    } finally { setBusyId(null); }
   };
 
   const doDeliver = async () => {
     if (!collecting) return;
+    const deliveryDate = new Date(collectDate);
+    if (Number.isNaN(deliveryDate.getTime())) { alert('تاريخ التحصيل غير صحيح'); return; }
     const split: Record<string, number> = {};
     payKeys.forEach((k) => { split[k] = parseFloat(collectPay[k] || '') || 0; });
     const paid = payKeys.reduce((s, k) => s + split[k], 0);
-    const remaining = Math.max(0, (Number(collecting.total) || 0) - (Number(collecting.deposit) || 0));
+    const discount = Math.max(0, Number(collectDiscount) || 0);
+    const netTotal = Math.max(0, (Number(collecting.total) || 0) - discount);
+    const remaining = Math.max(0, netTotal - (Number(collecting.deposit) || 0));
     if (paid < remaining - 0.01 && !confirm(`المحصّل (${paid.toFixed(2)}) أقل من الباقي (${remaining.toFixed(2)}).\nالفرق هيتسجّل آجل على العميل. متابعة؟`)) return;
     setBusyId(collecting.id);
     try {
-      if (await deliverHeldInvoice(collecting.id, split)) {
-        setCollecting(null); setCollectPay({});
+      if (await deliverHeldInvoice(collecting.id, split, { dateISO: deliveryDate.toISOString(), discount })) {
+        setCollecting(null); setCollectPay({}); setCollectDiscount(''); setCollectDate('');
         await refresh();
         alert('✅ تم تسليم الطلب وتسجيله كفاتورة بيع.');
       }
@@ -331,6 +375,8 @@ export default function HeldInvoices() {
                         <Undo2 size={14} /> رجوع لـ«تم الشحن»
                       </button>
                     )}
+                    <button onClick={() => openEdit(r)} disabled={busyId === r.id}
+                      className="flex items-center gap-1.5 bg-white dark:bg-slate-800 text-indigo-600 border border-indigo-200 px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">تعديل</button>
                     <button onClick={() => openCollect(r)} disabled={busyId === r.id}
                       className="flex items-center gap-1.5 bg-emerald-600 text-white px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
                       <CheckCircle2 size={14} /> {r.kind === 'online' ? 'تم التحصيل' : 'تم التسليم وتحصيل'}
@@ -363,6 +409,22 @@ export default function HeldInvoices() {
         />
       )}
 
+      {/* مودال تعديل الفاتورة المعلقة */}
+      {editing && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl w-full max-w-md border border-slate-200 dark:border-slate-700">
+            <div className="p-5 border-b border-slate-100 dark:border-slate-700"><h3 className="font-black text-lg text-slate-800 dark:text-white">تعديل الفاتورة المعلقة</h3><p className="text-xs text-slate-500 font-bold mt-1">أي فرق في العربون سيتسجل كتصحيح في يوم التعديل.</p></div>
+            <div className="p-5 space-y-3">
+              <label className="block text-xs font-black text-slate-500">الإجمالي<input type="number" min="0" step="0.01" value={editForm.total} onChange={(e) => setEditForm((s) => ({ ...s, total: e.target.value }))} className="mt-1 w-full bg-slate-50 dark:bg-slate-900 border rounded-xl px-3 py-2.5 font-black" /></label>
+              <div className="grid grid-cols-2 gap-3"><label className="block text-xs font-black text-slate-500">العربون<input type="number" min="0" step="0.01" value={editForm.deposit} onChange={(e) => setEditForm((s) => ({ ...s, deposit: e.target.value }))} className="mt-1 w-full bg-slate-50 dark:bg-slate-900 border rounded-xl px-3 py-2.5 font-black" /></label><label className="block text-xs font-black text-slate-500">الخصم<input type="number" min="0" step="0.01" value={editForm.discount} onChange={(e) => setEditForm((s) => ({ ...s, discount: e.target.value }))} className="mt-1 w-full bg-slate-50 dark:bg-slate-900 border rounded-xl px-3 py-2.5 font-black" /></label></div>
+              <label className="block text-xs font-black text-slate-500">تاريخ الفاتورة<input type="datetime-local" value={editForm.date} onChange={(e) => setEditForm((s) => ({ ...s, date: e.target.value }))} className="mt-1 w-full bg-slate-50 dark:bg-slate-900 border rounded-xl px-3 py-2.5 font-black" /></label>
+              <label className="block text-xs font-black text-slate-500">ملاحظات<textarea value={editForm.notes} onChange={(e) => setEditForm((s) => ({ ...s, notes: e.target.value }))} className="mt-1 w-full bg-slate-50 dark:bg-slate-900 border rounded-xl px-3 py-2.5 font-bold" rows={2} /></label>
+              <div className="flex gap-2 pt-2"><button onClick={() => setEditing(null)} className="flex-1 py-3 rounded-2xl bg-slate-100 dark:bg-slate-900 text-slate-600 font-black">إلغاء</button><button onClick={saveEdit} disabled={busyId === editing.id} className="flex-1 py-3 rounded-2xl bg-indigo-600 text-white font-black disabled:opacity-50">حفظ التعديل</button></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* مودال التحصيل */}
       {collecting && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -374,13 +436,18 @@ export default function HeldInvoices() {
             <div className="p-5 space-y-4">
               <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl p-4 text-sm font-bold space-y-1">
                 <div className="flex justify-between"><span className="text-slate-500">إجمالي الطلب</span><span>{Number(collecting.total).toFixed(2)} {cur}</span></div>
+                <div className="flex items-center justify-between gap-3"><span className="text-slate-500">خصم</span><input type="number" min="0" step="0.01" value={collectDiscount} onChange={(e) => setCollectDiscount(e.target.value)} className="w-28 bg-white dark:bg-slate-800 border border-slate-200 rounded-lg px-2 py-1 text-left" /></div>
                 {Number(collecting.deposit) > 0 && (
                   <div className="flex justify-between text-emerald-600"><span>عربون محصّل مقدماً</span><span>− {Number(collecting.deposit).toFixed(2)}</span></div>
                 )}
                 <div className="flex justify-between text-base font-black border-t border-slate-200 dark:border-slate-700 pt-1 mt-1">
                   <span>المطلوب تحصيله</span>
-                  <span className="text-indigo-600">{Math.max(0, Number(collecting.total) - Number(collecting.deposit || 0)).toFixed(2)} {cur}</span>
+                  <span className="text-indigo-600">{Math.max(0, Number(collecting.total) - Number(collectDiscount || 0) - Number(collecting.deposit || 0)).toFixed(2)} {cur}</span>
                 </div>
+              </div>
+              <div>
+                <label className="text-[11px] font-black text-slate-500 uppercase mb-2 block">تاريخ التحصيل</label>
+                <input type="datetime-local" value={collectDate} onChange={(e) => setCollectDate(e.target.value)} className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 rounded-xl px-3 py-2.5 font-black" />
               </div>
               <div>
                 <label className="text-[11px] font-black text-slate-500 uppercase mb-2 block">المحصّل الآن وطريقة الدفع</label>
