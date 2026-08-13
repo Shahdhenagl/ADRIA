@@ -72,6 +72,13 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
       // أعمدة التقسيم في البيع لا تتغيّر عند سداد الآجل، فنستخدمها مباشرة؛
       // وإلا نطرح مدفوعات الآجل (المسجّلة كأوردرات payment مستقلة) لتفادي العدّ مرتين.
       paid = sum > 0 ? sum : Math.max(0, (o.paid_amount || 0) - (debtByInvoice.get(o.id) || 0) + refunded);
+      // Held invoice deposits entered the treasury on the reservation date.
+      // The final sale keeps paid_amount inclusive for debt calculations, but
+      // the delivery-day ledger must show only the new collection.
+      if (o.held_deposit_amount > 0 && o.type !== 'payment') {
+        const deposit = Math.min(Math.abs(paid), Number(o.held_deposit_amount) || 0);
+        paid = Math.max(0, paid - deposit);
+      }
     }
 
     if (paid > 0.001) {

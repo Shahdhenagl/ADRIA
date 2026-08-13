@@ -280,6 +280,11 @@ export interface HeldInvoice {
   notes?: string | null;
   deposit?: number; // العربون المحصّل وقت الحجز (يدخل الخزنة)
   deposit_split?: Record<string, number>; // تقسيمة العربون على وسائل الدفع
+  /** تاريخ دخول العربون للخزنة، مستقل عن تاريخ التسليم/إتمام البيع. */
+  deposit_date?: string | null;
+  /** خصم الفاتورة المعلقة، لا يغيّر قيمة العربون السابق إلا بتصحيح واضح. */
+  discount_amount?: number;
+  updated_at?: string | null;
   created_at: string;
   expires_at: string;
   /** عنوان التوصيل + ملاحظات المندوب — للطلبات الأونلاين (db/53). */
@@ -711,6 +716,8 @@ interface CashierStore {
   // Held / reserved invoices (فواتير معلقة)
   heldInvoices: HeldInvoice[];
   loadHeldInvoices: () => Promise<void>;
+  /** تعديل بيانات الفاتورة المعلقة مع تصحيح فرق العربون على يوم التعديل. */
+  updateHeldInvoice: (id: string, updates: Partial<Pick<HeldInvoice, 'customer_name' | 'customer_phone' | 'customer_custom_id' | 'items' | 'total' | 'invoice_type' | 'salesperson_id' | 'salesperson_name' | 'notes' | 'deposit' | 'deposit_split' | 'discount_amount' | 'created_at'>>) => Promise<boolean>;
   holdInvoice: (data: {
     customerName?: string;
     customerPhone?: string;
@@ -732,7 +739,7 @@ interface CashierStore {
     returnQty: Record<string, number>,
     shipping?: { amount: number; split?: Record<string, number>; note?: string },
   ) => Promise<boolean>;
-  deliverHeldInvoice: (id: string, splitPayments: Record<string, number>) => Promise<boolean>;
+  deliverHeldInvoice: (id: string, splitPayments: Record<string, number>, opts?: { dateISO?: string; discount?: number }) => Promise<boolean>;
   recordHeldDepositConversion: (deposit: number, split: Record<string, number>, invoiceId: string) => Promise<void>;
 
   // Admin
@@ -2537,6 +2544,56 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
   },
 
+  /**
+   * تعديل فاتورة معلقة من لوحة الإدارة.
+   * تغيير العربون لا يعدّل الحركة القديمة مباشرة؛ بل يسجل فرقًا تصحيحيًا
+   * على يوم التعديل، بينما يظل deposit_date هو تاريخ العربون الأصلي.
+   */
+  updateHeldInvoice: async (id, updates) => {
+    const state = get();
+    const held = state.heldInvoices.find((h) => h.id === id);
+    if (!held) { alert('الفاتورة المعلقة غير موجودة أو تحتاج تحديث القائمة.'); return false; }
+    const status = held.status || 'held';
+    if (!ACTIVE_HELD_STATUSES.includes(status)) { alert('لا يمكن تعديل فاتورة انتهت أو أُلغيت.'); return false; }
+    const oldDeposit = Math.max(0, Number(held.deposit) || 0);
+    const nextDeposit = Math.max(0, Number(updates.deposit ?? oldDeposit) || 0);
+    const nextTotal = Math.max(0, Number(updates.total ?? held.total) || 0);
+    const nextDiscount = Math.max(0, Number(updates.discount_amount ?? held.discount_amount) || 0);
+    if (nextDiscount > nextTotal + 0.01) { alert('الخصم لا يمكن أن يكون أكبر من إجمالي الفاتورة.'); return false; }
+    if (nextDeposit > nextTotal - nextDiscount + 0.01) { alert('العربون لا يمكن أن يكون أكبر من صافي الفاتورة بعد الخصم.'); return false; }
+    const nextDate = updates.created_at ? new Date(updates.created_at) : new Date(held.created_at);
+    if (Number.isNaN(nextDate.getTime())) { alert('تاريخ الفاتورة غير صحيح.'); return false; }
+    if (!(await ensureAccountingDayOpen(state, new Date()))) return false;
+    if (updates.created_at && !(await ensureAccountingDayOpen(state, nextDate))) return false;
+
+    const delta = nextDeposit - oldDeposit;
+    if (Math.abs(delta) > 0.009) {
+      const split = delta > 0 ? (updates.deposit_split || held.deposit_split || { cash: delta }) : (held.deposit_split || { cash: oldDeposit });
+      const correctionSplit = delta > 0 ? split : Object.fromEntries(Object.entries(split).map(([k, v]) => [k, (Number(v) || 0) * (Math.abs(delta) / Math.max(oldDeposit, 0.0001))]));
+      await get().addExpense({
+        category: 'حجز',
+        amount: -delta,
+        ...paidFromSplit(correctionSplit),
+        note: `تصحيح عربون فاتورة معلقة #${id}`,
+        payment_method: primaryOfSplit(correctionSplit) as any,
+      } as any);
+    }
+
+    const patch: Record<string, unknown> = {
+      ...updates,
+      total: nextTotal,
+      deposit: nextDeposit,
+      discount_amount: nextDiscount,
+      deposit_split: nextDeposit > 0 ? (updates.deposit_split || held.deposit_split || { cash: nextDeposit }) : null,
+      updated_at: new Date().toISOString(),
+    };
+    if (updates.created_at) patch.created_at = nextDate.toISOString();
+    const { error } = await supabase.from('held_invoices').update(patch).eq('id', id);
+    if (error) { alert('تعذّر تعديل الفاتورة المعلقة: ' + error.message); return false; }
+    set((s) => ({ heldInvoices: s.heldInvoices.map((h) => h.id === id ? { ...h, ...patch } as HeldInvoice : h) }));
+    return true;
+  },
+
   // كل الحجوزات بما فيها المنتهية — لموديول الداشبورد.
   loadAllHeldInvoices: async () => {
     const { data, error } = await supabase
@@ -2595,6 +2652,9 @@ export const useStore = create<CashierStore>((set, get) => ({
           notes: notes?.trim() || null,
           deposit: depAmt,
           deposit_split: depAmt > 0 ? depSplit : null,
+          deposit_date: depAmt > 0 ? new Date().toISOString() : null,
+          discount_amount: 0,
+          updated_at: new Date().toISOString(),
           kind: kind || 'shop',
           status: 'held',
           customer_address: customerAddress?.trim() || null,
@@ -2620,6 +2680,9 @@ export const useStore = create<CashierStore>((set, get) => ({
             notes: notes?.trim() || null,
             deposit: depAmt,
             deposit_split: depAmt > 0 ? depSplit : null,
+            deposit_date: depAmt > 0 ? new Date().toISOString() : null,
+            discount_amount: 0,
+            updated_at: new Date().toISOString(),
             kind: kind || 'shop',
             status: 'held',
             customer_address: customerAddress?.trim() || null,
@@ -2741,15 +2804,21 @@ export const useStore = create<CashierStore>((set, get) => ({
   // بيستخدم نفس مسار الكاشير: نرجّع الكمية المحجوزة للمخزون ونحمّلها في السلة
   // وننده checkout (اللي بيخصمها تاني) — فصافي أثر المخزون صفر والفاتورة
   // بتاخد كل منطق البيع العادي (ترقيم، عميل، ربح، تنبيهات).
-  deliverHeldInvoice: async (id, splitPayments) => {
+  deliverHeldInvoice: async (id, splitPayments, opts) => {
     const state = get();
     const held = state.heldInvoices.find((h) => h.id === id);
     if (!held) { alert('الطلب غير موجود'); return false; }
 
     const paid = ALL_PAY_KEYS.reduce((s, k) => s + (Number(splitPayments?.[k]) || 0), 0);
-    const total = Number(held.total) || 0;
+    const grossTotal = Number(held.total) || 0;
     const depAmt = Math.max(0, Number(held.deposit) || 0);
-    // العربون اتحصّل وقت الحجز، فالمطلوب دلوقتي هو الباقي بس.
+    const discount = Math.max(0, Number(opts?.discount ?? held.discount_amount) || 0);
+    const total = Math.max(0, grossTotal - discount);
+    // العربون اتحصّل وقت الحجز، فالمطلوب دلوقتي هو الباقي بعد الخصم.
+    if (depAmt > total + 0.01) {
+      alert('العربون أكبر من إجمالي الفاتورة بعد الخصم. عدّل الخصم أو العربون أولًا.');
+      return false;
+    }
     if (paid > (total - depAmt) + 0.01) {
       alert(`المبلغ المحصّل (${paid.toFixed(2)}) أكبر من الباقي على العميل (${(total - depAmt).toFixed(2)})`);
       return false;
@@ -2782,10 +2851,20 @@ export const useStore = create<CashierStore>((set, get) => ({
         (depAmt > 0 ? sumSplits(held.deposit_split || { cash: depAmt }, splitPayments) : splitPayments) as any,
         undefined,
         `طلب أونلاين${held.notes ? ` - ${held.notes}` : ''}`,
+        undefined,
+        discount,
+        undefined,
+        opts?.dateISO,
       );
-      // العربون اتسجّل إيراد وقت الحجز، والفاتورة سجّلته ضمن المدفوع — القيد ده
-      // بيطلعه تاني عشان ما يتحسبش مرتين.
-      if (depAmt > 0) await get().recordHeldDepositConversion(depAmt, held.deposit_split || { cash: depAmt }, String(invoiceId));
+      // العربون دخل الخزنة في يوم الحجز. نحفظ مصدره على الفاتورة النهائية
+      // كي تستبعده تقارير الخزنة من وارد يوم التسليم، بينما يظل paid_amount
+      // شاملًا للعربون لحساب المستحقات بصورة صحيحة.
+      await supabase.from('orders').update({
+        held_invoice_id: id,
+        held_deposit_amount: depAmt,
+        held_deposit_split: held.deposit_split || { cash: depAmt },
+        held_deposit_date: held.deposit_date || held.created_at,
+      }).eq('id', String(invoiceId));
 
       await supabase.from('held_invoices')
         .update({ status: 'delivered', order_id: String(invoiceId), status_at: new Date().toISOString() })

@@ -14,6 +14,7 @@ import { printPaymentReceipt } from '../../utils/printPaymentReceipt';
 import { printMaintenanceInvoice } from '../../utils/printMaintenanceInvoice';
 import PaymentSplitInputs from '../../components/PaymentSplitInputs';
 import { formToSplit, sumSplit, activePaymentKeys, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
+import { heldPaymentBreakdown } from '../../utils/invoicePayments';
 
 export default function DeferredAccounts() {
   const { customers, orders, suppliers, purchaseInvoices, storeSettings, checkout, payInvoiceDebt, addPurchaseInvoice, paySupplierDebt, addSupplier, carSubscriptions } = useStore();
@@ -387,6 +388,9 @@ export default function DeferredAccounts() {
     const isPayment = order.type === 'payment';
     const subtotal = isPayment ? order.total : (order.items || []).reduce((sum: number, item: any) => sum + (item.sale_price * item.quantity), 0);
     const taxValue = isPayment ? 0 : Math.max(0, order.total - (subtotal - (order.discount || 0)));
+    const heldBreakdown = heldPaymentBreakdown(order, activePaymentKeys(storeSettings as any) as any);
+    const heldDate = heldBreakdown?.depositDate ? new Date(heldBreakdown.depositDate).toLocaleDateString('ar-EG', { calendar: 'gregory' }) : '—';
+    const heldPaymentHtml = heldBreakdown ? `<div style="margin-top:6px;padding:8px;border:1px solid #1e293b;border-radius:8px;font-size:12px;"><div style="font-weight:900;border-bottom:1px dashed #94a3b8;padding-bottom:4px;margin-bottom:4px;">الدفع على جزئين — فاتورة معلقة</div><div class="summary-row"><span>العربون السابق (${heldDate}):</span><span>${heldBreakdown.deposit.toFixed(2)} ${storeSettings.currency}</span></div><div class="summary-row"><span>المحصّل عند التأكيد:</span><span>${heldBreakdown.later.toFixed(2)} ${storeSettings.currency}</span></div><div class="summary-row" style="font-weight:900;border-top:1px dashed #94a3b8;margin-top:4px;padding-top:4px;"><span>إجمالي المدفوع:</span><span>${(heldBreakdown.deposit + heldBreakdown.later).toFixed(2)} ${storeSettings.currency}</span></div></div>` : '';
     
     let debtAfter = 0;
     if ((order.customer || profileCustomer) && !order.is_deleted) {
@@ -541,6 +545,8 @@ export default function DeferredAccounts() {
     <div class="summary-row total"><span>الإجمالي النهائي:</span><span>${order.total.toFixed(2)} ${storeSettings.currency}</span></div>
     ` : ''}
   
+    ${heldPaymentHtml}
+
     ${(order.paid_amount !== undefined && order.paid_amount < order.total) ? `
       <div class="payment-status status-debt">
         <div>متبقي للتحصيل (آجل): ${(order.total - (order.paid_amount || 0)).toFixed(2)} ${storeSettings.currency}</div>

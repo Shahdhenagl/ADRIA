@@ -231,7 +231,19 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   (rows.orders || []).filter((o: any) => !o.is_deleted).forEach((o: any) => {
     // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية مش لدرج المحل — يتستبعد.
     if (isMainTreasuryOrder(o)) return;
-    if (o.type === 'sale' || o.type === 'payment') add(1, o, 'paid_amount');
+    if (o.type === 'sale' || o.type === 'payment') {
+      if (o.type === 'sale' && Number(o.held_deposit_amount) > 0) {
+        const grossPaid = Math.max(0, Number(o.paid_amount) || 0);
+        const deposit = Math.min(grossPaid, Math.max(0, Number(o.held_deposit_amount) || 0));
+        const netPaid = Math.max(0, grossPaid - deposit);
+        const ratio = grossPaid > 0 ? netPaid / grossPaid : 0;
+        const deliveryRow = { ...o, paid_amount: netPaid };
+        ALL_PAYMENT_KEYS.forEach((k) => { deliveryRow['paid_' + k] = (Number(o['paid_' + k]) || 0) * ratio; });
+        add(1, deliveryRow, 'paid_amount');
+      } else {
+        add(1, o, 'paid_amount');
+      }
+    }
     const refunded = refundedTotalOf(o);
     if (refunded > 0) add(-1, refundRecordOf(o, refunded), 'paid_amount');
   });
