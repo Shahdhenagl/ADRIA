@@ -41,16 +41,9 @@ export default function Finance() {
   const getInitialPaidAmount = (o: any) => {
     if (o.type === 'payment') return o.paid_amount || 0;
     const sumSplits = (o.paid_cash || 0) + (o.paid_visa || 0) + (o.paid_wallet || 0) + (o.paid_instapay || 0);
+    if (sumSplits > 0) return sumSplits;
     const totalRefunded = o.items?.reduce((s: number, item: any) => s + (item.refunded_amount || 0), 0) || 0;
-    const gross = sumSplits > 0
-      ? sumSplits
-      : (o.paid_amount || 0) - (debtPaymentsByInvoice.get(o.id) || 0) + totalRefunded;
-    // A delivered held invoice stores the original deposit inside paid_amount.
-    // Finance must show only the cash actually collected on delivery day.
-    const deposit = o.type === 'sale'
-      ? Math.min(gross, Math.max(0, Number(o.held_deposit_amount) || 0))
-      : 0;
-    return Math.max(0, gross - deposit);
+    return (o.paid_amount || 0) - (debtPaymentsByInvoice.get(o.id) || 0) + totalRefunded;
   };
 
   // المرتجع يُحسب على يوم الاسترجاع (refunded_at) لا يوم البيع؛ fallback للبيانات القديمة.
@@ -132,7 +125,7 @@ export default function Finance() {
 
     const expensesOut = expenses
       .filter(e => new Date(e.date) < startOfPeriod)
-      .filter(e => !isMainTreasuryExpense(e) && e.category !== 'تحويل حجز')
+      .filter(e => !isMainTreasuryExpense(e))
       .reduce((sum, e) => sum + e.amount, 0);
 
     const purchasesOut = purchaseInvoices
@@ -213,7 +206,7 @@ export default function Finance() {
 
     const expensesOut = expenses
       .filter(e => new Date(e.date) < startOfPeriod)
-      .filter(e => !isMainTreasuryExpense(e) && e.category !== 'تحويل حجز')
+      .filter(e => !isMainTreasuryExpense(e))
       .reduce((sum, e) => sum + getSafeMethodAmount(e, method, 'amount'), 0);
 
     const purchasesOut = purchaseInvoices
@@ -241,7 +234,7 @@ export default function Finance() {
       // معاملات الخزنة الرئيسية (المعلَّمة MAIN_TREASURY: مصاريف/إيرادات/مشتريات/سداد
       // موردين من الرئيسية) تُستبعَد تماماً من خزينة الكاشير — لا في القوائم ولا في
       // الإجماليات ولا في الرصيد. مكانها الطبيعي صفحة «الخزنة الرئيسية».
-      expenses: expenses.filter(e => matchDate(e.date) && !isMainTreasuryExpense(e) && e.category !== 'تحويل حجز'),
+      expenses: expenses.filter(e => matchDate(e.date) && !isMainTreasuryExpense(e)),
       purchases: purchaseInvoices.filter(inv => matchDate(inv.created_at) && !isMainTreasuryPurchase(inv)),
       // المرتجعات تُجمَّع على يوم الاسترجاع (refunded_at) مستقلّةً عن يوم البيع.
       refundOrders: activeOrders.filter(o => calculateCashRefunded(o) > 0 && matchDate(refundDateOf(o))),
@@ -329,12 +322,6 @@ export default function Finance() {
         visa = o.payment_method === 'visa' ? initialPaid : 0;
         wallet = o.payment_method === 'wallet' ? initialPaid : 0;
         instapay = o.payment_method === 'instapay' ? initialPaid : 0;
-      } else if (o.type === 'sale' && Number(o.held_deposit_amount) > 0) {
-        const dep = o.held_deposit_split || {};
-        cash = Math.max(0, cash - (Number(dep.cash) || 0));
-        visa = Math.max(0, visa - (Number(dep.visa) || 0));
-        wallet = Math.max(0, wallet - (Number(dep.wallet) || 0));
-        instapay = Math.max(0, instapay - (Number(dep.instapay) || 0));
       }
 
       list.push({
