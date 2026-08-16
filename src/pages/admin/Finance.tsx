@@ -229,8 +229,48 @@ export default function Finance() {
       // اليوم المحاسبي (3 الفجر): معاملة قبلها تُحسب على اليوم السابق — نفس منطق POS.
       return businessDateStr(storeSettings as any, new Date(dateVal)) === selectedDate;
     };
+    const displayOrders: Array<{ order: any; amount: number; date: string; split: Record<string, number>; note: string }> = [];
+    activeOrders.forEach((o: any) => {
+      if (isMainTreasuryOrder(o)) return;
+      const gross = getInitialPaidAmount(o);
+      const deposit = o.type === 'sale'
+        ? Math.min(gross, Math.max(0, Number(o.held_deposit_amount) || 0))
+        : 0;
+      const depositDate = o.held_deposit_date;
+      const depositSplit = o.held_deposit_split || {};
+      const makeSplit = (amount: number, source: any, fallbackMethod: string) => {
+        const keys = ['cash', 'visa', 'wallet', 'instapay'];
+        const result: Record<string, number> = { cash: 0, visa: 0, wallet: 0, instapay: 0 };
+        const sourceTotal = keys.reduce((sum, key) => sum + (Number(source?.[key]) || 0), 0);
+        if (sourceTotal > 0) {
+          keys.forEach(key => { result[key] = amount * ((Number(source[key]) || 0) / sourceTotal); });
+        } else if (fallbackMethod in result) {
+          result[fallbackMethod] = amount;
+        }
+        return result;
+      };
+      if (deposit > 0 && depositDate) {
+        if (matchDate(depositDate)) {
+          displayOrders.push({ order: o, amount: deposit, date: depositDate, split: makeSplit(deposit, depositSplit, o.payment_method), note: `${o.customer?.name || 'العميل'} — عربون حجز` });
+        }
+        const remainder = Math.max(0, gross - deposit);
+        if (remainder > 0 && matchDate(o.date)) {
+          const fullSplit = { cash: o.paid_cash, visa: o.paid_visa, wallet: o.paid_wallet, instapay: o.paid_instapay };
+          const remainingSplit = {
+            cash: Math.max(0, (Number(fullSplit.cash) || 0) - (Number(depositSplit.cash) || 0)),
+            visa: Math.max(0, (Number(fullSplit.visa) || 0) - (Number(depositSplit.visa) || 0)),
+            wallet: Math.max(0, (Number(fullSplit.wallet) || 0) - (Number(depositSplit.wallet) || 0)),
+            instapay: Math.max(0, (Number(fullSplit.instapay) || 0) - (Number(depositSplit.instapay) || 0)),
+          };
+          displayOrders.push({ order: o, amount: remainder, date: o.date, split: makeSplit(remainder, remainingSplit, o.payment_method), note: o.customer?.name || 'عميل نقدي' });
+        }
+      } else if (matchDate(o.date)) {
+        displayOrders.push({ order: o, amount: gross, date: o.date, split: makeSplit(gross, { cash: o.paid_cash, visa: o.paid_visa, wallet: o.paid_wallet, instapay: o.paid_instapay }, o.payment_method), note: o.customer?.name || 'عميل نقدي' });
+      }
+    });
     return {
       orders: activeOrders.filter(o => matchDate(o.date) && !isMainTreasuryOrder(o)),
+      displayOrders,
       // معاملات الخزنة الرئيسية (المعلَّمة MAIN_TREASURY: مصاريف/إيرادات/مشتريات/سداد
       // موردين من الرئيسية) تُستبعَد تماماً من خزينة الكاشير — لا في القوائم ولا في
       // الإجماليات ولا في الرصيد. مكانها الطبيعي صفحة «الخزنة الرئيسية».
@@ -311,29 +351,17 @@ export default function Finance() {
   const allDailyTransactions = useMemo(() => {
     const list: any[] = [];
     
-    periodTransactions.orders.forEach(o => {
-      let cash = o.paid_cash || 0;
-      let visa = o.paid_visa || 0;
-      let wallet = o.paid_wallet || 0;
-      let instapay = o.paid_instapay || 0;
-      let initialPaid = getInitialPaidAmount(o);
-      if (cash + visa + wallet + instapay === 0) {
-        cash = o.payment_method === 'cash' ? initialPaid : 0;
-        visa = o.payment_method === 'visa' ? initialPaid : 0;
-        wallet = o.payment_method === 'wallet' ? initialPaid : 0;
-        instapay = o.payment_method === 'instapay' ? initialPaid : 0;
-      }
-
+    periodTransactions.displayOrders.forEach(({ order: o, amount, date, split, note }) => {
       list.push({
-        id: o.id,
+        id: `${o.id}-${date}`,
         type: o.type === 'sale' ? 'إيراد مبيعات' : 'تحصيل من العميل',
-        amount: getInitialPaidAmount(o),
+        amount,
         method: o.payment_method,
-        split: { cash, visa, wallet, instapay },
-        note: o.customer?.name || 'عميل نقدي',
+        split,
+        note,
         isOut: false,
-        time: new Date(o.date).toLocaleString('ar-EG', { calendar: 'gregory' }),
-        rawDate: o.date,
+        time: new Date(date).toLocaleString('ar-EG', { calendar: 'gregory' }),
+        rawDate: date,
         original: o,
         originType: 'order'
       });
