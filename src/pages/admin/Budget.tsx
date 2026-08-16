@@ -159,12 +159,6 @@ export default function Budget() {
     // deposit for customer-balance purposes. The dashboard must show only the
     // new collection on delivery day; the original deposit remains represented
     // by the dated "حجز" expense/revenue entry.
-    const heldSaleIds = new Set(
-      orders
-        .filter((order: any) => !order.is_deleted && Number(order.held_deposit_amount) > 0)
-        .map((order: any) => String(order.id))
-    );
-
     orders.filter((order) => !order.is_deleted).forEach(o => {
       // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية — يتستبعد من كشف خزنة الكاشير.
       if (isMainTreasuryOrder(o)) return;

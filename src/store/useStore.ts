@@ -681,7 +681,7 @@ interface CashierStore {
     heldPayment?: {
       heldInvoiceId: string;
       depositAmount: number;
-      depositSplit: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number };
+      depositSplit: Record<string, number>;
       depositDate: string;
     }
   ) => Promise<string>;
