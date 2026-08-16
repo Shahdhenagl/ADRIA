@@ -155,6 +155,16 @@ export default function Budget() {
     });
 
     // 2. Orders (Sales revenues & Debt payments & Refunds)
+    // Final sales created from held invoices keep paid_amount inclusive of the
+    // deposit for customer-balance purposes. The dashboard must show only the
+    // new collection on delivery day; the original deposit remains represented
+    // by the dated "حجز" expense/revenue entry.
+    const heldSaleIds = new Set(
+      orders
+        .filter((order: any) => !order.is_deleted && Number(order.held_deposit_amount) > 0)
+        .map((order: any) => String(order.id))
+    );
+
     orders.filter((order) => !order.is_deleted).forEach(o => {
       // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية — يتستبعد من كشف خزنة الكاشير.
       if (isMainTreasuryOrder(o)) return;
@@ -174,12 +184,30 @@ export default function Budget() {
         }
       }
 
-      // Revenues: payments received
+      // Revenues: payments received.
+      // For a delivered held invoice, paid_amount includes the old deposit.
+      // Subtract only that deposit from the delivery-day transaction; the
+      // deposit itself is already shown on its original reservation date.
       if (initialPaidAmount > 0) {
         const cat = o.type === 'sale' ? (o.car_id ? 'إيرادات خدمات (سيارات)' : 'مبيعات كاشير') : 'تحصيل من العميل';
         const desc = o.type === 'sale' ? `فاتورة مبيعات #${o.id}` : `تحصيل من العميل #${o.id}`;
-        
-        addSplits(o.id, 'revenue', cat, desc, o.date, splitOf(o, initialPaidAmount), o.car_id);
+        const grossSplit = splitOf(o, initialPaidAmount);
+        const depositAmount = o.type === 'sale'
+          ? Math.min(initialPaidAmount, Math.max(0, Number((o as any).held_deposit_amount) || 0))
+          : 0;
+
+        if (depositAmount > 0) {
+          const depositSource = (o as any).held_deposit_split && typeof (o as any).held_deposit_split === 'object'
+            ? (o as any).held_deposit_split
+            : { cash: depositAmount };
+          const laterSplit: Partial<Record<PaymentKey, number>> = {};
+          ALL_PAYMENT_KEYS.forEach((m) => {
+            laterSplit[m] = Math.max(0, (Number(grossSplit[m]) || 0) - (Number(depositSource[m]) || 0));
+          });
+          addSplits(o.id, 'revenue', cat, desc, o.date, laterSplit, o.car_id);
+        } else {
+          addSplits(o.id, 'revenue', cat, desc, o.date, grossSplit, o.car_id);
+        }
       }
 
       // Expenses: Returns refunded amount
@@ -206,6 +234,12 @@ export default function Budget() {
 
     // 2. Manual finance transactions (store expenses and extra revenues)
     expenses.forEach(e => {
+      // "تحويل حجز" is an internal bookkeeping reclassification, not a new
+      // cashier collection or expense. The actual cash movement is already
+      // represented by the reservation deposit on its original date and the
+      // remaining collection on the delivery date. Never render this row.
+      if (e.category === 'تحويل حجز') return;
+
       const isRevenue = e.amount < 0;
       const treasury = isMainTreasuryExpense(e) ? 'main' : 'cashier';
       addSplits(

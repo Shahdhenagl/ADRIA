@@ -249,6 +249,11 @@ export interface Order {
   exchange_data?: any; // بيانات الاستبدال: { before, after, oldTotal, newTotal, diff, method, date }
   /** بصمة البيعة من الجهاز — بتمنع تسجيل نفس الفاتورة مرتين لو النت فصل (db/63). */
   client_ref?: string | null;
+  /** بيانات العربون الأصلي لفاتورة تم تسليمها من حجز. */
+  held_invoice_id?: string | null;
+  held_deposit_amount?: number;
+  held_deposit_split?: Record<string, number> | null;
+  held_deposit_date?: string | null;
 }
 
 // فاتورة معلقة / محجوزة: تحجز الكمية من المخزون دون تسجيل بيع، ويمكن لاحقاً
@@ -672,7 +677,13 @@ interface CashierStore {
     discountAmount?: number,
     carId?: string,
     dateISO?: string,
-    toMainTreasury?: boolean
+    toMainTreasury?: boolean,
+    heldPayment?: {
+      heldInvoiceId: string;
+      depositAmount: number;
+      depositSplit: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number };
+      depositDate: string;
+    }
   ) => Promise<string>;
   payInvoiceDebt: (
     invoiceId: string,
@@ -2197,7 +2208,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   })),
 
   // ── Checkout ───────────────────────────────────────────────
-  checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId, dateISO, toMainTreasury = false) => {
+  checkout: async (total, customerDetails, paidAmount = total, type = 'sale', paymentMethod = 'cash', splitPayments, cashierName, notes, couponCode, discountAmount, carId, dateISO, toMainTreasury = false, heldPayment) => {
     const state = get();
     const finalCashierName = cashierName || state.activeCashier?.name || 'مدير النظام';
     const sp = state.salesperson;
@@ -2412,7 +2423,13 @@ export const useStore = create<CashierStore>((set, get) => ({
         discount_amount: discountAmount || 0,
         car_id: carId || null,
         created_at: orderCreatedAt,
-        client_ref: clientRef
+        client_ref: clientRef,
+        ...(heldPayment ? {
+          held_invoice_id: heldPayment.heldInvoiceId,
+          held_deposit_amount: Math.max(0, Number(heldPayment.depositAmount) || 0),
+          held_deposit_split: heldPayment.depositSplit || null,
+          held_deposit_date: heldPayment.depositDate,
+        } : {})
       });
 
       if (orderError) {
@@ -2472,8 +2489,14 @@ export const useStore = create<CashierStore>((set, get) => ({
         salesperson_id: sp?.id,
         salesperson_name: sp?.name,
         notes: finalNotes,
-        car_id: carId || undefined
-      };
+        car_id: carId || undefined,
+        ...(heldPayment ? {
+          held_invoice_id: heldPayment.heldInvoiceId,
+          held_deposit_amount: Math.max(0, Number(heldPayment.depositAmount) || 0),
+          held_deposit_split: heldPayment.depositSplit || null,
+          held_deposit_date: heldPayment.depositDate,
+        } : {})
+      } as any;
 
       const updatedProducts = state.products.map((p) => {
         const cartItem = state.cart.find((c) => c.id === p.id);
@@ -2869,20 +2892,35 @@ export const useStore = create<CashierStore>((set, get) => ({
         discount,
         undefined,
         opts?.dateISO,
+        false,
+        {
+          heldInvoiceId: id,
+          depositAmount: depAmt,
+          depositSplit: held.deposit_split || { cash: depAmt },
+          depositDate: held.deposit_date || held.created_at,
+        },
       );
       // العربون دخل الخزنة في يوم الحجز. نحفظ مصدره على الفاتورة النهائية
       // كي تستبعده تقارير الخزنة من وارد يوم التسليم، بينما يظل paid_amount
       // شاملًا للعربون لحساب المستحقات بصورة صحيحة.
-      await supabase.from('orders').update({
+      const { error: heldLinkError } = await supabase.from('orders').update({
         held_invoice_id: id,
         held_deposit_amount: depAmt,
         held_deposit_split: held.deposit_split || { cash: depAmt },
         held_deposit_date: held.deposit_date || held.created_at,
       }).eq('id', String(invoiceId));
+      if (heldLinkError) {
+        alert('تم إنشاء الفاتورة لكن تعذر حفظ بيانات العربون. لا تغلقي اليوم قبل مراجعة الفاتورة: ' + heldLinkError.message);
+        return false;
+      }
 
-      await supabase.from('held_invoices')
+      const { error: heldStatusError } = await supabase.from('held_invoices')
         .update({ status: 'delivered', order_id: String(invoiceId), status_at: new Date().toISOString() })
         .eq('id', id);
+      if (heldStatusError) {
+        alert('تم حفظ الفاتورة وبيانات العربون لكن تعذر تحديث حالة الحجز: ' + heldStatusError.message);
+        return false;
+      }
       set((s) => ({ heldInvoices: s.heldInvoices.filter((h) => h.id !== id) }));
       return true;
     } finally {
