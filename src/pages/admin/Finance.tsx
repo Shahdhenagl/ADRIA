@@ -392,6 +392,9 @@ export default function Finance() {
     });
 
     periodTransactions.expenses.forEach(e => {
+      // إعادة تصنيف العربون إلى فاتورة بيع: لا تعرضه كسحب/مصروف في الجدول.
+      // لا نعدّل periodTransactions حتى تبقى حسابات التقفيل والأرصدة كما هي.
+      if (e.category === 'تحويل حجز') return;
       const isTransfer = e.category === 'تحويل داخلي' && e.amount === 0;
       const isIncome = e.amount < 0;
       let cash = Math.abs(e.paid_cash || 0);
