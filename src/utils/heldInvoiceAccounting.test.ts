@@ -5,10 +5,11 @@ import { heldPaymentBreakdown } from './invoicePayments';
 import { isFullyPrepaidOnlineHeld } from './heldInvoiceLifecycle';
 
 describe('held invoice accounting', () => {
-  it('recognizes a fully prepaid online held invoice as status-only delivery', () => {
-    expect(isFullyPrepaidOnlineHeld({ kind: 'online', total: 500, deposit: 500, discount_amount: 0 })).toBe(true);
-    expect(isFullyPrepaidOnlineHeld({ kind: 'online', total: 500, deposit: 100, discount_amount: 0 })).toBe(false);
-    expect(isFullyPrepaidOnlineHeld({ kind: 'shop', total: 500, deposit: 500, discount_amount: 0 })).toBe(false);
+  it('treats a shipped prepaid online order like invoice 543 as status-only delivery', () => {
+    expect(isFullyPrepaidOnlineHeld({ kind: 'online', status: 'shipped', total: 900, deposit: 0, discount_amount: 0 })).toBe(true);
+    expect(isFullyPrepaidOnlineHeld({ kind: 'online', status: 'money_pending', total: 900, deposit: 0, discount_amount: 0 })).toBe(false);
+    expect(isFullyPrepaidOnlineHeld({ kind: 'online', status: 'held', total: 500, deposit: 500, discount_amount: 0 })).toBe(true);
+    expect(isFullyPrepaidOnlineHeld({ kind: 'shop', status: 'shipped', total: 500, deposit: 500, discount_amount: 0 })).toBe(false);
   });
   const sale = {
     id: '9001',

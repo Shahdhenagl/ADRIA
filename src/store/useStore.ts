@@ -2851,11 +2851,11 @@ export const useStore = create<CashierStore>((set, get) => ({
     // الطلب الأونلاين المدفوع بالكامل اتقفلت حركته المالية وقت الدفع. يوم التسليم
     // هنا مجرد تغيير lifecycle؛ لا ننشئ sale جديد ولا نطلب فتح يوم محاسبي قديم.
     // هذا يمنع ظهور فاتورة جديدة بتاريخ الاستلام (مثل 11/8 بدل تاريخ الدفع 4/8).
-    if (isFullyPrepaidOnlineHeld(held) && paid <= 0.01) {
+    if (isFullyPrepaidOnlineHeld(held)) {
       const { error } = await supabase.from('held_invoices').update({
         status: 'delivered',
         status_at: new Date().toISOString(),
-        status_note: 'تم التسليم — مدفوع بالكامل عند إنشاء الطلب',
+        status_note: 'تم التسليم — التحصيل مسجل سابقًا، بدون فاتورة أو حركة مالية جديدة',
       }).eq('id', id);
       if (error) { alert('تعذّر تحديث حالة الطلب: ' + error.message); return false; }
       set((s) => ({ heldInvoices: s.heldInvoices.filter((h) => h.id !== id) }));
