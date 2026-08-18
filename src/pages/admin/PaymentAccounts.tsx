@@ -120,7 +120,10 @@ export default function PaymentAccounts() {
       return isTransfer && targetDates.has(accountingDateOf(t.created_at));
     });
     (savRows || []).forEach((t: any) => {
-      if (t.group_id) groups.set(String(t.group_id), [...(groups.get(String(t.group_id)) || []), t]);
+      if (t.group_id && targetDates.has(accountingDateOf(t.created_at))) {
+        const key = String(t.group_id);
+        groups.set(key, [...(groups.get(key) || []), t]);
+      }
     });
     const duplicateGroups = [...groups.entries()]
       .filter(([, rows]) => {
