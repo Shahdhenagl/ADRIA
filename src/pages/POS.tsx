@@ -20,6 +20,7 @@ import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal, heldPaymentB
 import { printShippingLabel } from '../utils/printShippingLabel';
 import { loadParkedCarts, addParkedCart, removeParkedCart, parkedAgeLabel, type ParkedCart } from '../utils/parkedCarts';
 import { saveDayBudgetCache, loadDayBudgetCache } from '../utils/offlineCache';
+import { calculateDiscountAmount, type DiscountRule } from '../utils/discountRules';
 
 // فئة قيد تسوية الجرد: يضبط رصيد خزنة المحل ليطابق الكاش الفعلي المعدود.
 // يُحسب ضمن الداخل/الخارج (عشان الرصيد يتصحّح) لكن له خانته المستقلة في التفصيل.
@@ -2137,11 +2138,21 @@ export default function POS() {
     
     if (isValidDate && isUnderTotalLimit && isUnderCustomerLimit) {
       validCoupon = appliedCoupon;
-      if (appliedCoupon.discount_type === 'percentage') {
-        couponDiscountAmount = (subtotal - manualDiscount) * (appliedCoupon.discount_value / 100);
-      } else {
-        couponDiscountAmount = appliedCoupon.discount_value;
-      }
+      const promotionRule: DiscountRule = {
+        discount_type: appliedCoupon.discount_type,
+        discount_value: Number(appliedCoupon.discount_value) || 0,
+        start_date: appliedCoupon.start_date,
+        end_date: appliedCoupon.end_date,
+        is_active: appliedCoupon.is_active,
+        scope: appliedCoupon.scope || 'all',
+        product_ids: Array.isArray(appliedCoupon.product_ids) ? appliedCoupon.product_ids : [],
+        category_id: appliedCoupon.category_id || null,
+      };
+      couponDiscountAmount = calculateDiscountAmount(
+        cart.map((item) => ({ id: item.id, product_id: item.id, category_id: item.category_id, sale_price: item.sale_price, quantity: item.quantity })),
+        promotionRule,
+        manualDiscount,
+      );
     }
   }
 

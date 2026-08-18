@@ -133,6 +133,9 @@ export interface OrderItem extends Product {
   quantity: number;
   returned_quantity: number;
   refunded_amount?: number;
+  original_sale_price?: number;
+  discount_type?: 'percentage' | 'fixed' | null;
+  discount_value?: number;
 }
 
 export interface Customer {
@@ -245,6 +248,10 @@ export interface Order {
   notes?: string | null;
   coupon_code?: string | null;
   discount_amount?: number;
+  subtotal_before_discount?: number;
+  discount_type?: 'percentage' | 'fixed' | null;
+  discount_value?: number;
+  promotion_id?: string | null;
   car_id?: string;
   exchange_data?: any; // بيانات الاستبدال: { before, after, oldTotal, newTotal, diff, method, date }
   /** بصمة البيعة من الجهاز — بتمنع تسجيل نفس الفاتورة مرتين لو النت فصل (db/63). */
@@ -580,6 +587,13 @@ export interface Coupon {
   used_count: number;
   is_active: boolean;
   created_at: string;
+  scope?: 'all' | 'products' | 'category';
+  product_ids?: string[] | null;
+  category_id?: string | null;
+  display_name?: string | null;
+  print_label?: string | null;
+  print_barcode?: string | null;
+  show_item_code?: boolean;
 }
 
 export interface CashierNote {
@@ -2413,6 +2427,10 @@ export const useStore = create<CashierStore>((set, get) => ({
         notes: finalNotes,
         coupon_code: couponCode || null,
         discount_amount: discountAmount || 0,
+        subtotal_before_discount: state.cart.reduce((sum, item) => sum + (Number(item.sale_price) || 0) * (Number(item.quantity) || 0), 0),
+        discount_type: couponCode ? (state.coupons.find((c) => c.code === couponCode)?.discount_type || 'fixed') : 'fixed',
+        discount_value: discountAmount || 0,
+        promotion_id: null,
         car_id: carId || null,
         created_at: orderCreatedAt,
         client_ref: clientRef
@@ -2440,6 +2458,9 @@ export const useStore = create<CashierStore>((set, get) => ({
         returned_quantity: 0,
         sale_price: item.sale_price,
         purchase_price: item.average_purchase_price || item.purchase_price,
+        original_sale_price: item.sale_price,
+        discount_type: couponCode ? (state.coupons.find((c) => c.code === couponCode)?.discount_type || 'fixed') : 'fixed',
+        discount_value: discountAmount || 0,
       }));
       const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
       if (itemsError) {
@@ -2475,6 +2496,11 @@ export const useStore = create<CashierStore>((set, get) => ({
         salesperson_id: sp?.id,
         salesperson_name: sp?.name,
         notes: finalNotes,
+        coupon_code: couponCode || null,
+        discount_amount: discountAmount || 0,
+        subtotal_before_discount: state.cart.reduce((sum, item) => sum + (Number(item.sale_price) || 0) * (Number(item.quantity) || 0), 0),
+        discount_type: couponCode ? (state.coupons.find((c) => c.code === couponCode)?.discount_type || 'fixed') : 'fixed',
+        discount_value: discountAmount || 0,
         car_id: carId || undefined
       };
 
@@ -2511,6 +2537,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         customer: finalCustomer?.name || 'عميل نقدي',
         date: newOrder.date,
         total,
+        subtotalBeforeDiscount: state.cart.reduce((sum, item) => sum + (Number(item.sale_price) || 0) * (Number(item.quantity) || 0), 0),
+        discountAmount: discountAmount || 0,
         paid: savedPaidAmount,
         paymentMethod,
         items: newOrder.items.map((item) => ({
