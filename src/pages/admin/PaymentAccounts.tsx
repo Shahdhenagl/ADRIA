@@ -102,19 +102,22 @@ export default function PaymentAccounts() {
   // ظهور تحويلات مكررة أو غير مربوطة في كشف يوم 6/11 أو أي يوم آخر.
   const transferDiagnostics = useMemo(() => {
     const targetDates = new Set(['2026-08-06', '2026-08-11']);
-    const cairoDateOf = (value: any) => {
+    const accountingDateOf = (value: any) => {
       const date = new Date(value);
       if (!Number.isFinite(date.getTime())) return '';
+      // اليوم المحاسبي يبدأ 03:00 بتوقيت القاهرة؛ طرح 3 ساعات ينقل
+      // العمليات بين 00:00 و02:59 إلى يومها المحاسبي السابق.
+      const shifted = new Date(date.getTime() - 3 * 60 * 60 * 1000);
       return new Intl.DateTimeFormat('en-CA', {
         timeZone: 'Africa/Cairo',
         year: 'numeric', month: '2-digit', day: '2-digit',
-      }).format(date);
+      }).format(shifted);
     };
     const groups = new Map<string, any[]>();
     const suspicious = (savRows || []).filter((t: any) => {
       const source = String(t.source || '');
       const isTransfer = ['day_closing', 'shop_transfer', 'to_shop', 'convert'].includes(source);
-      return isTransfer && (targetDates.has(cairoDateOf(t.created_at)) || !t.group_id);
+      return isTransfer && targetDates.has(accountingDateOf(t.created_at));
     });
     (savRows || []).forEach((t: any) => {
       if (t.group_id) groups.set(String(t.group_id), [...(groups.get(String(t.group_id)) || []), t]);
@@ -338,8 +341,8 @@ export default function PaymentAccounts() {
       {(transferDiagnostics.suspicious.length > 0 || transferDiagnostics.duplicateGroups.length > 0) && (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
           <div className="font-black">تنبيه تشخيصي — يحتاج مراجعة</div>
-          <div className="text-sm mt-1">تم العثور على {transferDiagnostics.suspicious.length} حركة تحويل مرتبطة بيومي 6/11 أو بدون `group_id`، و{transferDiagnostics.duplicateGroups.length} مجموعة بها أكثر من قيدين. لم يتم حذف أو تعديل أي بيانات.</div>
-          <div className="text-xs mt-2 font-medium">راجعي مصدر الحركة والتاريخ والمبلغ قبل اعتماد أي تصحيح.</div>
+          <div className="text-sm mt-1">تم العثور على {transferDiagnostics.suspicious.length} حركة تحويل في اليوم المحاسبي 6 أو 11، و{transferDiagnostics.duplicateGroups.length} مجموعة غير متزنة. لم يتم حذف أو تعديل أي بيانات.</div>
+          <div className="text-xs mt-2 font-medium">التاريخ محسوب من 03:00 إلى 02:59 بتوقيت القاهرة.</div>
         </div>
       )}
 
