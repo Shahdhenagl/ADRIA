@@ -101,18 +101,32 @@ export default function PaymentAccounts() {
   // تشخيص آمن: لا يحذف ولا يعدّل أي قيد، لكنه يلفت النظر للصفوف التي قد تفسر
   // ظهور تحويلات مكررة أو غير مربوطة في كشف يوم 6/11 أو أي يوم آخر.
   const transferDiagnostics = useMemo(() => {
+    const targetDates = new Set(['2026-08-06', '2026-08-11']);
+    const cairoDateOf = (value: any) => {
+      const date = new Date(value);
+      if (!Number.isFinite(date.getTime())) return '';
+      return new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Africa/Cairo',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+      }).format(date);
+    };
     const groups = new Map<string, any[]>();
     const suspicious = (savRows || []).filter((t: any) => {
       const source = String(t.source || '');
-      const d = new Date(t.created_at);
-      const day = d.getDate();
       const isTransfer = ['day_closing', 'shop_transfer', 'to_shop', 'convert'].includes(source);
-      return isTransfer && (day === 6 || day === 11 || !t.group_id);
+      return isTransfer && (targetDates.has(cairoDateOf(t.created_at)) || !t.group_id);
     });
     (savRows || []).forEach((t: any) => {
-      if (t.group_id) groups.set(t.group_id, [...(groups.get(t.group_id) || []), t]);
+      if (t.group_id) groups.set(String(t.group_id), [...(groups.get(String(t.group_id)) || []), t]);
     });
-    const duplicateGroups = [...groups.entries()].filter(([, rows]) => rows.length > 2).map(([group_id, rows]) => ({ group_id, rows }));
+    const duplicateGroups = [...groups.entries()]
+      .filter(([, rows]) => {
+        const hasIn = rows.some((r) => r.direction === 'in');
+        const hasOut = rows.some((r) => r.direction === 'out');
+        const net = rows.reduce((sum, r) => sum + (r.direction === 'in' ? Number(r.amount) || 0 : -(Number(r.amount) || 0)), 0);
+        return (!hasIn || !hasOut || Math.abs(net) > 0.01) && rows.some((r) => ['day_closing', 'shop_transfer', 'to_shop', 'convert'].includes(String(r.source || '')));
+      })
+      .map(([group_id, rows]) => ({ group_id, rows }));
     return { suspicious, duplicateGroups };
   }, [savRows]);
 

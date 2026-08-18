@@ -1,0 +1,44 @@
+ADRIA SAFE REVIEW SNAPSHOT
+Tue Aug 18 17:29:48 UTC 2026
+
+02278df9aa0677fbb8b1cd0e7dcd2c7678c37f50
+02278df | 2026-08-18 11:24:55 +0000 | merge: scoped promotions and payment ledger diagnostics
+3b703b2 | 2026-08-18 10:31:20 +0000 | feat: add scoped promotions and payment ledger diagnostics
+03476c1 | 2026-08-16 15:53:15 +0000 | Do not create sale when prepaid online order is delivered
+08ed748 | 2026-08-16 15:52:23 +0000 | Revert "Hide deposit reclassification from finance list"
+d84c261 | 2026-08-16 15:47:35 +0000 | Hide deposit reclassification from finance list
+8082d6b | 2026-08-16 15:42:30 +0000 | Show payment history on original collection dates
+c7178e3 | 2026-08-16 15:33:36 +0000 | Revert "Fix finance dashboard held deposit display"
+141d2b7 | 2026-08-16 15:30:53 +0000 | Fix finance dashboard held deposit display
+
+CHANGED TODAY VS 03476C1
+ api/telegram-alert.js                       |   4 [32m+[m[31m-[m
+ db/73_atomic_held_invoice_rpc.sql           | 152 [32m++++++++++++++++++++++++++++[m
+ db/74_promotions_and_discount_snapshots.sql |  35 [32m+++++++[m
+ db/75_diagnose_savings_transfers.sql        |  42 [32m++++++++[m
+ src/pages/POS.tsx                           |  28 [32m++++[m[31m-[m
+ src/pages/admin/Coupons.tsx                 |  94 [32m++++++++++++++++[m[31m-[m
+ src/pages/admin/PaymentAccounts.tsx         |  26 [32m+++++[m
+ src/store/useStore.ts                       | 104 [32m++++++++++[m[31m---------[m
+ src/utils/discountRules.test.ts             |  37 [32m+++++++[m
+ src/utils/discountRules.ts                  |  73 [32m+++++++++++++[m
+ 10 files changed, 537 insertions(+), 58 deletions(-)
+
+WORKTREE
+[31m??[m "ADR\304\260A_DATABASE_STUDY.md"
+[31m??[m db/recover_layla_amir_1340.sql
+[31m??[m diagnose_543_minimal.sql
+[31m??[m diagnose_correct_invoice.sql
+[31m??[m diagnose_invoice_543.sql
+[31m??[m diagnose_invoice_543_safe.sql
+[31m??[m diagnose_live_schema_only.sql
+[31m??[m diagnose_two_invoices.sql
+[31m??[m diagnose_two_invoices_safe.sql
+[31m??[m pnpm-lock.yaml
+[31m??[m pnpm-workspace.yaml
+[31m??[m pre_fix_1340_verification.sql
+[31m??[m review_snapshot_2026-08-18.txt
+[31m??[m trace_543_held_only.sql
+[31m??[m trace_online_543.sql
+[31m??[m verify_live_connection.sql
+[31m??[m verify_one_connection_at_a_time.sql
