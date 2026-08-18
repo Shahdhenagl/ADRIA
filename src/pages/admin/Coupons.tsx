@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useStore } from '../../store/useStore';
-import { Ticket, Plus, Search, Calendar, Users, Check, X, AlertCircle, Edit2 } from 'lucide-react';
+import { Ticket, Plus, Search, Calendar, Users, Check, X, AlertCircle, Edit2, Printer } from 'lucide-react';
+import JsBarcode from 'jsbarcode';
+import { escapeHtml } from '../../utils/escapeHtml';
 
 export default function Coupons() {
   const { coupons, addCoupon, updateCoupon, deleteCoupon } = useStore();
@@ -17,6 +19,13 @@ export default function Coupons() {
   const [maxUsesCustomer, setMaxUsesCustomer] = useState<number | ''>('');
   const [maxUsesTotal, setMaxUsesTotal] = useState<number | ''>('');
   const [isActive, setIsActive] = useState(true);
+  const [scope, setScope] = useState<'all' | 'products' | 'category'>('all');
+  const [productIds, setProductIds] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [printLabel, setPrintLabel] = useState('');
+  const [printBarcode, setPrintBarcode] = useState('');
+  const [showItemCode, setShowItemCode] = useState(false);
 
   const filteredCoupons = coupons.filter(c => c.code.toLowerCase().includes(searchTerm.toLowerCase()));
 
@@ -35,7 +44,14 @@ export default function Coupons() {
         end_date: endDate ? new Date(endDate).toISOString() : null,
         max_uses_per_customer: maxUsesCustomer === '' ? null : Number(maxUsesCustomer),
         max_uses_total: maxUsesTotal === '' ? null : Number(maxUsesTotal),
-        is_active: isActive
+        is_active: isActive,
+        scope,
+        product_ids: scope === 'products' ? productIds.split(',').map((id) => id.trim()).filter(Boolean) : [],
+        category_id: scope === 'category' ? (categoryId || null) : null,
+        display_name: displayName.trim() || null,
+        print_label: printLabel.trim() || null,
+        print_barcode: printBarcode.trim() || null,
+        show_item_code: showItemCode
       };
 
       if (editingCouponId) {
@@ -62,6 +78,13 @@ export default function Coupons() {
     setMaxUsesCustomer('');
     setMaxUsesTotal('');
     setIsActive(true);
+    setScope('all');
+    setProductIds('');
+    setCategoryId('');
+    setDisplayName('');
+    setPrintLabel('');
+    setPrintBarcode('');
+    setShowItemCode(false);
   };
 
   const handleEdit = (coupon: any) => {
@@ -82,6 +105,13 @@ export default function Coupons() {
     setMaxUsesCustomer(coupon.max_uses_per_customer ?? '');
     setMaxUsesTotal(coupon.max_uses_total ?? '');
     setIsActive(coupon.is_active);
+    setScope(coupon.scope || 'all');
+    setProductIds(Array.isArray(coupon.product_ids) ? coupon.product_ids.join(', ') : '');
+    setCategoryId(coupon.category_id || '');
+    setDisplayName(coupon.display_name || '');
+    setPrintLabel(coupon.print_label || '');
+    setPrintBarcode(coupon.print_barcode || '');
+    setShowItemCode(!!coupon.show_item_code);
     setIsModalOpen(true);
   };
 
@@ -91,6 +121,22 @@ export default function Coupons() {
     } catch (e) {
       alert('حدث خطأ أثناء تغيير الحالة');
     }
+  };
+
+  const printCoupon = (coupon: any) => {
+    const amount = `${coupon.discount_value}${coupon.discount_type === 'percentage' ? '%' : ' ج.م'}`;
+    const itemCode = coupon.show_item_code ? `<div class="code">كود العرض: ${coupon.code}</div>` : '';
+    let barcode = '';
+    const barcodeValue = coupon.print_barcode || coupon.code;
+    try {
+      const canvas = document.createElement('canvas');
+      JsBarcode(canvas, barcodeValue, { format: 'CODE128', displayValue: false, width: 2, height: 60, margin: 0 });
+      barcode = `<img class="barcode" src="${canvas.toDataURL('image/png')}" alt="barcode" />`;
+    } catch { barcode = ''; }
+    const win = window.open('', '_blank', 'width=600,height=700');
+    if (!win) return;
+    win.document.write(`<!doctype html><html dir="rtl"><head><meta charset="utf-8"><title>بطاقة خصم</title><style>body{font-family:Arial,sans-serif;text-align:center;padding:32px;color:#172033}.card{border:4px dashed #e11d48;border-radius:24px;padding:32px}.shop{font-size:28px;font-weight:900}.label{font-size:22px;margin:24px 0}.amount{font-size:72px;font-weight:900;color:#e11d48}.code{font-size:18px;margin-top:24px}.barcode{display:block;width:280px;height:75px;object-fit:contain;margin:22px auto 0}</style></head><body><div class="card"><div class="shop">${escapeHtml(coupon.display_name || 'اسم المحل')}</div><div class="label">${escapeHtml(coupon.print_label || 'خصم خاص')}</div><div class="amount">${escapeHtml(amount)}</div>${itemCode}${barcode}</div><script>window.print();</script></body></html>`);
+    win.document.close();
   };
 
   const handleDelete = async (id: string) => {
@@ -177,6 +223,8 @@ export default function Coupons() {
                 </div>
               </div>
 
+                <div className="text-xs font-bold text-rose-600 mt-3">النطاق: {coupon.scope === 'products' ? 'منتجات محددة' : coupon.scope === 'category' ? 'تصنيف محدد' : 'كل المنتجات'}</div>
+
               <div className="space-y-3 mt-6 bg-slate-50 p-4 rounded-2xl">
                 <div className="flex items-center justify-between text-sm font-medium">
                   <span className="text-slate-500 flex items-center gap-2"><Calendar size={16}/> الصلاحية</span>
@@ -199,6 +247,13 @@ export default function Coupons() {
               </div>
 
               <div className="mt-6 flex gap-2">
+                <button
+                  onClick={() => printCoupon(coupon)}
+                  className="px-4 py-2 rounded-xl flex items-center justify-center bg-rose-50 text-rose-600 hover:bg-rose-100 transition-colors"
+                  title="طباعة بطاقة الخصم"
+                >
+                  <Printer size={18} />
+                </button>
                 <button
                   onClick={() => handleEdit(coupon)}
                   className="px-4 py-2 rounded-xl flex items-center justify-center bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
@@ -302,6 +357,41 @@ export default function Coupons() {
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 focus:ring-2 focus:ring-rose-500"
                   />
                 </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">نطاق الخصم</label>
+                  <select value={scope} onChange={(e) => setScope(e.target.value as 'all' | 'products' | 'category')} className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 font-bold">
+                    <option value="all">كل المنتجات</option>
+                    <option value="products">منتجات محددة</option>
+                    <option value="category">تصنيف محدد</option>
+                  </select>
+                </div>
+                {scope === 'products' && <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Product IDs (مفصولة بفواصل)</label>
+                  <input value={productIds} onChange={(e) => setProductIds(e.target.value)} placeholder="uuid1, uuid2" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3" dir="ltr" />
+                </div>}
+                {scope === 'category' && <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">Category ID</label>
+                  <input value={categoryId} onChange={(e) => setCategoryId(e.target.value)} placeholder="category uuid" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3" dir="ltr" />
+                </div>}
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">اسم المحل على البطاقة</label>
+                  <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="اسم المحل" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">عنوان البطاقة</label>
+                  <input value={printLabel} onChange={(e) => setPrintLabel(e.target.value)} placeholder="خصم خاص" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3" />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-2">قيمة barcode اختيارية</label>
+                  <input value={printBarcode} onChange={(e) => setPrintBarcode(e.target.value)} placeholder="اتركه فارغًا إذا لا تريد barcode" className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3" dir="ltr" />
+                </div>
+                <label className="flex items-center gap-3 font-bold text-slate-700 pt-8"><input type="checkbox" checked={showItemCode} onChange={(e) => setShowItemCode(e.target.checked)} className="w-5 h-5" /> إظهار كود العرض على البطاقة</label>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

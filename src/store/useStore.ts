@@ -133,6 +133,9 @@ export interface OrderItem extends Product {
   quantity: number;
   returned_quantity: number;
   refunded_amount?: number;
+  original_sale_price?: number;
+  discount_type?: 'percentage' | 'fixed' | null;
+  discount_value?: number;
 }
 
 export interface Customer {
@@ -245,6 +248,10 @@ export interface Order {
   notes?: string | null;
   coupon_code?: string | null;
   discount_amount?: number;
+  subtotal_before_discount?: number;
+  discount_type?: 'percentage' | 'fixed' | null;
+  discount_value?: number;
+  promotion_id?: string | null;
   car_id?: string;
   exchange_data?: any; // بيانات الاستبدال: { before, after, oldTotal, newTotal, diff, method, date }
   /** بصمة البيعة من الجهاز — بتمنع تسجيل نفس الفاتورة مرتين لو النت فصل (db/63). */
@@ -274,6 +281,8 @@ export interface HeldInvoiceItem {
 
 export interface HeldInvoice {
   id: string;
+  /** مفتاح يمنع تكرار الحجز والعربون عند إعادة المحاولة بعد timeout. */
+  idempotency_key?: string | null;
   customer_name?: string | null;
   customer_phone?: string | null;
   customer_custom_id?: string | null;
@@ -583,6 +592,13 @@ export interface Coupon {
   used_count: number;
   is_active: boolean;
   created_at: string;
+  scope?: 'all' | 'products' | 'category';
+  product_ids?: string[] | null;
+  category_id?: string | null;
+  display_name?: string | null;
+  print_label?: string | null;
+  print_barcode?: string | null;
+  show_item_code?: boolean;
 }
 
 export interface CashierNote {
@@ -740,6 +756,7 @@ interface CashierStore {
     kind?: HeldKind;
     customerAddress?: string;
     shippingNote?: string;
+    idempotencyKey?: string;
   }) => Promise<boolean>;
   confirmHeldInvoice: (id: string) => Promise<HeldInvoice | null>;
   returnHeldInvoice: (id: string) => Promise<boolean>;
@@ -2421,6 +2438,10 @@ export const useStore = create<CashierStore>((set, get) => ({
         notes: finalNotes,
         coupon_code: couponCode || null,
         discount_amount: discountAmount || 0,
+        subtotal_before_discount: state.cart.reduce((sum, item) => sum + (Number(item.sale_price) || 0) * (Number(item.quantity) || 0), 0),
+        discount_type: couponCode ? (state.coupons.find((c) => c.code === couponCode)?.discount_type || 'fixed') : 'fixed',
+        discount_value: discountAmount || 0,
+        promotion_id: null,
         car_id: carId || null,
         created_at: orderCreatedAt,
         client_ref: clientRef,
@@ -2454,6 +2475,9 @@ export const useStore = create<CashierStore>((set, get) => ({
         returned_quantity: 0,
         sale_price: item.sale_price,
         purchase_price: item.average_purchase_price || item.purchase_price,
+        original_sale_price: item.sale_price,
+        discount_type: couponCode ? (state.coupons.find((c) => c.code === couponCode)?.discount_type || 'fixed') : 'fixed',
+        discount_value: discountAmount || 0,
       }));
       const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
       if (itemsError) {
@@ -2489,6 +2513,11 @@ export const useStore = create<CashierStore>((set, get) => ({
         salesperson_id: sp?.id,
         salesperson_name: sp?.name,
         notes: finalNotes,
+        coupon_code: couponCode || null,
+        discount_amount: discountAmount || 0,
+        subtotal_before_discount: state.cart.reduce((sum, item) => sum + (Number(item.sale_price) || 0) * (Number(item.quantity) || 0), 0),
+        discount_type: couponCode ? (state.coupons.find((c) => c.code === couponCode)?.discount_type || 'fixed') : 'fixed',
+        discount_value: discountAmount || 0,
         car_id: carId || undefined,
         ...(heldPayment ? {
           held_invoice_id: heldPayment.heldInvoiceId,
@@ -2531,6 +2560,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         customer: finalCustomer?.name || 'عميل نقدي',
         date: newOrder.date,
         total,
+        subtotalBeforeDiscount: state.cart.reduce((sum, item) => sum + (Number(item.sale_price) || 0) * (Number(item.quantity) || 0), 0),
+        discountAmount: discountAmount || 0,
         paid: savedPaidAmount,
         paymentMethod,
         items: newOrder.items.map((item) => ({
@@ -2636,7 +2667,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   // Saves the current cart as a held invoice and RESERVES the stock (deducts it
   // from products.stock_quantity, like a real sale) so the quantity can't be
   // sold twice. No invoice number is consumed until the sale is confirmed.
-  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit, kind = 'shop', customerAddress, shippingNote } = {}) => {
+  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit, kind = 'shop', customerAddress, shippingNote, idempotencyKey } = {}) => {
     const state = get();
     if (state.cart.length === 0) return false;
     try {
@@ -2660,10 +2691,12 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       if (!isOffline && depAmt > 0 && !(await ensureAccountingDayOpen(state, new Date()))) return false;
 
+      const requestKey = idempotencyKey || ('held_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10));
       let data: any = null;
       if (isOffline) {
         data = {
           id: 'offline_held_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+          idempotency_key: requestKey,
           customer_name: customerName?.trim() || null,
           customer_phone: customerPhone?.trim() || null,
           customer_custom_id: customerCustomId?.trim() || null,
@@ -2689,49 +2722,31 @@ export const useStore = create<CashierStore>((set, get) => ({
         const queue = JSON.parse(localStorage.getItem('cashier_offline_held_queue') || '[]');
         localStorage.setItem('cashier_offline_held_queue', JSON.stringify([...queue, data]));
       } else {
-        const { data: resData, error } = await supabase
-          .from('held_invoices')
-          .insert({
-            customer_name: customerName?.trim() || null,
-            customer_phone: customerPhone?.trim() || null,
-            customer_custom_id: customerCustomId?.trim() || null,
-            items,
-            total,
-            invoice_type: state.invoiceType,
-            salesperson_id: sp?.id || null,
-            salesperson_name: sp?.name || null,
-            cashier_name: getActorName(state),
-            notes: notes?.trim() || null,
-            deposit: depAmt,
-            deposit_split: depAmt > 0 ? depSplit : null,
-            deposit_date: depAmt > 0 ? new Date().toISOString() : null,
-            discount_amount: 0,
-            updated_at: new Date().toISOString(),
-            kind: kind || 'shop',
-            status: 'held',
-            customer_address: customerAddress?.trim() || null,
-            shipping_note: shippingNote?.trim() || null,
-          })
-          .select()
-          .single();
-
+        const { data: resData, error } = await supabase.rpc('create_held_invoice_atomic', {
+          p_idempotency_key: requestKey,
+          p_customer_name: customerName?.trim() || null,
+          p_customer_phone: customerPhone?.trim() || null,
+          p_customer_custom_id: customerCustomId?.trim() || null,
+          p_items: items,
+          p_total: total,
+          p_invoice_type: state.invoiceType,
+          p_salesperson_id: sp?.id || null,
+          p_salesperson_name: sp?.name || null,
+          p_cashier_name: getActorName(state),
+          p_notes: notes?.trim() || null,
+          p_deposit: depAmt,
+          p_deposit_split: depAmt > 0 ? depSplit : {},
+          p_kind: kind || 'shop',
+          p_customer_address: customerAddress?.trim() || null,
+          p_shipping_note: shippingNote?.trim() || null,
+          p_discount_amount: 0,
+        });
         if (error || !resData) {
-          console.error('Hold invoice error:', error);
+          console.error('Atomic hold invoice error:', error);
           alert('تعذّر حفظ الفاتورة المعلقة: ' + (error?.message || 'خطأ غير معروف'));
           return false;
         }
         data = resData;
-      }
-
-      // Reserve stock (والمعروض ينزل معاه زي البيع).
-      if (!isOffline) {
-        for (const item of state.cart) {
-          const prod = state.products.find((p) => p.id === item.id);
-          const newQty = Math.max(0, (prod?.stock_quantity ?? 0) - item.quantity);
-          await supabase.from('products')
-            .update({ stock_quantity: newQty, display_quantity: displayAfterStockDrop(prod, newQty, item.quantity) })
-            .eq('id', item.id);
-        }
       }
 
       const updatedProducts = state.products.map((p) => {
@@ -2741,17 +2756,6 @@ export const useStore = create<CashierStore>((set, get) => ({
         return { ...p, stock_quantity: newStock, display_quantity: displayAfterStockDrop(p, newStock, cartItem.quantity) };
       });
 
-      // تحصيل العربون: يدخل الخزنة كإيراد حجز (category='حجز', amount سالب).
-      if (depAmt > 0) {
-        const paid = paidFromSplit(depSplit);
-        await get().addExpense({
-          category: 'حجز',
-          amount: -depAmt,
-          ...paid,
-          note: `عربون حجز - ${customerName?.trim() || 'عميل'}`,
-          payment_method: primaryOfSplit(depSplit) as any,
-        } as any);
-      }
 
       set({
         heldInvoices: [{ ...(data as any), items } as HeldInvoice, ...state.heldInvoices],

@@ -98,6 +98,24 @@ export default function PaymentAccounts() {
     scope === 'main' ? mainLedger : scope === 'all' ? [...shopLedger, ...mainLedger] : shopLedger
   ), [scope, shopLedger, mainLedger]);
 
+  // تشخيص آمن: لا يحذف ولا يعدّل أي قيد، لكنه يلفت النظر للصفوف التي قد تفسر
+  // ظهور تحويلات مكررة أو غير مربوطة في كشف يوم 6/11 أو أي يوم آخر.
+  const transferDiagnostics = useMemo(() => {
+    const groups = new Map<string, any[]>();
+    const suspicious = (savRows || []).filter((t: any) => {
+      const source = String(t.source || '');
+      const d = new Date(t.created_at);
+      const day = d.getDate();
+      const isTransfer = ['day_closing', 'shop_transfer', 'to_shop', 'convert'].includes(source);
+      return isTransfer && (day === 6 || day === 11 || !t.group_id);
+    });
+    (savRows || []).forEach((t: any) => {
+      if (t.group_id) groups.set(t.group_id, [...(groups.get(t.group_id) || []), t]);
+    });
+    const duplicateGroups = [...groups.entries()].filter(([, rows]) => rows.length > 2).map(([group_id, rows]) => ({ group_id, rows }));
+    return { suspicious, duplicateGroups };
+  }, [savRows]);
+
   // ملخص كل الوسائل (كل الفترات)
   // بنبني على ALL_PAYMENT_KEYS مش على المفعّلة بس: لو وسيلة إضافية (method5/6)
   // اتشغّلت واتسجّل عليها حركات وبعدين اتقفلت، الصفوف بتاعتها كانت بتتسقط هنا
@@ -303,6 +321,14 @@ export default function PaymentAccounts() {
       </div>
 
       {/* المنطقة القابلة للتصدير PDF */}
+      {(transferDiagnostics.suspicious.length > 0 || transferDiagnostics.duplicateGroups.length > 0) && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-amber-900">
+          <div className="font-black">تنبيه تشخيصي — يحتاج مراجعة</div>
+          <div className="text-sm mt-1">تم العثور على {transferDiagnostics.suspicious.length} حركة تحويل مرتبطة بيومي 6/11 أو بدون `group_id`، و{transferDiagnostics.duplicateGroups.length} مجموعة بها أكثر من قيدين. لم يتم حذف أو تعديل أي بيانات.</div>
+          <div className="text-xs mt-2 font-medium">راجعي مصدر الحركة والتاريخ والمبلغ قبل اعتماد أي تصحيح.</div>
+        </div>
+      )}
+
       <div id="pa-print" className="space-y-5 bg-white dark:bg-slate-900 p-4 rounded-2xl">
       {/* عنوان الكشف (يظهر في PDF) */}
       <div className="flex items-center justify-between gap-3 border-b border-slate-200 dark:border-slate-700 pb-3">

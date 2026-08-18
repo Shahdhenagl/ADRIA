@@ -153,8 +153,10 @@ function formatMessage(payload) {
   if (payload.financingType) lines.push(line('نوع التمويل', payload.financingType));
   if (payload.phone) lines.push(line('رقم الهاتف', payload.phone));
   if (payload.paymentMethod) lines.push(line('طريقة الدفع', payload.paymentMethod));
+  if (payload.subtotalBeforeDiscount !== undefined) lines.push(line('الإجمالي قبل الخصم', money(payload.subtotalBeforeDiscount, currency)));
+  if (payload.discountAmount !== undefined && Number(payload.discountAmount) > 0) lines.push(line('الخصم', `- ${money(payload.discountAmount, currency)}`));
   if (payload.total !== undefined) {
-    const totalLabel = String(payload.type || '').startsWith('financing_') ? 'إجمالي الدفعة' : 'إجمالي الفاتورة';
+    const totalLabel = String(payload.type || '').startsWith('financing_') ? 'إجمالي الدفعة' : 'الإجمالي النهائي';
     lines.push(line(totalLabel, money(payload.total, currency)));
   }
   if (payload.amount !== undefined) lines.push(line('قيمة العملية', money(payload.amount, currency)));

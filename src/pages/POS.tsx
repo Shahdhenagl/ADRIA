@@ -20,6 +20,7 @@ import { paidSplitForDisplay, paidForDisplay, exchangeSettledTotal, heldPaymentB
 import { printShippingLabel } from '../utils/printShippingLabel';
 import { loadParkedCarts, addParkedCart, removeParkedCart, parkedAgeLabel, type ParkedCart } from '../utils/parkedCarts';
 import { saveDayBudgetCache, loadDayBudgetCache } from '../utils/offlineCache';
+import { calculateDiscountAmount, type DiscountRule } from '../utils/discountRules';
 
 // فئة قيد تسوية الجرد: يضبط رصيد خزنة المحل ليطابق الكاش الفعلي المعدود.
 // يُحسب ضمن الداخل/الخارج (عشان الرصيد يتصحّح) لكن له خانته المستقلة في التفصيل.
@@ -878,6 +879,8 @@ export default function POS() {
   const [heldFilter, setHeldFilter] = useState<'all' | 'shop' | HeldStatus>('all');
   const [returningHeld, setReturningHeld] = useState<HeldInvoice | null>(null);
   const [holdBusy, setHoldBusy] = useState(false);
+  // يظل ثابتًا داخل نفس نموذج الحجز حتى لا تعيد retry إنشاء حجز أو عربون جديد.
+  const [holdRequestKey, setHoldRequestKey] = useState('');
   // نموذج حفظ فاتورة معلّقة مع عربون
   const [showHoldForm, setShowHoldForm] = useState(false);
   const [holdDepositPay, setHoldDepositPay] = useState<Record<string, string>>({});
@@ -1896,6 +1899,9 @@ export default function POS() {
   const openHoldForm = () => {
     if (cart.length === 0 || pricesHidden || holdBusy) return;
     setHoldDepositPay({});
+    setHoldRequestKey(typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `held_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`);
     setShowHoldForm(true);
   };
 
@@ -1914,12 +1920,14 @@ export default function POS() {
       deposit,
       depositSplit,
       kind: holdKind,
+      idempotencyKey: holdRequestKey,
       ...(holdKind === 'online' ? { customerAddress: holdAddress, shippingNote: holdShipNote } : {}),
     });
     setHoldBusy(false);
     if (ok) {
       setShowHoldForm(false);
       setHoldDepositPay({});
+      setHoldRequestKey('');
       setHoldKind('shop');
       setHoldAddress('');
       setHoldShipNote('');
@@ -2130,11 +2138,21 @@ export default function POS() {
     
     if (isValidDate && isUnderTotalLimit && isUnderCustomerLimit) {
       validCoupon = appliedCoupon;
-      if (appliedCoupon.discount_type === 'percentage') {
-        couponDiscountAmount = (subtotal - manualDiscount) * (appliedCoupon.discount_value / 100);
-      } else {
-        couponDiscountAmount = appliedCoupon.discount_value;
-      }
+      const promotionRule: DiscountRule = {
+        discount_type: appliedCoupon.discount_type,
+        discount_value: Number(appliedCoupon.discount_value) || 0,
+        start_date: appliedCoupon.start_date,
+        end_date: appliedCoupon.end_date,
+        is_active: appliedCoupon.is_active,
+        scope: appliedCoupon.scope || 'all',
+        product_ids: Array.isArray(appliedCoupon.product_ids) ? appliedCoupon.product_ids : [],
+        category_id: appliedCoupon.category_id || null,
+      };
+      couponDiscountAmount = calculateDiscountAmount(
+        cart.map((item) => ({ id: item.id, product_id: item.id, category_id: item.category_id, sale_price: item.sale_price, quantity: item.quantity })),
+        promotionRule,
+        manualDiscount,
+      );
     }
   }
 
