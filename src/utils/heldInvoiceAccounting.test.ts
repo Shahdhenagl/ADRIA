@@ -67,7 +67,7 @@ describe('held invoice accounting', () => {
     expect(net.cash).toBe(500);
   });
 
-  it('uses the latest cashier closing as zero baseline for current shop balance', () => {
+  it('matches POS by including the cashier closing transfer as a shop outflow', () => {
     const beforeClosing = {
       id: 'old-sale',
       type: 'sale',
@@ -87,7 +87,14 @@ describe('held invoice accounting', () => {
     const net = computeShopAvailable(
       {
         orders: [beforeClosing, afterClosing],
-        expenses: [],
+        expenses: [{
+          id: 'closing-expense',
+          category: 'تحويل للخزنة الرئيسية',
+          amount: 1000,
+          paid_cash: 1000,
+          note: 'تقفيل اليوم',
+          created_at: '2026-08-11T12:00:00.000Z',
+        }],
         purchases: [],
         salaries: [],
         savingsTransactions: [{
