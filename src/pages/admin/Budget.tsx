@@ -8,10 +8,10 @@ import {
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundPartsOf } from '../../utils/treasury';
+import { computeShopAvailable, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundPartsOf } from '../../utils/treasury';
 
 interface UnifiedTransaction {
   id: string;
@@ -430,14 +430,18 @@ export default function Budget() {
     };
 
     const endOfPeriod = getEndOfPeriod();
-    const cashierOpeningForFilter = methodFilter === 'all'
-      ? activePayKeys.reduce((sum, key) => sum + openingBalanceOf(storeSettings as any, key), 0)
-      : openingBalanceOf(storeSettings as any, methodFilter);
-    const cashierTreasuryBalance = cashierOpeningForFilter + allTransactions
-      .filter(tx => tx.date <= endOfPeriod)
-      .filter(tx => tx.treasury === 'cashier')
-      .filter(tx => methodFilter === 'all' || tx.payment_method === methodFilter)
-      .reduce((sum, tx) => sum + (tx.type === 'revenue' ? tx.amount : -tx.amount), 0);
+    // بطاقة الرصيد الحالي لا تستخدم الرصيد التراكمي التاريخي. نقطة الصفر هي
+    // أحدث تقفيل للكاشير، ثم تُحسب الحركات التي حدثت بعده فقط — نفس POS/Savings.
+    const currentShopBalance = computeShopAvailable({
+      orders,
+      expenses,
+      purchases: purchaseInvoices,
+      salaries: employeeTransactions,
+      savingsTransactions,
+    }, storeSettings as any);
+    const cashierTreasuryBalance = methodFilter === 'all'
+      ? activePayKeys.reduce((sum, key) => sum + (currentShopBalance[key] || 0), 0)
+      : (currentShopBalance[methodFilter] || 0);
     const mainOpeningForFilter = methodFilter === 'all'
       ? activePayKeys.reduce((sum, key) => sum + savingsOpeningBalanceOf(storeSettings as any, key), 0)
       : savingsOpeningBalanceOf(storeSettings as any, methodFilter);
@@ -606,7 +610,7 @@ export default function Budget() {
               <Banknote size={24} />
             </div>
             <div>
-              <p className="text-sm font-bold text-slate-500">رصيد نهاية خزنة الكاشير</p>
+              <p className="text-sm font-bold text-slate-500">الرصيد الحالي في خزنة المحل</p>
               <h3 className="text-2xl font-black mt-1 text-blue-600 dark:text-blue-400">
                 {stats.cashierTreasuryBalance.toFixed(2)} <span className="text-xs text-slate-400">{storeSettings.currency}</span>
               </h3>

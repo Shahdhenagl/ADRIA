@@ -3,7 +3,7 @@ import { useStore } from '../../store/useStore';
 import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, ALL_PAYMENT_KEYS, type PaymentKey } from '../../utils/paymentMethods';
 import { buildPaymentLedger, type LedgerEntry, type LedgerKind } from '../../utils/paymentLedger';
-import { stripTreasuryMarkers } from '../../utils/treasury';
+import { computeShopAvailable, stripTreasuryMarkers } from '../../utils/treasury';
 import { businessDayRange } from '../../utils/businessDay';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -37,7 +37,7 @@ type Scope = 'shop' | 'main' | 'all';
 const SCOPE_LABEL: Record<Scope, string> = { shop: 'خزنة المحل', main: 'الخزنة الرئيسية', all: 'الكل' };
 
 export default function PaymentAccounts() {
-  const { orders, expenses, purchaseInvoices, storeSettings, updateSettings } = useStore();
+  const { orders, expenses, purchaseInvoices, employeeTransactions, storeSettings, updateSettings } = useStore();
   const cur = storeSettings.currency;
   const methods = activePaymentKeys(storeSettings as any);
 
@@ -115,6 +115,15 @@ export default function PaymentAccounts() {
   const ledger = useMemo<LedgerEntry[]>(() => (
     scope === 'main' ? mainLedger : scope === 'all' ? [...shopLedger, ...mainLedger] : shopLedger
   ), [scope, shopLedger, mainLedger]);
+
+  // الرصيد التشغيلي الحالي لخزنة المحل فقط؛ لا نستخدمه للكشف التاريخي.
+  const currentShopBalance = useMemo(() => computeShopAvailable({
+    orders,
+    expenses,
+    purchases: purchaseInvoices,
+    salaries: employeeTransactions,
+    savingsTransactions: savRows,
+  }, storeSettings as any), [orders, expenses, purchaseInvoices, employeeTransactions, savRows, storeSettings]);
 
   // تشخيص آمن: لا يحذف ولا يعدّل أي قيد، لكنه يلفت النظر للصفوف التي قد تفسر
   // ظهور تحويلات مكررة أو غير مربوطة في كشف يوم 6/11 أو أي يوم آخر.
@@ -215,6 +224,10 @@ export default function PaymentAccounts() {
     return { rows, periodOpening, totalIn, totalOut, closing };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ledger, scope, selected, from, to, search, storeSettings.paymentOpeningBalances, storeSettings.initial_balance, storeSettings.savingsOpeningBalances]);
+
+  const displayedStatementClosing = (!from && !to && scope === 'shop')
+    ? (currentShopBalance[selected] || 0)
+    : statement.closing;
 
   // عند وجود فلتر زمني، بطاقات الوسائل تعرض صافي حركة الفترة فقط،
   // وليس الرصيد التراكمي التاريخي. هذا يمنع ظهور رصيد قديم في يوم بلا معاملات.
@@ -330,7 +343,11 @@ export default function PaymentAccounts() {
               <div className="flex items-center gap-2 mb-1"><Icon size={16} className={active ? 'text-white' : 'text-indigo-500'} /><span className={`text-[11px] font-bold ${active ? 'text-indigo-100' : 'text-slate-500'} truncate`}>{payLabelOf(storeSettings as any, k)}</span></div>
               {(() => {
                 const hasPeriodFilter = Boolean(from || to);
-                const displayedBalance = hasPeriodFilter ? (periodBalances[k] || 0) : s.balance;
+                const displayedBalance = hasPeriodFilter
+                  ? (periodBalances[k] || 0)
+                  : scope === 'shop'
+                    ? (currentShopBalance[k] || 0)
+                    : s.balance;
                 return <div className={`text-lg font-black ${active ? 'text-white' : (displayedBalance < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100')}`}>{fmt(displayedBalance)}</div>;
               })()}
               <div className={`text-[10px] ${active ? 'text-indigo-100' : 'text-slate-400'}`}>{cur}</div>
@@ -404,7 +421,7 @@ export default function PaymentAccounts() {
         <MiniStat label="رصيد افتتاحي" value={`${fmt(statement.periodOpening)} ${cur}`} />
         <MiniStat label="إجمالي الوارد" value={`${fmt(statement.totalIn)} ${cur}`} tone="in" />
         <MiniStat label="إجمالي الصادر" value={`${fmt(statement.totalOut)} ${cur}`} tone="out" />
-        <MiniStat label="الرصيد الحالي" value={`${fmt(statement.closing)} ${cur}`} tone={statement.closing < 0 ? 'out' : 'bold'} />
+        <MiniStat label={!from && !to && scope === 'shop' ? 'الرصيد الحالي بعد آخر تقفيل' : 'الرصيد الحالي'} value={`${fmt(displayedStatementClosing)} ${cur}`} tone={displayedStatementClosing < 0 ? 'out' : 'bold'} />
       </div>
 
       {/* جدول الكشف */}

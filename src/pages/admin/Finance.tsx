@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useStore, type Expense, type Order, type PurchaseInvoice } from '../../store/useStore';
 import { 
   Wallet, Plus, Trash2, Search, ArrowUp, ArrowDown, 
@@ -12,7 +12,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers, refundRecordOf, refundShareOfMethod } from '../../utils/treasury';
+import { computeShopAvailable, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers, refundRecordOf, refundShareOfMethod } from '../../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
@@ -21,9 +21,25 @@ export default function Finance() {
     expenses, orders, storeSettings, addExpense, updateExpense, 
     deleteExpense, deletePurchaseInvoice, purchaseInvoices,
     deleteOrder, editOrder, updatePurchaseInvoice, recordMainTreasuryOut, recordMainTreasuryIn, savingsConvert,
-    updateSettings
+    updateSettings, employeeTransactions
   } = useStore();
   const activeOrders = useMemo(() => orders.filter((order) => !order.is_deleted), [orders]);
+  const [savingsTransactions, setSavingsTransactions] = useState<any[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { fetchAllRows } = await import('../../lib/supabase');
+        const rows = await fetchAllRows('savings_transactions');
+        if (!cancelled) setSavingsTransactions(Array.isArray(rows) ? rows : []);
+      } catch (error) {
+        console.error('load savings_transactions:', error);
+        if (!cancelled) setSavingsTransactions([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const debtPaymentsByInvoice = useMemo(() => {
     const map = new Map<string, number>();
@@ -346,6 +362,22 @@ export default function Finance() {
   activePaymentKeys(storeSettings as any).forEach((m) => {
     methodsBreakdown[m] = getDailyByMethod(m) + getOpeningBalanceByMethod(m);
   });
+
+  // الرصيد التشغيلي الحالي: آخر تقفيل هو نقطة الصفر، والحركات بعده فقط.
+  // نستخدمه للبطاقات والتحويلات، بينما methodsBreakdown يبقى لتقرير اليوم التاريخي.
+  const currentShopBalance = useMemo(() => computeShopAvailable({
+    orders: activeOrders,
+    expenses,
+    purchases: purchaseInvoices,
+    salaries: employeeTransactions,
+    savingsTransactions,
+  }, storeSettings as any), [activeOrders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, storeSettings]);
+  const operationalMethodsBreakdown: Record<string, number> = {};
+  activePaymentKeys(storeSettings as any).forEach((m) => {
+    operationalMethodsBreakdown[m] = currentShopBalance[m] || 0;
+  });
+  const currentShopTotal = activePaymentKeys(storeSettings as any)
+    .reduce((sum, m) => sum + (operationalMethodsBreakdown[m] || 0), 0);
 
   // 4. Combined Transaction List for the table
   const allDailyTransactions = useMemo(() => {
@@ -684,7 +716,7 @@ export default function Finance() {
       }
 
       // Validate balance
-      const sourceBalance = methodsBreakdown[formData.transfer_from as keyof typeof methodsBreakdown] || 0;
+      const sourceBalance = operationalMethodsBreakdown[formData.transfer_from as keyof typeof operationalMethodsBreakdown] || 0;
       if (transferAmt > sourceBalance) {
         return alert(`الرصيد المتاح في ${getMethodLabel(formData.transfer_from)} هو ${sourceBalance.toLocaleString()} فقط. لا يمكن تحويل ${transferAmt.toLocaleString()}`);
       }
@@ -919,7 +951,7 @@ export default function Finance() {
       ['إجمالي الخارج (اليوم)', dailyExpensesTotal + dailyPurchasesTotal + dailyReturnsValue],
       ['إجمالي الربح من الفواتير', invoiceProfitTotal],
       ['صافي اليوم', dailyNet],
-      ['رصيد الإغلاق', closingBalance],
+      ['رصيد اليوم التاريخي', closingBalance],
       [''],
       ['تفاصيل طرق الدفع (اليوم)'],
       ['كاش', methodsBreakdown.cash],
@@ -1287,9 +1319,9 @@ export default function Finance() {
         {/* Closing Balance */}
         <div className="bg-slate-900 p-6 rounded-[32px] shadow-xl relative overflow-hidden">
           <div className="absolute top-0 right-0 w-24 h-24 bg-white/5 rounded-full -mr-12 -mt-12 blur-2xl" />
-          <p className="text-slate-400 font-bold text-xs mb-1 relative z-10">رصيد الإغلاق (الحالي)</p>
+          <p className="text-slate-400 font-bold text-xs mb-1 relative z-10">الرصيد الحالي بعد آخر تقفيل</p>
           <h3 className="text-2xl font-black text-white relative z-10">
-            {closingBalance.toLocaleString()} <span className="text-sm font-normal text-slate-500">{storeSettings.currency}</span>
+            {currentShopTotal.toLocaleString()} <span className="text-sm font-normal text-slate-500">{storeSettings.currency}</span>
           </h3>
           <div className="mt-2 text-[10px] text-indigo-400 font-bold flex items-center gap-1 relative z-10">
             <TrendingUp size={12} /> رصيد الخزينة النهائي
@@ -1301,7 +1333,7 @@ export default function Finance() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         {activePaymentKeys(storeSettings as any).map((mk) => {
           const iconMap: Record<string, any> = { cash: <Landmark size={18} />, visa: <CreditCard size={18} />, wallet: <Smartphone size={18} />, instapay: <Zap size={18} /> };
-          const m = { id: mk, label: payLabelOf(storeSettings as any, mk), icon: iconMap[mk] || <Wallet size={18} />, color: 'slate', value: methodsBreakdown[mk] || 0 };
+          const m = { id: mk, label: payLabelOf(storeSettings as any, mk), icon: iconMap[mk] || <Wallet size={18} />, color: 'slate', value: operationalMethodsBreakdown[mk] || 0 };
           const isActive = methodFilter === m.id;
           return (
           <button
@@ -1571,7 +1603,7 @@ export default function Finance() {
                           onChange={e => setFormData({...formData, transfer_from: e.target.value})}
                         >
                           {activePaymentKeys(storeSettings as any).map((k) => (
-                            <option key={k} value={k}>{payLabelOf(storeSettings as any, k)} ({(methodsBreakdown[k] || 0).toLocaleString()})</option>
+                            <option key={k} value={k}>{payLabelOf(storeSettings as any, k)} ({(operationalMethodsBreakdown[k] || 0).toLocaleString()})</option>
                           ))}
                         </select>
                       </div>
