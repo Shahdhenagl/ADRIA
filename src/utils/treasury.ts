@@ -302,7 +302,10 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
       const amount = Number(t.amount) || 0;
       if (amount <= 0) return;
       const sign = t.direction === 'in' ? -1 : 1;
-      add(sign, t, 'amount');
+      // savings_transactions يستخدم اسم الوسيلة في `method`، بينما applySplit
+      // يقرأ `payment_method`. تمرير الوسيلة صراحةً يمنع وضع تحويلات visa/
+      // instapay/wallet داخل الكاش افتراضيًا.
+      add(sign, { ...t, payment_method: t.method }, 'amount');
     });
 
   ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
