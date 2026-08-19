@@ -21,6 +21,9 @@ export async function fetchAllRows<T = any>(
       .from(table)
       .select(select)
       .order(orderBy.column, { ascending: orderBy.ascending ?? false })
+      // ترتيب ثانوي ثابت يمنع اختلاف الصفوف بين صفحات range عندما تتساوى created_at.
+      // بدون ذلك قد تتكرر/تُفقد قيود عند كل refresh، فتتغير أرصدة الخزنة.
+      .order('id', { ascending: true })
       .range(from, from + pageSize - 1);
     if (error) {
       console.warn(`fetchAllRows fallback for ${table}:`, error.message);
