@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, ALL_PAYMENT_KEYS, type PaymentKey } from '../../utils/paymentMethods';
-import { buildPaymentLedger, type LedgerEntry, type LedgerKind } from '../../utils/paymentLedger';
+import { addTreasuryCounterpartsForAll, buildPaymentLedger, type LedgerEntry, type LedgerKind } from '../../utils/paymentLedger';
 import { computeShopAvailable, stripTreasuryMarkers } from '../../utils/treasury';
 import { businessDayRange } from '../../utils/businessDay';
 import * as XLSX from 'xlsx';
@@ -111,10 +111,15 @@ export default function PaymentAccounts() {
       kind: savKindOf(t),
     };
   }), [savRows]);
-  // الكشف الفعّال حسب النطاق المختار.
+  // في «الكل» نعرض المحل + الرئيسية كحساب موحّد مع طرف التحويل المقابل.
+  const combinedLedger = useMemo<LedgerEntry[]>(
+    () => addTreasuryCounterpartsForAll(shopLedger, mainLedger, savRows),
+    [shopLedger, mainLedger, savRows],
+  );
+
   const ledger = useMemo<LedgerEntry[]>(() => (
-    scope === 'main' ? mainLedger : scope === 'all' ? [...shopLedger, ...mainLedger] : shopLedger
-  ), [scope, shopLedger, mainLedger]);
+    scope === 'main' ? mainLedger : scope === 'all' ? combinedLedger : shopLedger
+  ), [scope, shopLedger, mainLedger, combinedLedger]);
 
   // الرصيد التشغيلي الحالي لخزنة المحل فقط؛ لا نستخدمه للكشف التاريخي.
   const currentShopBalance = useMemo(() => computeShopAvailable({
