@@ -2932,8 +2932,11 @@ export default function POS() {
                     <div className="text-xs font-bold text-slate-500 mb-2">الرصيد الحالي الفعلي في الخزنة (بالتقسيمة):</div>
                     <div className="grid grid-cols-2 gap-3">
                       {activePayKeys.map((k) => {
-                        const bal = (dayBudget.shopAvail?.[k]) ?? (dayBudget.dayIn[k] - dayBudget.dayOut[k]);
+                        // عرض فقط: shopAvail تاريخي ويشمل كل الحركات السابقة، لذلك لا نعرضه
+                        // كباقي اليوم الحالي. بعد إقفال اليوم يظهر المتبقي المعروض صفرًا،
+                        // من غير لمس dayIn/dayOut أو أي قيد مالي.
                         const net = dayBudget.dayIn[k] - dayBudget.dayOut[k];
+                        const bal = dayBudget.isClosed ? 0 : net;
                         return (
                           <div key={k} className="bg-slate-50 dark:bg-slate-900/40 rounded-xl p-3 border border-slate-100 dark:border-slate-700">
                             <div className="text-[11px] font-bold text-slate-500">{payLabel(k)}</div>
@@ -2957,7 +2960,9 @@ export default function POS() {
                     </div>
                     {activePayKeys.map((k) => {
                       const out = (dayBudget.savingsOutBy?.[k]) || 0;
-                      const left = (dayBudget.shopAvail?.[k]) || 0;
+                      // عرض المتبقي في المحل لليوم الحالي فقط؛ لا نستخدم الرصيد التاريخي
+                      // المتراكم حتى لا تظهر أرصدة سالبة رغم إقفال الأيام السابقة على صفر.
+                      const left = dayBudget.isClosed ? 0 : ((dayBudget.dayIn?.[k] || 0) - (dayBudget.dayOut?.[k] || 0));
                       if (out < 0.009 && Math.abs(left) < 0.009) return null;
                       return (
                         <div key={k} className="grid grid-cols-[1fr_auto_auto] items-center px-3 py-1.5 border-t border-slate-100 dark:border-slate-700/50 text-[13px]">
@@ -2970,7 +2975,7 @@ export default function POS() {
                     <div className="grid grid-cols-[1fr_auto_auto] items-center px-3 py-2 border-t-2 border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/40 text-[13px]">
                       <span className="font-black text-slate-700 dark:text-slate-200">الإجمالي</span>
                       <span className="text-left w-28 font-black text-indigo-700">{(dayBudget.breakdown?.savingsOut || 0).toFixed(2)}</span>
-                      <span className="text-left w-28 font-black text-emerald-700">{activePayKeys.reduce((s, k) => s + ((dayBudget.shopAvail?.[k]) || 0), 0).toFixed(2)}</span>
+                      <span className="text-left w-28 font-black text-emerald-700">{(dayBudget.isClosed ? 0 : activePayKeys.reduce((s, k) => s + ((dayBudget.dayIn?.[k] || 0) - (dayBudget.dayOut?.[k] || 0)), 0)).toFixed(2)}</span>
                     </div>
                     <p className="px-3 py-2 text-[11px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/40 border-t border-slate-100 dark:border-slate-700/50">🔁 المتبقي في خزنة المحل يترحّل تلقائياً كرصيد بداية اليوم التالي.</p>
                   </div>
