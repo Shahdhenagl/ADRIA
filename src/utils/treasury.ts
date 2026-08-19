@@ -293,21 +293,6 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   // المحل رغم إن الفلوس خرجت من الرئيسية أصلاً.
   (rows.salaries || []).filter((s: any) => !isMainTreasuryExpense(s)).forEach((s: any) => add(-1, s, 'amount'));
 
-  // تحويل المحل ➜ الرئيسية يخرج من الدرج، والتحويل الرئيسية ➜ المحل يدخل إليه.
-  // day_closing يمثل نفس الحركة الفعلية عند إقفال اليوم. أما تحويلات الحجز
-  // فهي قيود إعادة تصنيف داخل expenses وقد استُبعدت أعلاه بالفعل.
-  (rows.savingsTransactions || [])
-    .filter((t: any) => savingsSourceTouchesShop(t.source))
-    .forEach((t: any) => {
-      const amount = Number(t.amount) || 0;
-      if (amount <= 0) return;
-      const sign = t.direction === 'in' ? -1 : 1;
-      // savings_transactions يستخدم اسم الوسيلة في `method`، بينما applySplit
-      // يقرأ `payment_method`. تمرير الوسيلة صراحةً يمنع وضع تحويلات visa/
-      // instapay/wallet داخل الكاش افتراضيًا.
-      add(sign, { ...t, payment_method: t.method }, 'amount');
-    });
-
   ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
   return net;
 }
