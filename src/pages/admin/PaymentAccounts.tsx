@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, ALL_PAYMENT_KEYS, type PaymentKey } from '../../utils/paymentMethods';
@@ -55,15 +55,37 @@ export default function PaymentAccounts() {
   const [to, setTo] = useState('');
   const [search, setSearch] = useState('');
 
-  // حركات الخزنة الرئيسية (جدول مستقل) — تُحمّل مرة عند فتح الصفحة.
+  // حركات الخزنة الرئيسية (جدول مستقل). لا نعرض الأرصدة قبل اكتمال أول تحميل،
+  // ونلغي نتيجة أي طلب قديم حتى لا تعود أرقام stale بعد الدخول/الخروج أو focus.
   const [savRows, setSavRows] = useState<any[]>([]);
+  const [savLoading, setSavLoading] = useState(true);
+  const savingsLoadSeq = useRef(0);
   useEffect(() => {
-    (async () => {
+    let disposed = false;
+    const loadSavingsRows = async () => {
+      const seq = ++savingsLoadSeq.current;
+      setSavLoading(true);
       try {
         const { fetchAllRows } = await import('../../lib/supabase');
-        setSavRows((await fetchAllRows('savings_transactions')) as any[]);
-      } catch (e) { console.error('load savings_transactions:', e); }
-    })();
+        const rows = (await fetchAllRows('savings_transactions')) as any[];
+        if (!disposed && seq === savingsLoadSeq.current) setSavRows(rows);
+      } catch (e) {
+        if (!disposed && seq === savingsLoadSeq.current) console.error('load savings_transactions:', e);
+      } finally {
+        if (!disposed && seq === savingsLoadSeq.current) setSavLoading(false);
+      }
+    };
+    void loadSavingsRows();
+    const refreshOnFocus = () => {
+      if (document.visibilityState === 'visible') void loadSavingsRows();
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnFocus);
+    return () => {
+      disposed = true;
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnFocus);
+    };
   }, []);
 
   // محرّر الأرصدة الافتتاحية (لخزنة المحل فقط — الرئيسية بتتعدّل من صفحة الخزنة الرئيسية)
@@ -274,7 +296,7 @@ export default function PaymentAccounts() {
           return (
             <button key={k} onClick={() => setSelected(k)} className={`text-right rounded-2xl border p-3 transition ${active ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-indigo-300'}`}>
               <div className="flex items-center gap-2 mb-1"><Icon size={16} className={active ? 'text-white' : 'text-indigo-500'} /><span className={`text-[11px] font-bold ${active ? 'text-indigo-100' : 'text-slate-500'} truncate`}>{payLabelOf(storeSettings as any, k)}</span></div>
-              <div className={`text-lg font-black ${active ? 'text-white' : (s.balance < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100')}`}>{fmt(s.balance)}</div>
+              <div className={`text-lg font-black ${active ? 'text-white' : (s.balance < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100')}`}>{savLoading && scope !== 'shop' ? '...' : fmt(s.balance)}</div>
               <div className={`text-[10px] ${active ? 'text-indigo-100' : 'text-slate-400'}`}>{cur}</div>
             </button>
           );
