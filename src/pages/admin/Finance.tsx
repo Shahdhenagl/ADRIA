@@ -378,15 +378,34 @@ export default function Finance() {
     methodsBreakdown[m] = getDailyByMethod(m) + getOpeningBalanceByMethod(m);
   });
 
-  // الرصيد التشغيلي الحالي: آخر تقفيل هو نقطة الصفر، والحركات بعده فقط.
-  // نستخدمه للبطاقات والتحويلات، بينما methodsBreakdown يبقى لتقرير اليوم التاريخي.
-  const currentShopBalance = useMemo(() => computeShopAvailable({
-    orders: activeOrders,
-    expenses: treasuryExpenses.length > 0 ? treasuryExpenses : expenses,
-    purchases: purchaseInvoices,
-    salaries: employeeTransactions,
-    savingsTransactions,
-  }, storeSettings as any), [activeOrders, expenses, treasuryExpenses, purchaseInvoices, employeeTransactions, savingsTransactions, storeSettings]);
+  // الرصيد التشغيلي يجب أن يطابق تقفيل POS لنطاق التاريخ المختار.
+  // قبل وجود تقفيل سابق، لا يجوز جمع كل التاريخ (فيظهر 23,005 بدل 11,570)؛
+  // نمرر فقط حركات اليوم/الفترة المحاسبية المختارة، مع إبقاء computeShopAvailable
+  // مسؤولًا عن نقطة الصفر عند وجود day_closing أو تحويل للخزنة الرئيسية داخل النطاق.
+  const currentShopBalance = useMemo(() => {
+    const range = filterType === 'daily'
+      ? businessDayRange(selectedDate, storeSettings as any)
+      : (() => {
+          const start = new Date(`${selectedDate.slice(0, 7)}-01T03:00:00`);
+          const end = filterType === 'monthly'
+            ? new Date(start.getFullYear(), start.getMonth() + 1, 1, 3, 0, 0, 0)
+            : new Date(start.getFullYear() + 1, 0, 1, 3, 0, 0, 0);
+          return { start, end };
+        })();
+    const inRange = (row: any) => {
+      const raw = row?.created_at ?? row?.date;
+      const time = new Date(raw).getTime();
+      return Number.isFinite(time) && time >= range.start.getTime() && time < range.end.getTime();
+    };
+    const scopedSavings = savingsTransactions.filter(inRange);
+    return computeShopAvailable({
+      orders: activeOrders.filter(inRange),
+      expenses: (treasuryExpenses.length > 0 ? treasuryExpenses : expenses).filter(inRange),
+      purchases: purchaseInvoices.filter(inRange),
+      salaries: employeeTransactions.filter(inRange),
+      savingsTransactions: scopedSavings,
+    }, storeSettings as any);
+  }, [activeOrders, expenses, treasuryExpenses, purchaseInvoices, employeeTransactions, savingsTransactions, storeSettings, selectedDate, filterType]);
   const operationalMethodsBreakdown: Record<string, number> = {};
   activePaymentKeys(storeSettings as any).forEach((m) => {
     operationalMethodsBreakdown[m] = currentShopBalance[m] || 0;
