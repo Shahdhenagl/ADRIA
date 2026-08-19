@@ -223,6 +223,8 @@ export interface ShopTreasuryRows {
   expenses: any[];
   purchases: any[];
   salaries: any[];
+  /** حركات التحويل بين درج المحل والخزنة الرئيسية. */
+  savingsTransactions?: any[];
 }
 
 export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Bucket {
@@ -290,6 +292,19 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   // ملاحظتها — لازم تتستبعد من الدرج زي أي حركة رئيسية، وإلا بتتخصم من خزنة
   // المحل رغم إن الفلوس خرجت من الرئيسية أصلاً.
   (rows.salaries || []).filter((s: any) => !isMainTreasuryExpense(s)).forEach((s: any) => add(-1, s, 'amount'));
+
+  // تحويل المحل ➜ الرئيسية يخرج من الدرج، والتحويل الرئيسية ➜ المحل يدخل إليه.
+  // day_closing يمثل نفس الحركة الفعلية عند إقفال اليوم. أما تحويلات الحجز
+  // فهي قيود إعادة تصنيف داخل expenses وقد استُبعدت أعلاه بالفعل.
+  (rows.savingsTransactions || [])
+    .filter((t: any) => savingsSourceTouchesShop(t.source))
+    .forEach((t: any) => {
+      const amount = Number(t.amount) || 0;
+      if (amount <= 0) return;
+      const sign = t.direction === 'in' ? -1 : 1;
+      add(sign, t, 'amount');
+    });
+
   ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
   return net;
 }

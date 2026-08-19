@@ -88,7 +88,7 @@ export default function Savings() {
       // عشان صفحة المدراء تدّي نفس الرقم بالظبط.
       if (seq !== loadSeq.current) return;
       setShopAvail(computeShopAvailable(
-        { orders: allOrders, expenses: expData || [], purchases: purData || [], salaries: salData || [] },
+        { orders: allOrders, expenses: expData || [], purchases: purData || [], salaries: salData || [], savingsTransactions: savRows || [] },
         storeSettings,
       ));
 
