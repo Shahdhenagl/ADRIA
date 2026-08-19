@@ -58,21 +58,17 @@ export default function PaymentAccounts() {
   // حركات الخزنة الرئيسية (جدول مستقل). لا نعرض الأرصدة قبل اكتمال أول تحميل،
   // ونلغي نتيجة أي طلب قديم حتى لا تعود أرقام stale بعد الدخول/الخروج أو focus.
   const [savRows, setSavRows] = useState<any[]>([]);
-  const [savLoading, setSavLoading] = useState(true);
   const savingsLoadSeq = useRef(0);
   useEffect(() => {
     let disposed = false;
     const loadSavingsRows = async () => {
       const seq = ++savingsLoadSeq.current;
-      setSavLoading(true);
       try {
         const { fetchAllRows } = await import('../../lib/supabase');
         const rows = (await fetchAllRows('savings_transactions')) as any[];
         if (!disposed && seq === savingsLoadSeq.current) setSavRows(rows);
       } catch (e) {
         if (!disposed && seq === savingsLoadSeq.current) console.error('load savings_transactions:', e);
-      } finally {
-        if (!disposed && seq === savingsLoadSeq.current) setSavLoading(false);
       }
     };
     void loadSavingsRows();
@@ -220,6 +216,22 @@ export default function PaymentAccounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ledger, scope, selected, from, to, search, storeSettings.paymentOpeningBalances, storeSettings.initial_balance, storeSettings.savingsOpeningBalances]);
 
+  // عند وجود فلتر زمني، بطاقات الوسائل تعرض صافي حركة الفترة فقط،
+  // وليس الرصيد التراكمي التاريخي. هذا يمنع ظهور رصيد قديم في يوم بلا معاملات.
+  const periodBalances = useMemo(() => {
+    const result: Record<string, number> = {};
+    ALL_PAYMENT_KEYS.forEach((k) => { result[k] = 0; });
+    const fromT = from ? businessDayRange(from, storeSettings as any).start.getTime() : -Infinity;
+    const toT = to ? businessDayRange(to, storeSettings as any).end.getTime() : Infinity;
+    for (const e of ledger) {
+      if (e.date && new Date(e.date).getTime() >= fromT && new Date(e.date).getTime() < toT) {
+        result[e.method] = (result[e.method] || 0) + e.inAmount - e.outAmount;
+      }
+    }
+    return result;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ledger, from, to, storeSettings]);
+
   const saveOpening = async () => {
     setSavingOpen(true);
     const obj: Record<string, number> = { ...(storeSettings.paymentOpeningBalances || {}) };
@@ -316,7 +328,11 @@ export default function PaymentAccounts() {
           return (
             <button key={k} onClick={() => setSelected(k)} className={`text-right rounded-2xl border p-3 transition ${active ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-indigo-300'}`}>
               <div className="flex items-center gap-2 mb-1"><Icon size={16} className={active ? 'text-white' : 'text-indigo-500'} /><span className={`text-[11px] font-bold ${active ? 'text-indigo-100' : 'text-slate-500'} truncate`}>{payLabelOf(storeSettings as any, k)}</span></div>
-              <div className={`text-lg font-black ${active ? 'text-white' : (s.balance < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100')}`}>{savLoading && scope !== 'shop' ? '...' : fmt(s.balance)}</div>
+              {(() => {
+                const hasPeriodFilter = Boolean(from || to);
+                const displayedBalance = hasPeriodFilter ? (periodBalances[k] || 0) : s.balance;
+                return <div className={`text-lg font-black ${active ? 'text-white' : (displayedBalance < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100')}`}>{fmt(displayedBalance)}</div>;
+              })()}
               <div className={`text-[10px] ${active ? 'text-indigo-100' : 'text-slate-400'}`}>{cur}</div>
             </button>
           );
