@@ -244,17 +244,6 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
         const deliveryRow = { ...o, paid_amount: netPaid };
         ALL_PAYMENT_KEYS.forEach((k) => { deliveryRow['paid_' + k] = (Number(o['paid_' + k]) || 0) * ratio; });
         add(1, deliveryRow, 'paid_amount');
-        // الفاتورة المكتملة تحمل عربونًا سبق تحصيله؛ نضيفه هنا مرة واحدة
-        // بتقسيمته الأصلية. قيد «حجز» السالب المقابل يُستهلك كمطابقة داخلية
-        // أسفل الدالة ولا يُعامل كمصروف أو خروج من الكاشير.
-        if (o.held_deposit_split) {
-          const rawSplit = o.held_deposit_split as any;
-          const depositRow: any = { ...o, held_deposit_amount: deposit };
-          ALL_PAYMENT_KEYS.forEach((k) => {
-            depositRow['paid_' + k] = Number(rawSplit['paid_' + k] ?? rawSplit[k]) || 0;
-          });
-          add(1, depositRow, 'held_deposit_amount');
-        }
       } else {
         add(1, o, 'paid_amount');
       }
@@ -267,9 +256,8 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   // مرة ثانية بعد تسجيل فاتورة البيع المكتملة. الاستثناء المهم: 543 و589
   // يحملان held_deposit_amount، ولذلك يبقى العربون القديم محسوبًا في المحل.
   const heldDepositByMethod: Bucket = {};
-  const explicitHeldDepositByMethod: Bucket = {};
   const convertedDepositByMethod: Bucket = {};
-  ALL_PAYMENT_KEYS.forEach((k) => { heldDepositByMethod[k] = 0; explicitHeldDepositByMethod[k] = 0; convertedDepositByMethod[k] = 0; });
+  ALL_PAYMENT_KEYS.forEach((k) => { heldDepositByMethod[k] = 0; convertedDepositByMethod[k] = 0; });
   const addReservationSplit = (target: Bucket, rec: any, fallbackField: string) => {
     const splitTotal = ALL_PAYMENT_KEYS.reduce((s, k) => s + Math.abs(Number(rec?.['paid_' + k]) || 0), 0);
     if (splitTotal > 0.001) {
@@ -282,7 +270,6 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   (rows.orders || []).filter((o: any) => !o.is_deleted && Number(o.held_deposit_amount) > 0).forEach((o: any) => {
     const split = o.held_deposit_split || o;
     addReservationSplit(heldDepositByMethod, split, 'held_deposit_amount');
-    if (o.held_deposit_split) addReservationSplit(explicitHeldDepositByMethod, split, 'held_deposit_amount');
   });
   (rows.expenses || []).filter((e: any) => isReservationReclassification(e.category) && Number(e.amount) > 0).forEach((e: any) => {
     addReservationSplit(convertedDepositByMethod, e, 'amount');
@@ -299,19 +286,12 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
       const method = splitTotal > 0.001
         ? ALL_PAYMENT_KEYS.find((k) => Math.abs(Number(e?.['paid_' + k]) || 0) > 0.001) || 'cash'
         : (ALL_PAYMENT_KEYS.includes(e?.payment_method) ? e.payment_method : 'cash');
-      // العربون موجود بالفعل داخل الفاتورة المكتملة، لذلك نستهلك قيد الحجز
-      // القديم كمطابقة داخلية فقط ولا نضيفه كمصروف/خروج.
+      // Held invoices retain their historical deposit (e.g. 543/589).
       if ((heldDepositByMethod[method] || 0) >= deposit - 0.001) {
         heldDepositByMethod[method] -= deposit;
-        if ((explicitHeldDepositByMethod[method] || 0) >= deposit - 0.001) {
-          explicitHeldDepositByMethod[method] -= deposit;
-          return;
-        }
-        // سجل قديم بلا held_deposit_split: يظل قيد «حجز» هو مصدر العربون
-        // الوحيد، لذلك نتركه يضيف العربون مرة واحدة بدل إسقاطه.
-
       } else if ((convertedDepositByMethod[method] || 0) >= deposit - 0.001) {
-        // الفاتورة القديمة تمثل العربون بالفعل؛ لا تُنشئ حركة خزنة جديدة.
+        // The deposit is already represented by the completed sale; consume the match
+        // and do not add it again to Shop Balance.
         convertedDepositByMethod[method] -= deposit;
         return;
       }
