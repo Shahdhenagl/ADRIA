@@ -45,6 +45,27 @@ export default function Budget() {
   const activePayKeys = activePaymentKeys(storeSettings as any);
   const [isExporting, setIsExporting] = useState(false);
   const [savingsTransactions, setSavingsTransactions] = useState<any[]>([]);
+  const [treasuryExpenses, setTreasuryExpenses] = useState<any[]>([]);
+  const [treasuryPurchases, setTreasuryPurchases] = useState<any[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { fetchAllRows } = await import('../../lib/supabase');
+        const [expenseRows, purchaseRows] = await Promise.all([
+          fetchAllRows('expenses'),
+          fetchAllRows('purchase_invoices'),
+        ]);
+        if (cancelled) return;
+        if (Array.isArray(expenseRows) && expenseRows.length > 0) setTreasuryExpenses(expenseRows);
+        if (Array.isArray(purchaseRows) && purchaseRows.length > 0) setTreasuryPurchases(purchaseRows);
+      } catch (error) {
+        console.error('load budget treasury rows:', error);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -434,8 +455,8 @@ export default function Budget() {
     // أحدث تقفيل للكاشير، ثم تُحسب الحركات التي حدثت بعده فقط — نفس POS/Savings.
     const currentShopBalance = computeShopAvailable({
       orders,
-      expenses,
-      purchases: purchaseInvoices,
+      expenses: treasuryExpenses.length > 0 ? treasuryExpenses : expenses,
+      purchases: treasuryPurchases.length > 0 ? treasuryPurchases : purchaseInvoices,
       salaries: employeeTransactions,
       savingsTransactions,
     }, storeSettings as any);
@@ -465,7 +486,7 @@ export default function Budget() {
       mainTreasuryBalance,
       count: new Set(filteredTransactions.map((tx) => tx.originalId)).size
     };
-  }, [filteredTransactions, allTransactions, orders, dateFilter, customDate, customMonth, customYear, methodFilter, storeSettings, activePayKeys, savingsTransactions]);
+  }, [filteredTransactions, allTransactions, orders, expenses, treasuryExpenses, purchaseInvoices, treasuryPurchases, employeeTransactions, dateFilter, customDate, customMonth, customYear, methodFilter, storeSettings, activePayKeys, savingsTransactions]);
 
   const totalCustomerDebt = useMemo(() => {
     const debtPaidByInvoice = new Map<string, number>();
