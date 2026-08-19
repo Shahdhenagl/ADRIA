@@ -61,6 +61,7 @@ export default function AdminLayout() {
     ]},
     { section: 'المخزون والتصنيع', items: [
       { name: 'المخزون والمنتجات', path: '/admin/inventory', icon: Package },
+      { name: 'خصومات المنتجات', path: '/admin/discounts', icon: Ticket },
       { name: 'الجرد والتسوية', path: '/admin/stocktake', icon: ClipboardCheck },
       { name: 'الديڤو والتوالف', path: '/admin/devo', icon: RotateCcw },
       { name: 'التصنيع', path: '/admin/manufacturing', icon: Scissors },

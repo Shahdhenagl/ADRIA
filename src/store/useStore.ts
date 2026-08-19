@@ -10,6 +10,7 @@ import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../
 import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassword, hasOfflinePassword } from '../utils/offlineCache';
 import { withTimeout, isNetworkError, NET_TIMEOUT } from '../utils/net';
 import { isFullyPrepaidOnlineHeld } from '../utils/heldInvoiceLifecycle';
+import { loadActiveProductDiscounts, applyActiveDiscountPrices } from '../utils/productDiscounts';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -1643,11 +1644,12 @@ export const useStore = create<CashierStore>((set, get) => ({
     set({ isRefreshing: true });
 
     try {
-      const [settingsRes, categoriesRes, productsRes, customersRes, ordersRes, counterRes, cashiersRes, employeesRes, employeeTransactionsRes, employeeLeavesRes, employeeAttendanceRes] =
+      const [settingsRes, categoriesRes, productsRes, discountsRes, customersRes, ordersRes, counterRes, cashiersRes, employeesRes, employeeTransactionsRes, employeeLeavesRes, employeeAttendanceRes] =
         await withTimeout(Promise.all([
           supabase.from('store_settings').select('*').limit(1).maybeSingle(),
           supabase.from('categories').select('*').order('name'),
           supabase.from('products').select('*').order('name'),
+          loadActiveProductDiscounts(),
           supabase.from('customers').select('*').order('created_at', { ascending: false }),
           supabase
             .from('orders')
@@ -1743,14 +1745,17 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       const counter = (counterRes.data as Record<string, unknown> | null)?.current_value as number ?? 1;
 
-        set({
-        storeSettings: settings,
-        categories: (categoriesRes.data ?? []) as Category[],
-        products: (productsRes.data ?? []).map((p: any) => ({
+        const rawProducts = (productsRes.data ?? []).map((p: any) => ({
           ...p,
           unit: p.unit ?? 'قطعة',
           average_purchase_price: p.average_purchase_price ?? p.purchase_price ?? 0
-        })) as Product[],
+        })) as Product[];
+        const discountedProducts = applyActiveDiscountPrices(rawProducts, discountsRes);
+
+        set({
+        storeSettings: settings,
+        categories: (categoriesRes.data ?? []) as Category[],
+        products: discountedProducts,
         customers,
         // الفواتير القديمة كلها متختومة بنفس الوقت (منتصف اليوم المحاسبي)،
         // فالترتيب بالوقت لوحده بيبعثرها — نكسر التعادل برقم الفاتورة.
@@ -1940,15 +1945,17 @@ export const useStore = create<CashierStore>((set, get) => ({
 
   loadProductsOnly: async () => {
     try {
-      const { data, error } = await supabase.from('products').select('*').order('name');
+      const [{ data, error }, discounts] = await Promise.all([
+        supabase.from('products').select('*').order('name'),
+        loadActiveProductDiscounts(),
+      ]);
       if (!error && data) {
-        set({
-          products: data.map((p: any) => ({
-            ...p,
-            unit: p.unit ?? 'قطعة',
-            average_purchase_price: p.average_purchase_price ?? p.purchase_price ?? 0
-          })) as Product[]
-        });
+        const rawProducts = data.map((p: any) => ({
+          ...p,
+          unit: p.unit ?? 'قطعة',
+          average_purchase_price: p.average_purchase_price ?? p.purchase_price ?? 0
+        })) as Product[];
+        set({ products: applyActiveDiscountPrices(rawProducts, discounts) });
       }
     } catch (e) {
       console.error("Error loading products only:", e);
