@@ -770,7 +770,6 @@ interface CashierStore {
     shipping?: { amount: number; split?: Record<string, number>; note?: string },
   ) => Promise<boolean>;
   deliverHeldInvoice: (id: string, splitPayments: Record<string, number>, opts?: { dateISO?: string; discount?: number }) => Promise<boolean>;
-  recordHeldDepositConversion: (deposit: number, split: Record<string, number>, invoiceId: string) => Promise<void>;
 
   // Admin
   loadAnalyticsData: (startDate?: string, endDate?: string) => Promise<Order[]>;
@@ -3129,21 +3128,9 @@ export const useStore = create<CashierStore>((set, get) => ({
     }
   },
 
-  // تحويل العربون لفاتورة عند الإتمام: صرف بقيمة العربون (category='تحويل حجز')
-  // يلغي ازدواج الحساب لأن الفاتورة سجّلت العربون ضمن المدفوع.
-  recordHeldDepositConversion: async (deposit, split, invoiceId) => {
-    const depAmt = Math.max(0, Number(deposit) || 0);
-    if (depAmt <= 0) return;
-    if (!(await ensureAccountingDayOpen(get(), new Date()))) return;
-    const s = split || { cash: depAmt };
-    await get().addExpense({
-      category: 'تحويل حجز',
-      amount: depAmt,
-      ...paidFromSplit(s),
-      note: `تحويل عربون لفاتورة #${invoiceId}`,
-      payment_method: primaryOfSplit(s) as any,
-    } as any);
-  },
+  // العربون لا يُحوَّل إلى مصروف عند إتمام الحجز.
+  // checkout يحفظ held_payment داخل الفاتورة، وتقارير الخزنة تعرض العربون
+  // بتاريخ دفعه والباقي بتاريخ استكماله.
 
   // ملاحظة: الفواتير المعلقة **مالهاش إلغاء تلقائي**. كانت بتترجّع للمخزون
   // ويترد عربونها بعد أسبوع (sweepExpiredHeldInvoices + كرون يومي)، واتشالت

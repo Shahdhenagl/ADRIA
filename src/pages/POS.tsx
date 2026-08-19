@@ -109,7 +109,7 @@ async function loadDayBudgetSource(dayStr: string, start: Date, end: Date, local
 }
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, reopenDay, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, reopenDay, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, updateSettings, restoreCart } = useStore();
   const [reopenBusy, setReopenBusy] = useState(false);
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
@@ -890,7 +890,12 @@ export default function POS() {
   const [holdShipNote, setHoldShipNote] = useState('');
   const holdDepositTotal = activePayKeys.reduce((s, k) => s + (parseFloat(holdDepositPay[k] || '') || 0), 0);
   // عربون محصّل لفاتورة معلّقة يجري إتمامها الآن (يُضاف للمدفوع ويُسجّل تحويله بعد الإتمام)
-  const [activeDeposit, setActiveDeposit] = useState<{ amount: number; split: Record<string, number> } | null>(null);
+  const [activeDeposit, setActiveDeposit] = useState<{
+    amount: number;
+    split: Record<string, number>;
+    heldInvoiceId?: string;
+    depositDate?: string;
+  } | null>(null);
   useEffect(() => { if (cart.length === 0) setActiveDeposit(null); }, [cart.length]);
   // فواتير الانتظار — محفوظة على الجهاز نفسه (مش في الداتابيز)، شوف utils/parkedCarts.
   const [parkedCarts, setParkedCarts] = useState<ParkedCart[]>(() => loadParkedCarts());
@@ -1837,14 +1842,32 @@ export default function POS() {
     // تاريخ مخصّص للفاتورة (فواتير قديمة) من شارة التاريخ — فاضي = تاريخ الآن.
     // نستخدم منتصف اليوم المحاسبي المختار عشان يقع مضمون داخل نطاق تقفيله.
     const saleDateISO = workDateOverride ? timestampForBusinessDate(workDateOverride, storeSettings) : undefined;
-    const invoiceId = await checkout(currentTotal, { name: currentCustomerName, phone: currentCustomerPhone, custom_id: currentCustomId }, effectivePaidAmount, 'sale', primaryMethod as any, finalSplit as any, undefined, deferredNote, currentCouponCode, currentCouponDiscount, undefined, saleDateISO);
+    const invoiceId = await checkout(
+      currentTotal,
+      { name: currentCustomerName, phone: currentCustomerPhone, custom_id: currentCustomId },
+      effectivePaidAmount,
+      'sale',
+      primaryMethod as any,
+      finalSplit as any,
+      undefined,
+      deferredNote,
+      currentCouponCode,
+      currentCouponDiscount,
+      undefined,
+      saleDateISO,
+      false,
+      activeDeposit?.amount
+        ? {
+            heldInvoiceId: activeDeposit.heldInvoiceId || `pos-held-${Date.now()}`,
+            depositAmount: activeDeposit.amount,
+            depositSplit: activeDeposit.split,
+            depositDate: activeDeposit.depositDate || new Date().toISOString(),
+          }
+        : undefined,
+    );
 
-    // العربون كان دخل الخزنة وقت الحجز؛ الفاتورة سجّلته ضمن المدفوع، فنسجّل تحويله
-    // (صرف بقيمة العربون) عشان ما يتحسبش مرتين.
-    const depositForThis = activeDeposit;
-    if (depositForThis && depositForThis.amount > 0) {
-      await recordHeldDepositConversion(depositForThis.amount, depositForThis.split, String(invoiceId));
-    }
+    // العربون محفوظ داخل الفاتورة مع تاريخه الأصلي؛ لا ننشئ أي قيد
+    // «تحويل حجز» أو مصروف إضافي، لأن العربون دخل الخزنة بالفعل يوم دفعه.
     setActiveDeposit(null);
 
     const details: any = {
@@ -1964,7 +1987,12 @@ export default function POS() {
       setDeferredNote(held.notes || '');
       setPayInput({});
       const dep = Math.max(0, Number(held.deposit) || 0);
-      setActiveDeposit(dep > 0 ? { amount: dep, split: held.deposit_split || { cash: dep } } : null);
+      setActiveDeposit(dep > 0 ? {
+        amount: dep,
+        split: held.deposit_split || { cash: dep },
+        heldInvoiceId: held.id,
+        depositDate: held.deposit_date || held.created_at,
+      } : null);
       setShowHeldModal(false);
       setMobileView('cart');
       alert(dep > 0
