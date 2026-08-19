@@ -126,6 +126,8 @@ export function refundShareOfMethod(order: any, refundedTotal: number, method: s
 }
 
 export const isInternalTransfer = (category: any): boolean => category === 'تحويل داخلي';
+/** إعادة تصنيف عربون إلى فاتورة مكتملة؛ ليست تحصيلًا جديدًا ولا خروجًا من الدرج. */
+export const isReservationReclassification = (category: any): boolean => category === 'تحويل حجز';
 export const isSavingsTransfer = (category: any): boolean =>
   category === 'تحويل للخزنة الرئيسية' || category === 'تحويل من الخزنة الرئيسية';
 
@@ -251,6 +253,8 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   (rows.expenses || []).forEach((e: any) => {
     const amount = Number(e.amount) || 0;
     if (isMainTreasuryExpense(e)) return;
+    // تحويل الحجز إعادة تصنيف لعربون سبق تحصيله، وليس خروجًا نقديًا جديدًا.
+    if (isReservationReclassification(e.category)) return;
     // كل راتب/سلفة بيتسجّل مرتين: صف في employee_transactions + صف مصروف بفئة
     // «رواتب» (addEmployeeTransaction بيعمل الاتنين). بنعدّه من جدول الموظفين بس
     // — زي ما POS بيعمل بالظبط — وإلا بيتخصم مرتين من الدرج ورصيد المحل يطلع

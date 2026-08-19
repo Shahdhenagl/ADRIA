@@ -51,4 +51,19 @@ describe('held invoice accounting', () => {
     expect(net.cash).toBe(500);
     expect(sale.paid_amount).toBe(500);
   });
+
+  it('does not treat reservation reclassification as a second cash outflow', () => {
+    const reclassification = {
+      id: 'reclass-1',
+      category: 'تحويل حجز',
+      amount: 100,
+      paid_cash: 100,
+      note: 'تحويل عربون لفاتورة #9001',
+    };
+    const net = computeShopAvailable(
+      { orders: [sale], expenses: [deposit, reclassification], purchases: [], salaries: [] },
+      {},
+    );
+    expect(net.cash).toBe(500);
+  });
 });
