@@ -52,6 +52,7 @@ export default function Managers() {
           expenses,
           purchases: (purData as any[]) || [],
           salaries: (salData as any[]) || [],
+          savingsTransactions: (savRows as any[]) || [],
         },
         storeSettings,
       ));
