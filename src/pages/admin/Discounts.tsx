@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import JsBarcode from 'jsbarcode';
-import { Check, Edit3, Printer, Search, Tag, Trash2, X } from 'lucide-react';
+import { Check, Edit3, Power, Printer, Search, Tag, Trash2, X } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useStore } from '../../store/useStore';
 import type { Product } from '../../store/useStore';
 import type { BarcodeFormat, DiscountType, ProductDiscount } from '../../utils/productDiscounts';
+import { printBarcodeLabels } from '../../utils/printBarcodeLabels';
 
 const fmt = (value: number) => Number(value || 0).toLocaleString('ar-EG', { maximumFractionDigits: 2 });
 const localInput = (value: string | null) => value ? new Date(value).toISOString().slice(0, 16) : '';
@@ -64,6 +65,12 @@ export default function Discounts() {
     if (result.error) return alert('تعذر حفظ الخصم: ' + result.error.message);
     await reload(); reset();
   };
+  const toggleActive = async (row: ProductDiscount) => {
+    const next = !row.is_active;
+    const { error } = await supabase.from('product_discounts').update({ is_active: next }).eq('id', row.id);
+    if (error) return alert('تعذر تغيير حالة الخصم: ' + error.message);
+    setRows(current => current.map(item => item.id === row.id ? { ...item, is_active: next } : item));
+  };
   const remove = async (id: string) => {
     if (!confirm('حذف هذا الخصم؟')) return;
     const { error } = await supabase.from('product_discounts').delete().eq('id', id);
@@ -72,10 +79,16 @@ export default function Discounts() {
   const print = (row: ProductDiscount) => {
     const product = row.product || products.find(p => p.id === row.product_id);
     const code = product?.barcode || product?.id || row.product_id;
-    const popup = window.open('', '_blank', 'width=900,height=700');
-    if (!popup) return alert('اسمحي بالنوافذ المنبثقة للطباعة');
-    popup.document.write(`<html dir="rtl"><head><title>طباعة خصم</title><style>@page{size:A4;margin:10mm}body{font-family:Arial;margin:0}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10mm}.label{border:1px dashed #bbb;padding:10px;text-align:center;break-inside:avoid}.old{text-decoration:line-through;color:#777}.new{font-size:22px;font-weight:900;color:#14803c}.free{font-size:12px;color:#444;margin-top:6px}</style></head><body><div class="grid"><div class="label"><div>${product?.name || ''}</div><div>${row.label_text || ''}</div><div class="old">قبل الخصم: ${fmt(row.original_price)}</div><div class="new">بعد الخصم: ${fmt(row.discounted_price)}</div><svg class="bc"></svg><div class="free">${row.barcode_format === 'clearance' ? 'تصفية' : row.barcode_format === 'sale' ? 'عرض خاص' : ''}</div></div></div><script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script><script>window.onload=function(){JsBarcode('.bc','${String(code).replace(/'/g, '')}',{format:'CODE128',width:2,height:45,displayValue:true});setTimeout(()=>window.print(),350)}</script></body></html>`);
-    popup.document.close();
+    if (!code) return alert('لا يوجد باركود لطباعته');
+    printBarcodeLabels({
+      name: product?.name || row.product_id,
+      code: String(code),
+      price: Number(row.original_price),
+      discountPrice: Number(row.discounted_price),
+      labelText: row.label_text || (row.barcode_format === 'clearance' ? 'تصفية' : row.barcode_format === 'sale' ? 'عرض خاص' : ''),
+      currency: 'ج.م',
+      count: 1,
+    });
   };
   useEffect(() => { if (barcodeRef.current && selected && selected.barcode) JsBarcode(barcodeRef.current, String(selected.barcode), { format: 'CODE128', width: 2, height: 44, displayValue: true, margin: 4 }); }, [selected]);
 
@@ -95,7 +108,7 @@ export default function Discounts() {
       </section>
       <section className="rounded-3xl bg-white dark:bg-slate-900 shadow-sm border border-slate-100 dark:border-slate-800 p-5"><h2 className="font-black mb-4">معاينة الملصق</h2><div className="rounded-2xl border-2 border-dashed border-slate-200 p-7 text-center space-y-2"><div className="font-black">{selected?.name || 'اختاري منتجًا'}</div><div className="text-sm text-slate-500">{labelText}</div><div className="line-through text-slate-400">قبل الخصم: {selected ? fmt(selected.sale_price) : '—'}</div><div className="text-2xl font-black text-emerald-600">بعد الخصم: {selected ? fmt(discountedPrice) : '—'}</div>{selected?.barcode ? <svg ref={barcodeRef} className="mx-auto max-w-full"/> : <div className="text-xs text-slate-400">المنتج بدون باركود</div>}</div></section>
     </div>
-    <section className="rounded-3xl bg-white dark:bg-slate-900 shadow-sm border border-slate-100 dark:border-slate-800 p-5"><h2 className="font-black mb-4">الخصومات المسجلة</h2>{loading ? <div className="text-slate-500">جارٍ التحميل...</div> : rows.length === 0 ? <div className="text-slate-500">لا توجد خصومات بعد.</div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-right"><th className="p-3">المنتج</th><th className="p-3">قبل / بعد</th><th className="p-3">المدة</th><th className="p-3">الحالة</th><th className="p-3">إجراءات</th></tr></thead><tbody>{rows.map(r => <tr key={r.id} className="border-b last:border-0"><td className="p-3 font-bold">{r.product?.name || products.find(p => p.id === r.product_id)?.name || r.product_id}</td><td className="p-3"><span className="line-through text-slate-400">{fmt(r.original_price)}</span> <span className="font-black text-emerald-600">{fmt(r.discounted_price)}</span></td><td className="p-3 text-xs">{new Date(r.starts_at).toLocaleString('ar-EG')}<br/>{r.ends_at ? new Date(r.ends_at).toLocaleString('ar-EG') : 'دائم'}</td><td className="p-3">{isActiveRow(r) ? <span className="text-emerald-600 font-bold">فعال الآن</span> : <span className="text-slate-400">غير فعال</span>}</td><td className="p-3 flex gap-2"><button onClick={() => print(r)} title="طباعة" className="p-2 rounded-xl bg-slate-100 hover:bg-emerald-100"><Printer className="w-4"/></button><button onClick={() => startEdit(r)} title="تعديل" className="p-2 rounded-xl bg-slate-100 hover:bg-blue-100"><Edit3 className="w-4"/></button><button onClick={() => remove(r.id)} title="حذف" className="p-2 rounded-xl bg-slate-100 hover:bg-red-100 text-red-600"><Trash2 className="w-4"/></button></td></tr>)}</tbody></table></div>}</section>
+    <section className="rounded-3xl bg-white dark:bg-slate-900 shadow-sm border border-slate-100 dark:border-slate-800 p-5"><h2 className="font-black mb-4">الخصومات المسجلة</h2>{loading ? <div className="text-slate-500">جارٍ التحميل...</div> : rows.length === 0 ? <div className="text-slate-500">لا توجد خصومات بعد.</div> : <div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b text-right"><th className="p-3">المنتج</th><th className="p-3">قبل / بعد</th><th className="p-3">المدة</th><th className="p-3">الحالة</th><th className="p-3">إجراءات</th></tr></thead><tbody>{rows.map(r => <tr key={r.id} className="border-b last:border-0"><td className="p-3 font-bold">{r.product?.name || products.find(p => p.id === r.product_id)?.name || r.product_id}</td><td className="p-3"><span className="line-through text-slate-400">{fmt(r.original_price)}</span> <span className="font-black text-emerald-600">{fmt(r.discounted_price)}</span></td><td className="p-3 text-xs">{new Date(r.starts_at).toLocaleString('ar-EG')}<br/>{r.ends_at ? new Date(r.ends_at).toLocaleString('ar-EG') : 'دائم'}</td><td className="p-3">{isActiveRow(r) ? <span className="text-emerald-600 font-bold">فعال الآن</span> : <span className="text-slate-400">غير فعال</span>}</td><td className="p-3 flex gap-2"><button onClick={() => print(r)} title="طباعة" className="p-2 rounded-xl bg-slate-100 hover:bg-emerald-100"><Printer className="w-4"/></button><button onClick={() => toggleActive(r)} title={r.is_active ? 'إيقاف الخصم' : 'تفعيل الخصم'} className={`p-2 rounded-xl ${r.is_active ? 'bg-emerald-100 text-emerald-700 hover:bg-amber-100' : 'bg-slate-100 text-slate-400 hover:bg-emerald-100'}`}><Power className="w-4"/></button><button onClick={() => startEdit(r)} title="تعديل" className="p-2 rounded-xl bg-slate-100 hover:bg-blue-100"><Edit3 className="w-4"/></button><button onClick={() => remove(r.id)} title="حذف" className="p-2 rounded-xl bg-slate-100 hover:bg-red-100 text-red-600"><Trash2 className="w-4"/></button></td></tr>)}</tbody></table></div>}</section>
   </div>;
 }
 function isActiveRow(row: ProductDiscount) { const now = Date.now(); return row.is_active && new Date(row.starts_at).getTime() <= now && (!row.ends_at || new Date(row.ends_at).getTime() > now); }

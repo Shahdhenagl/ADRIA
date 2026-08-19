@@ -24,6 +24,7 @@ export interface BarcodeLabelItem {
   code: string;
   price: number;
   discountPrice?: number;
+  labelText?: string;
   count: number;
 }
 
@@ -67,6 +68,7 @@ export function printBarcodeLabelsBatch(
         ${storeName ? `<div class="store">${escapeHtml(storeName)}</div>` : ''}
         <div class="name">${escapeHtml(it.name)}</div>
         <img class="bc" src="${img}" />
+        ${it.labelText ? `<div class="label-text">${escapeHtml(it.labelText)}</div>` : ''}
         <div class="price">${priceHtml}</div>
       </div>
       <div class="side">${escapeHtml(it.code)}</div>
@@ -87,13 +89,14 @@ export function printBarcodeLabels(opts: {
   code: string;
   price: number;
   discountPrice?: number;
+  labelText?: string;
   currency: string;
   count: number;
   storeName?: string;
 }) {
-  const { name, code, price, discountPrice, currency, count, storeName } = opts;
+  const { name, code, price, discountPrice, labelText, currency, count, storeName } = opts;
   if (!code) { alert('لا يوجد باركود لطباعته'); return; }
-  printBarcodeLabelsBatch([{ name, code, price, discountPrice, count }], { currency, storeName });
+  printBarcodeLabelsBatch([{ name, code, price, discountPrice, labelText, count }], { currency, storeName });
 }
 
 // Label roll: 38mm wide x 25mm tall.
@@ -111,6 +114,7 @@ function wrapLabels(labels: string): string {
     .name { font-size: 8px; font-weight: bold; white-space: nowrap; overflow: hidden; max-width: 100%; }
     /* الباركود أضيق من عرض الليبل عشان يفضل مسافة للكود اللي على الجنب */
     .bc { width: 27mm; height: 7.5mm; object-fit: contain; margin: 0.3mm 0; }
+    .label-text { font-size: 7px; color: #444; white-space: nowrap; overflow: hidden; max-width: 100%; }
     .price { direction: rtl; }
     .price .old { text-decoration: line-through; color: #777; font-size: 8px; margin-left: 3px; }
     .price .new { font-size: 14px; font-weight: 900; }
