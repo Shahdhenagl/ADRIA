@@ -247,11 +247,30 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
     const time = new Date(value).getTime();
     return Number.isFinite(time) ? time : NaN;
   };
-  const closingExpenses = expenses
-    .filter((e: any) => e.category === 'تحويل للخزنة الرئيسية')
+  // التقفيل الذي ينفذه POS يُنشئ عادةً قيدًا مقابلًا في expenses، لكن بعض
+  // النسخ/المسارات القديمة قد تحتوي على savings_transactions (source=day_closing)
+  // فقط. يجب أن تكون الحالتان نفس نقطة الصفر حتى لا يعرض Dashboard رصيدًا
+  // تاريخيًا بعد أن صفّر الكاشير الدرج فعليًا.
+  const isShopClosingExpense = (e: any) => {
+    const category = String(e?.category || '').trim();
+    const note = String(e?.note || '').trim();
+    return category === 'تحويل للخزنة الرئيسية'
+      || category.includes('تحويل للخزنة الرئيسية')
+      || category.includes('تقفيل')
+      || note.includes('تحويل من خزنة المحل')
+      || note.includes('تحويل من المحل للخزنة الرئيسية');
+  };
+  const closingExpenseTimes = expenses
+    .filter(isShopClosingExpense)
     .map(timestampOf)
     .filter((t: number) => Number.isFinite(t));
-  const latestShopClosingAt = closingExpenses.length ? Math.max(...closingExpenses) : null;
+  const closingSavingsTimes = (rows.savingsTransactions || [])
+    .filter((t: any) => String(t?.direction || '').toLowerCase() === 'in'
+      && String(t?.source || '').toLowerCase() === 'day_closing')
+    .map(timestampOf)
+    .filter((t: number) => Number.isFinite(t));
+  const allClosingTimes = [...closingExpenseTimes, ...closingSavingsTimes];
+  const latestShopClosingAt = allClosingTimes.length ? Math.max(...allClosingTimes) : null;
   const isAfterLatestShopClosing = (rec: any): boolean => {
     if (latestShopClosingAt == null) return true;
     const t = timestampOf(rec);

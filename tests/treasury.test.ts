@@ -57,6 +57,16 @@ describe('applyInternalTransferNet', () => {
 });
 
 describe('computeShopAvailable', () => {
+  it('يعتبر day_closing في savings_transactions نقطة الصفر حتى بدون قيد expenses مطابق', () => {
+    const balance = computeShopAvailable({
+      orders: [{ created_at: '2026-08-19T12:00:00Z', type: 'sale', paid_cash: 23005, paid_amount: 23005, is_deleted: false }],
+      expenses: [],
+      purchases: [], salaries: [],
+      savingsTransactions: [{ created_at: '2026-08-19T13:00:00Z', direction: 'in', source: 'day_closing', amount: 23005, method: 'cash' }],
+    }, { initial_balance: 0, payment_opening_balances: {} });
+    expect(sum(balance)).toBe(0);
+  });
+
   it('يوحّد date في صفحات الإدارة مع created_at في POS بعد آخر تقفيل', () => {
     const base = {
       orders: [{ created_at: '2026-08-19T10:00:00Z', type: 'sale', paid_cash: 100, paid_amount: 100, is_deleted: false }],
