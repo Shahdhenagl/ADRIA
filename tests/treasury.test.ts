@@ -1,6 +1,6 @@
 // اختبار منطق توزيع مبالغ الخزنة (src/utils/treasury.ts) — التشغيل: npm test
 import { describe, it, expect } from 'vitest';
-import { applySplit, routeInternalTransfer, applyInternalTransferNet, isInternalTransfer, isSavingsTransfer } from '../src/utils/treasury';
+import { applySplit, routeInternalTransfer, applyInternalTransferNet, isInternalTransfer, isSavingsTransfer, computeShopAvailable } from '../src/utils/treasury';
 import { ALL_PAYMENT_KEYS } from '../src/utils/paymentMethods';
 
 const zero = (): Record<string, number> => Object.fromEntries(ALL_PAYMENT_KEYS.map((k) => [k, 0]));
@@ -53,6 +53,25 @@ describe('applyInternalTransferNet', () => {
     applyInternalTransferNet(net, { paid_cash: -50, paid_visa: 50 });
     expect(net.cash).toBe(50);
     expect(net.visa).toBe(150);
+  });
+});
+
+describe('رصيد المحل وتحويلات الخزنة الرئيسية', () => {
+  it('يخصم تحويل المحل إلى الرئيسية من رصيد المحل مرة واحدة', () => {
+    const net = computeShopAvailable({
+      orders: [{ type: 'sale', is_deleted: false, paid_amount: 1000, paid_cash: 1000 }],
+      expenses: [], purchases: [], salaries: [],
+      savingsTransactions: [{ source: 'shop_transfer', direction: 'in', method: 'cash', amount: 400 }],
+    }, {});
+    expect(net.cash).toBe(600);
+  });
+
+  it('يضيف التحويل من الرئيسية إلى المحل لرصيد المحل', () => {
+    const net = computeShopAvailable({
+      orders: [], expenses: [], purchases: [], salaries: [],
+      savingsTransactions: [{ source: 'to_shop', direction: 'out', method: 'cash', amount: 250 }],
+    }, {});
+    expect(net.cash).toBe(250);
   });
 });
 

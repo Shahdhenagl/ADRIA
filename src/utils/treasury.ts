@@ -332,6 +332,23 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   // المحل رغم إن الفلوس خرجت من الرئيسية أصلاً.
   (rows.salaries || []).filter((s: any) => !isMainTreasuryExpense(s)).forEach((s: any) => add(-1, s, 'amount'));
 
+  // تحويلات المحل ↔ الخزنة الرئيسية جزء من رصيد المحل المتاح.
+  // savings_transactions هي دفتر الحركة الرئيسي، لذلك نطبّق أثرها هنا مرة واحدة
+  // بدل اعتبار صف المصروف المرتبط بها تحصيلًا/مصروفًا مستقلًا.
+  (rows.savingsTransactions || []).forEach((s: any) => {
+    const source = String(s?.source || '');
+    const amount = Math.abs(Number(s?.amount) || 0);
+    if (amount <= 0.001) return;
+    const method = ALL_PAYMENT_KEYS.includes(s?.method) ? s.method : 'cash';
+    if (source === 'shop_transfer' || source === 'day_closing') {
+      // المحل ➜ الرئيسية: الفلوس خرجت من درج المحل.
+      net[method] -= amount;
+    } else if (source === 'to_shop') {
+      // الرئيسية ➜ المحل: الفلوس دخلت درج المحل.
+      net[method] += amount;
+    }
+  });
+
   ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
   return net;
 }

@@ -113,8 +113,11 @@ export default function Savings() {
       window.removeEventListener('focus', refreshOnFocus);
       document.removeEventListener('visibilitychange', refreshOnFocus);
     };
+    // إعادة الحساب بعد وصول إعدادات المتجر، خصوصًا الأرصدة الافتتاحية ووسائل الدفع.
+    // الاعتماد على [] كان يجعل أول تحميل يستخدم إعدادات افتراضية، ثم يظل الرقم
+    // مختلفًا بعد الريفرش حسب توقيت وصول storeSettings.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [storeSettings]);
 
   // التبديل بين مصروف/إيراد بيغيّر قائمة الفئات. من غير ده الفئة القديمة بتفضل
   // في الحالة والـ select بيعرض أول خيار — فبتتسجّل فئة غير اللي ظاهرة.
