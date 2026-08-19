@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { PiggyBank, ArrowLeftRight, Banknote, Save, Trash2 } from 'lucide-react';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
@@ -19,6 +19,7 @@ export default function Savings() {
   const [savingsBal, setSavingsBal] = useState<Split>(zero());
   const [txs, setTxs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const loadSeq = useRef(0);
 
   // in/out/convert = تحويل مع خزنة المحل أو بين طرق الرئيسية.
   // income/expense = معاملة مالية للخزنة الرئيسية نفسها (فلوس داخلة/خارجة من بره).
@@ -69,6 +70,7 @@ export default function Savings() {
   };
 
   const load = async () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     try {
       const { fetchAllRows } = await import('../../lib/supabase');
@@ -84,6 +86,7 @@ export default function Savings() {
       const allOrders = (ordData as any[]).map((o) => ({ ...o, items: o.order_items || [] }));
       // خزنة المحل المتاح لكل وسيلة (كل الفترات) — الحساب مشترك في utils/treasury
       // عشان صفحة المدراء تدّي نفس الرقم بالظبط.
+      if (seq !== loadSeq.current) return;
       setShopAvail(computeShopAvailable(
         { orders: allOrders, expenses: expData || [], purchases: purData || [], salaries: salData || [] },
         storeSettings,
@@ -97,9 +100,21 @@ export default function Savings() {
       setSavingsBal(sav);
       setTxs(list);
     } catch (e) { console.error(e); }
-    setLoading(false);
+    if (seq === loadSeq.current) setLoading(false);
   };
-  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  useEffect(() => {
+    void load();
+    const refreshOnFocus = () => {
+      if (document.visibilityState === 'visible') void load();
+    };
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshOnFocus);
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshOnFocus);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // التبديل بين مصروف/إيراد بيغيّر قائمة الفئات. من غير ده الفئة القديمة بتفضل
   // في الحالة والـ select بيعرض أول خيار — فبتتسجّل فئة غير اللي ظاهرة.
@@ -310,7 +325,7 @@ export default function Savings() {
         </div>
         <div className="bg-gradient-to-l from-indigo-600 to-purple-600 text-white rounded-2xl px-5 py-3 text-center">
           <div className="text-[11px] font-bold opacity-90">إجمالي الخزنة الرئيسية</div>
-          <div className="text-2xl font-black">{savingsTotal.toFixed(2)} {cur}</div>
+          <div className="text-2xl font-black">{loading ? '...' : `${savingsTotal.toFixed(2)} ${cur}`}</div>
         </div>
       </div>
 
@@ -319,8 +334,8 @@ export default function Savings() {
         {METHODS.map((m) => (
           <div key={m.key} className="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-200 dark:border-slate-700 text-center">
             <div className="text-[11px] font-bold text-slate-500">{m.label}</div>
-            <div className="text-lg font-black text-indigo-600">{(savingsBal[m.key] || 0).toFixed(2)}</div>
-            <div className="text-[10px] text-slate-400 mt-1">بالمحل: {(shopAvail[m.key] || 0).toFixed(2)}</div>
+            <div className="text-lg font-black text-indigo-600">{loading ? '...' : (savingsBal[m.key] || 0).toFixed(2)}</div>
+            <div className="text-[10px] text-slate-400 mt-1">بالمحل: {loading ? '...' : (shopAvail[m.key] || 0).toFixed(2)}</div>
           </div>
         ))}
       </div>
