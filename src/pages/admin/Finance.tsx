@@ -25,6 +25,21 @@ export default function Finance() {
   } = useStore();
   const activeOrders = useMemo(() => orders.filter((order) => !order.is_deleted), [orders]);
   const [savingsTransactions, setSavingsTransactions] = useState<any[]>([]);
+  const [treasuryExpenses, setTreasuryExpenses] = useState<any[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { fetchAllRows } = await import('../../lib/supabase');
+        const rows = await fetchAllRows('expenses');
+        if (!cancelled && Array.isArray(rows)) setTreasuryExpenses(rows);
+      } catch (error) {
+        console.error('load treasury expenses:', error);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -367,11 +382,11 @@ export default function Finance() {
   // نستخدمه للبطاقات والتحويلات، بينما methodsBreakdown يبقى لتقرير اليوم التاريخي.
   const currentShopBalance = useMemo(() => computeShopAvailable({
     orders: activeOrders,
-    expenses,
+    expenses: treasuryExpenses.length > 0 ? treasuryExpenses : expenses,
     purchases: purchaseInvoices,
     salaries: employeeTransactions,
     savingsTransactions,
-  }, storeSettings as any), [activeOrders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, storeSettings]);
+  }, storeSettings as any), [activeOrders, expenses, treasuryExpenses, purchaseInvoices, employeeTransactions, savingsTransactions, storeSettings]);
   const operationalMethodsBreakdown: Record<string, number> = {};
   activePaymentKeys(storeSettings as any).forEach((m) => {
     operationalMethodsBreakdown[m] = currentShopBalance[m] || 0;
