@@ -252,11 +252,50 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
     if (refunded > 0) add(-1, refundRecordOf(o, refunded), 'paid_amount');
   });
 
+  // نطابق عربون الحجز السالب مع تحويل الحجز المقابل حتى لا نضيف العربون
+  // مرة ثانية بعد تسجيل فاتورة البيع المكتملة. الاستثناء المهم: 543 و589
+  // يحملان held_deposit_amount، ولذلك يبقى العربون القديم محسوبًا في المحل.
+  const heldDepositByMethod: Bucket = {};
+  const convertedDepositByMethod: Bucket = {};
+  ALL_PAYMENT_KEYS.forEach((k) => { heldDepositByMethod[k] = 0; convertedDepositByMethod[k] = 0; });
+  const addReservationSplit = (target: Bucket, rec: any, fallbackField: string) => {
+    const splitTotal = ALL_PAYMENT_KEYS.reduce((s, k) => s + Math.abs(Number(rec?.['paid_' + k]) || 0), 0);
+    if (splitTotal > 0.001) {
+      ALL_PAYMENT_KEYS.forEach((k) => { target[k] += Math.abs(Number(rec?.['paid_' + k]) || 0); });
+      return;
+    }
+    const method = ALL_PAYMENT_KEYS.includes(rec?.payment_method) ? rec.payment_method : 'cash';
+    target[method] += Math.abs(Number(rec?.[fallbackField]) || 0);
+  };
+  (rows.orders || []).filter((o: any) => !o.is_deleted && Number(o.held_deposit_amount) > 0).forEach((o: any) => {
+    const split = o.held_deposit_split || o;
+    addReservationSplit(heldDepositByMethod, split, 'held_deposit_amount');
+  });
+  (rows.expenses || []).filter((e: any) => isReservationReclassification(e.category) && Number(e.amount) > 0).forEach((e: any) => {
+    addReservationSplit(convertedDepositByMethod, e, 'amount');
+  });
+
   (rows.expenses || []).forEach((e: any) => {
     const amount = Number(e.amount) || 0;
     if (isMainTreasuryExpense(e)) return;
     // تحويل الحجز إعادة تصنيف لعربون سبق تحصيله، وليس خروجًا نقديًا جديدًا.
     if (isReservationReclassification(e.category)) return;
+    if (e.category === 'حجز' && amount < 0) {
+      const deposit = Math.abs(amount);
+      const splitTotal = ALL_PAYMENT_KEYS.reduce((s, k) => s + Math.abs(Number(e?.['paid_' + k]) || 0), 0);
+      const method = splitTotal > 0.001
+        ? ALL_PAYMENT_KEYS.find((k) => Math.abs(Number(e?.['paid_' + k]) || 0) > 0.001) || 'cash'
+        : (ALL_PAYMENT_KEYS.includes(e?.payment_method) ? e.payment_method : 'cash');
+      // Held invoices retain their historical deposit (e.g. 543/589).
+      if ((heldDepositByMethod[method] || 0) >= deposit - 0.001) {
+        heldDepositByMethod[method] -= deposit;
+      } else if ((convertedDepositByMethod[method] || 0) >= deposit - 0.001) {
+        // The deposit is already represented by the completed sale; consume the match
+        // and do not add it again to Shop Balance.
+        convertedDepositByMethod[method] -= deposit;
+        return;
+      }
+    }
     // كل راتب/سلفة بيتسجّل مرتين: صف في employee_transactions + صف مصروف بفئة
     // «رواتب» (addEmployeeTransaction بيعمل الاتنين). بنعدّه من جدول الموظفين بس
     // — زي ما POS بيعمل بالظبط — وإلا بيتخصم مرتين من الدرج ورصيد المحل يطلع
