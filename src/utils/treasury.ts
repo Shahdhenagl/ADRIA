@@ -240,14 +240,21 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   const expenses = rows.expenses || [];
   const purchases = rows.purchases || [];
   const salaries = rows.salaries || [];
+  // صفحات الإدارة تستخدم سجلات store المطبّعة بحقل date، بينما POS يستخدم
+  // الصفوف الخام بحقل created_at. يجب أن يستخدم كلا المسارين نفس زمن الحركة.
+  const timestampOf = (rec: any): number => {
+    const value = rec?.created_at ?? rec?.date;
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : NaN;
+  };
   const closingExpenses = expenses
     .filter((e: any) => e.category === 'تحويل للخزنة الرئيسية')
-    .map((e: any) => new Date(e.created_at).getTime())
+    .map(timestampOf)
     .filter((t: number) => Number.isFinite(t));
   const latestShopClosingAt = closingExpenses.length ? Math.max(...closingExpenses) : null;
   const isAfterLatestShopClosing = (rec: any): boolean => {
     if (latestShopClosingAt == null) return true;
-    const t = new Date(rec?.created_at).getTime();
+    const t = timestampOf(rec);
     return Number.isFinite(t) && t > latestShopClosingAt;
   };
   const scopedOrders = orders.filter(isAfterLatestShopClosing);

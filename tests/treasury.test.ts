@@ -1,6 +1,6 @@
 // اختبار منطق توزيع مبالغ الخزنة (src/utils/treasury.ts) — التشغيل: npm test
 import { describe, it, expect } from 'vitest';
-import { applySplit, routeInternalTransfer, applyInternalTransferNet, isInternalTransfer, isSavingsTransfer } from '../src/utils/treasury';
+import { applySplit, routeInternalTransfer, applyInternalTransferNet, isInternalTransfer, isSavingsTransfer, computeShopAvailable } from '../src/utils/treasury';
 import { ALL_PAYMENT_KEYS } from '../src/utils/paymentMethods';
 
 const zero = (): Record<string, number> => Object.fromEntries(ALL_PAYMENT_KEYS.map((k) => [k, 0]));
@@ -53,6 +53,24 @@ describe('applyInternalTransferNet', () => {
     applyInternalTransferNet(net, { paid_cash: -50, paid_visa: 50 });
     expect(net.cash).toBe(50);
     expect(net.visa).toBe(150);
+  });
+});
+
+describe('computeShopAvailable', () => {
+  it('يوحّد date في صفحات الإدارة مع created_at في POS بعد آخر تقفيل', () => {
+    const base = {
+      orders: [{ created_at: '2026-08-19T10:00:00Z', type: 'sale', paid_cash: 100, paid_amount: 100, is_deleted: false }],
+      expenses: [{ date: '2026-08-19T09:00:00Z', category: 'تحويل للخزنة الرئيسية', amount: 1000, paid_cash: 1000 }],
+      purchases: [], salaries: [], savingsTransactions: [],
+    };
+    const adminRows = computeShopAvailable(base, { initial_balance: 0, payment_opening_balances: {} });
+    const posRows = computeShopAvailable({
+      ...base,
+      expenses: [{ ...base.expenses[0], date: undefined, created_at: '2026-08-19T09:00:00Z' }],
+      orders: [{ ...base.orders[0], created_at: '2026-08-19T10:00:00Z' }],
+    }, { initial_balance: 0, payment_opening_balances: {} });
+    expect(adminRows.cash).toBe(100);
+    expect(posRows.cash).toBe(100);
   });
 });
 
