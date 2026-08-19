@@ -1,8 +1,12 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  test: {
+    exclude: ['**/node_modules/**', '**/e2e/**'],
+    setupFiles: ['./tests/setup.ts'],
+  },
   plugins: [
     react(),
     VitePWA({
