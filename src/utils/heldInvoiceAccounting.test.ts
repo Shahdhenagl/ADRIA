@@ -66,4 +66,40 @@ describe('held invoice accounting', () => {
     );
     expect(net.cash).toBe(500);
   });
+
+  it('uses the latest cashier closing as zero baseline for current shop balance', () => {
+    const beforeClosing = {
+      id: 'old-sale',
+      type: 'sale',
+      total: 1000,
+      paid_amount: 1000,
+      paid_cash: 1000,
+      created_at: '2026-08-10T20:00:00.000Z',
+    };
+    const afterClosing = {
+      id: 'new-sale',
+      type: 'sale',
+      total: 125,
+      paid_amount: 125,
+      paid_cash: 125,
+      created_at: '2026-08-12T10:00:00.000Z',
+    };
+    const net = computeShopAvailable(
+      {
+        orders: [beforeClosing, afterClosing],
+        expenses: [],
+        purchases: [],
+        salaries: [],
+        savingsTransactions: [{
+          source: 'day_closing',
+          created_at: '2026-08-11T12:00:00.000Z',
+          method: 'cash',
+          direction: 'in',
+          amount: 1000,
+        }],
+      },
+      { initial_balance: 500 },
+    );
+    expect(net.cash).toBe(125);
+  });
 });

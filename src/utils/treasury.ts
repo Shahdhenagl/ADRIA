@@ -230,9 +230,30 @@ export interface ShopTreasuryRows {
 export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Bucket {
   const net: Bucket = {};
   ALL_PAYMENT_KEYS.forEach((k) => { net[k] = 0; });
+
+  // إقفال الكاشير يحوّل الرصيد الموجود فعلياً إلى الخزنة الرئيسية ويترك درج
+  // المحل بصفر. لذلك لا يجوز أن نعيد جمع التاريخ كله بعد الإقفال؛ وإلا ستظهر
+  // أرصدة سالبة/موجبة قديمة في Savings وManagers رغم أن التقفيل كان صحيحاً.
+  // نستخدم أحدث حركة day_closing كنقطة بداية محاسبية للصندوق الحالي، ونحسب
+  // فقط ما حدث بعدها. لو لم يوجد إقفال قديم، نحافظ على سلوك الرصيد الافتتاحي.
+  const closingTimes = (rows.savingsTransactions || [])
+    .filter((t: any) => t?.source === 'day_closing' && t?.created_at)
+    .map((t: any) => new Date(t.created_at).getTime())
+    .filter((n: number) => Number.isFinite(n));
+  const lastClosingMs = closingTimes.length ? Math.max(...closingTimes) : null;
+  const hasClosingBaseline = lastClosingMs !== null;
+  const afterLastClosing = (rec: any) => {
+    if (!hasClosingBaseline) return true;
+    const ms = new Date(rec?.created_at || rec?.date || 0).getTime();
+    return Number.isFinite(ms) && ms > (lastClosingMs as number);
+  };
+  const orders = (rows.orders || []).filter(afterLastClosing);
+  const expenses = (rows.expenses || []).filter(afterLastClosing);
+  const purchases = (rows.purchases || []).filter(afterLastClosing);
+  const salaries = (rows.salaries || []).filter(afterLastClosing);
   const add = (sign: number, rec: any, field: string) => applySplit(net, rec, field, { sign });
 
-  (rows.orders || []).filter((o: any) => !o.is_deleted).forEach((o: any) => {
+  orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
     // التحصيل المعلَّم [MAIN_TREASURY] راح للخزنة الرئيسية مش لدرج المحل — يتستبعد.
     if (isMainTreasuryOrder(o)) return;
     if (o.type === 'sale' || o.type === 'payment') {
@@ -267,15 +288,15 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
     const method = ALL_PAYMENT_KEYS.includes(rec?.payment_method) ? rec.payment_method : 'cash';
     target[method] += Math.abs(Number(rec?.[fallbackField]) || 0);
   };
-  (rows.orders || []).filter((o: any) => !o.is_deleted && Number(o.held_deposit_amount) > 0).forEach((o: any) => {
+  orders.filter((o: any) => !o.is_deleted && Number(o.held_deposit_amount) > 0).forEach((o: any) => {
     const split = o.held_deposit_split || o;
     addReservationSplit(heldDepositByMethod, split, 'held_deposit_amount');
   });
-  (rows.expenses || []).filter((e: any) => isReservationReclassification(e.category) && Number(e.amount) > 0).forEach((e: any) => {
+  expenses.filter((e: any) => isReservationReclassification(e.category) && Number(e.amount) > 0).forEach((e: any) => {
     addReservationSplit(convertedDepositByMethod, e, 'amount');
   });
 
-  (rows.expenses || []).forEach((e: any) => {
+  expenses.forEach((e: any) => {
     const amount = Number(e.amount) || 0;
     if (isMainTreasuryExpense(e)) return;
     // تحويل الحجز إعادة تصنيف لعربون سبق تحصيله، وليس خروجًا نقديًا جديدًا.
@@ -317,7 +338,7 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   // غير تقسيم (بيانات قديمة) applySplit بتاخد له Math.abs فكان بيتحسب صادر
   // بالغلط. بنطبّع الصف لقيم موجبة وندخّله بإشارة +1 — زي ما بيتعمل مع المصاريف
   // السالبة فوق — فالحالتين بيدّوا وارد.
-  (rows.purchases || []).filter((p: any) => !isMainTreasuryPurchase(p)).forEach((p: any) => {
+  purchases.filter((p: any) => !isMainTreasuryPurchase(p)).forEach((p: any) => {
     const paid = +p.paid_amount || 0;
     if (paid < 0) {
       const absRec: any = { ...p, paid_amount: Math.abs(paid) };
@@ -330,8 +351,12 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   // الرواتب/السلف المصروفة من الخزنة الرئيسية معلّمة بـ [MAIN_TREASURY] في
   // ملاحظتها — لازم تتستبعد من الدرج زي أي حركة رئيسية، وإلا بتتخصم من خزنة
   // المحل رغم إن الفلوس خرجت من الرئيسية أصلاً.
-  (rows.salaries || []).filter((s: any) => !isMainTreasuryExpense(s)).forEach((s: any) => add(-1, s, 'amount'));
+  salaries.filter((s: any) => !isMainTreasuryExpense(s)).forEach((s: any) => add(-1, s, 'amount'));
 
-  ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
+  // بعد أول إقفال صالح، الرصيد الافتتاحي القديم لا يُعاد تحميله؛ الإقفال نفسه
+  // هو نقطة الصفر الفعلية للصندوق الحالي.
+  if (!hasClosingBaseline) {
+    ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
+  }
   return net;
 }
