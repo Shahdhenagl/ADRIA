@@ -5,11 +5,20 @@ const net = (rows: LedgerEntry[]) => rows.reduce((sum, row) => sum + row.inAmoun
 
 describe('Payment Accounts reconciliation', () => {
   it('keeps shop and main balances distinct while All cancels a shop-to-main transfer', () => {
-    const shop: LedgerEntry[] = [{
-      id: 'sale:cash', date: '2026-08-19T12:00:00Z', method: 'cash',
-      desc: 'sale', inAmount: 11570, outAmount: 0, kind: 'sale',
+    const shop: LedgerEntry[] = [
+      {
+        id: 'sale:cash', date: '2026-08-19T12:00:00Z', method: 'cash',
+        desc: 'sale', inAmount: 11570, outAmount: 0, kind: 'sale',
+      },
+      {
+        id: 'expense:closing', date: '2026-08-19T23:00:00Z', method: 'cash',
+        desc: 'تحويل للخزنة الرئيسية', inAmount: 0, outAmount: 11570, kind: 'transfer',
+      },
+    ];
+    const main: LedgerEntry[] = [{
+      id: 'sav:closing-19', date: '2026-08-19T23:00:00Z', method: 'cash',
+      desc: 'تقفيل اليوم', inAmount: 11570, outAmount: 0, kind: 'transfer',
     }];
-    const main: LedgerEntry[] = [];
     const savingsRows = [{
       id: 'closing-19', source: 'day_closing', direction: 'in', amount: 11570,
       method: 'cash', created_at: '2026-08-19T23:00:00Z',
@@ -18,14 +27,13 @@ describe('Payment Accounts reconciliation', () => {
     const all = addTreasuryCounterpartsForAll(shop, main, savingsRows);
     const transferRows = all.filter((row) => row.kind === 'transfer');
 
-    expect(net(shop)).toBe(11570);
-    expect(net(main)).toBe(0);
-    expect(transferRows).toHaveLength(1);
-    expect(transferRows[0].outAmount).toBe(11570);
-    expect(net(all)).toBe(0);
+    expect(net(shop)).toBe(0);
+    expect(net(main)).toBe(11570);
+    expect(transferRows).toHaveLength(2);
+    expect(net(all)).toBe(11570);
   });
 
-  it('ignores main-only savings movements in the All ledger', () => {
+  it('does not duplicate main-only movements in the All ledger', () => {
     const shop: LedgerEntry[] = [];
     const main: LedgerEntry[] = [{
       id: 'main-income', date: '2026-08-19T12:00:00Z', method: 'cash',
@@ -41,3 +49,4 @@ describe('Payment Accounts reconciliation', () => {
     expect(net(all)).toBe(5000);
   });
 });
+

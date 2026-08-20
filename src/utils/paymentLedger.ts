@@ -7,7 +7,7 @@
  */
 import { ALL_PAYMENT_KEYS, type PaymentKey } from './paymentMethods';
 import { calculateCashRefunded } from './returns';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isReservationReclassification, savingsSourceTouchesShop, stripTreasuryMarkers, refundPartsOf } from './treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isReservationReclassification, stripTreasuryMarkers, refundPartsOf } from './treasury';
 
 export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'income' | 'purchase' | 'purchase_return' | 'transfer';
 
@@ -48,25 +48,14 @@ function shareOf(row: any, method: PaymentKey, totalPaid: number): number {
 export function addTreasuryCounterpartsForAll(
   shopLedger: LedgerEntry[],
   mainLedger: LedgerEntry[],
-  savingsRows: any[],
+  _savingsRows: any[],
 ): LedgerEntry[] {
-  const counterparts: LedgerEntry[] = [];
-  for (const t of savingsRows || []) {
-    if (!savingsSourceTouchesShop(t?.source)) continue;
-    const amount = Math.abs(Number(t?.amount) || 0);
-    if (amount <= 0.001) continue;
-    if (!ALL_PAYMENT_KEYS.includes(t?.method)) continue;
-    counterparts.push({
-      id: `counterpart:${t.id}`,
-      date: t.created_at,
-      method: t.method,
-      desc: 'تحويل بين الخزنتين — الطرف المقابل',
-      inAmount: t.direction === 'out' ? amount : 0,
-      outAmount: t.direction === 'in' ? amount : 0,
-      kind: 'transfer',
-    });
-  }
-  return [...shopLedger, ...mainLedger, ...counterparts];
+  // التحويل بين الخزنتين له قيدان أصليان بالفعل:
+  // 1) مصروف/إيراد التحويل في shopLedger.
+  // 2) صف savings المقابل في mainLedger.
+  // لذلك لا نضيف طرفًا وهميًا ثالثًا؛ إضافته كانت تجعل كل تحويل يُحسب مرتين
+  // وتحوّل فلتر «الكل» إلى رصيد سالب. جمع القيدين الأصليين يعطي صافي صفر.
+  return [...shopLedger, ...mainLedger];
 }
 
 export function buildPaymentLedger(orders: any[], expenses: any[], purchases: any[]): LedgerEntry[] {
