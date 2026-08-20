@@ -130,6 +130,25 @@ export default function PaymentAccounts() {
     savingsTransactions: savRows,
   }, storeSettings as any), [orders, expenses, purchaseInvoices, employeeTransactions, savRows, storeSettings]);
 
+  // الرصيد الحالي للخزنة الرئيسية من كشفها المستقل، على نفس أساس الرصيد
+  // الافتتاحي + الوارد - الصادر. فلتر «الكل» يجب أن يساوي المحل + الرئيسية.
+  const currentMainBalance = useMemo(() => {
+    const result: Record<string, number> = {};
+    ALL_PAYMENT_KEYS.forEach((k) => { result[k] = savingsOpeningBalanceOf(storeSettings as any, k); });
+    for (const e of mainLedger) {
+      result[e.method] = (result[e.method] || 0) + e.inAmount - e.outAmount;
+    }
+    return result;
+  }, [mainLedger, storeSettings.savingsOpeningBalances]);
+
+  const currentAllBalance = useMemo(() => {
+    const result: Record<string, number> = {};
+    ALL_PAYMENT_KEYS.forEach((k) => {
+      result[k] = (currentShopBalance[k] || 0) + (currentMainBalance[k] || 0);
+    });
+    return result;
+  }, [currentShopBalance, currentMainBalance]);
+
   // تشخيص آمن: لا يحذف ولا يعدّل أي قيد، لكنه يلفت النظر للصفوف التي قد تفسر
   // ظهور تحويلات مكررة أو غير مربوطة في كشف يوم 6/11 أو أي يوم آخر.
   const transferDiagnostics = useMemo(() => {
@@ -230,8 +249,14 @@ export default function PaymentAccounts() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ledger, scope, selected, from, to, search, storeSettings.paymentOpeningBalances, storeSettings.initial_balance, storeSettings.savingsOpeningBalances]);
 
-  const displayedStatementClosing = (!from && !to && scope === 'shop')
-    ? (currentShopBalance[selected] || 0)
+  const currentScopeBalance = scope === 'main'
+    ? currentMainBalance
+    : scope === 'all'
+      ? currentAllBalance
+      : currentShopBalance;
+
+  const displayedStatementClosing = (!from && !to)
+    ? (currentScopeBalance[selected] || 0)
     : statement.closing;
 
   // عند وجود فلتر زمني، بطاقات الوسائل تعرض صافي حركة الفترة فقط،
@@ -341,7 +366,6 @@ export default function PaymentAccounts() {
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         {methods.map((k) => {
           const Icon = METHOD_ICON[k] || WalletIcon;
-          const s = summary[k] || { balance: openingOf(k) };
           const active = selected === k;
           return (
             <button key={k} onClick={() => setSelected(k)} className={`text-right rounded-2xl border p-3 transition ${active ? 'bg-indigo-600 text-white border-indigo-600 shadow-lg' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 hover:border-indigo-300'}`}>
@@ -350,9 +374,7 @@ export default function PaymentAccounts() {
                 const hasPeriodFilter = Boolean(from || to);
                 const displayedBalance = hasPeriodFilter
                   ? (periodBalances[k] || 0)
-                  : scope === 'shop'
-                    ? (currentShopBalance[k] || 0)
-                    : s.balance;
+                  : (currentScopeBalance[k] || 0);
                 return <div className={`text-lg font-black ${active ? 'text-white' : (displayedBalance < 0 ? 'text-red-600' : 'text-slate-800 dark:text-slate-100')}`}>{fmt(displayedBalance)}</div>;
               })()}
               <div className={`text-[10px] ${active ? 'text-indigo-100' : 'text-slate-400'}`}>{cur}</div>
