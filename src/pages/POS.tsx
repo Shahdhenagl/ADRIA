@@ -6,7 +6,7 @@ import { EditInvoiceModal } from '../components/EditInvoiceModal';
 import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, Sun, ArrowRightLeft, X, Printer, CreditCard, Smartphone, Zap, ScanLine, Camera, Box, Check, ChevronRight, ChevronLeft, FileText, MessageSquare, Send, Wallet, Edit2, Eye, HandCoins, UserMinus, Clock, PauseCircle, Undo2, Truck, Hourglass, Play, Unlock } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
-import { printBarcodeLabelsBatch, generateBarcode } from '../utils/printBarcodeLabels';
+import { printBarcodeLabels, printBarcodeLabelsBatch, generateBarcode } from '../utils/printBarcodeLabels';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, totalOpeningBalance } from '../utils/paymentMethods';
 import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
@@ -110,6 +110,22 @@ async function loadDayBudgetSource(dayStr: string, start: Date, end: Date, local
 
 export default function POS() {
   const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, reopenDay, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
+  const [lineDiscounts, setLineDiscounts] = useState<Record<string, number>>({});
+  const [lineBasePrices, setLineBasePrices] = useState<Record<string, number>>({});
+  const setPieceDiscount = (item: any) => {
+    const base = lineBasePrices[item.id] ?? (Number(item.sale_price) || 0);
+    const raw = window.prompt(`خصم لكل قطعة من ${item.name}\\nالسعر الحالي: ${base}`, String(lineDiscounts[item.id] || 0));
+    if (raw === null) return;
+    const discount = Math.max(0, Math.min(base, Number(raw) || 0));
+    setLineBasePrices(prev => ({ ...prev, [item.id]: base }));
+    setLineDiscounts(prev => ({ ...prev, [item.id]: discount }));
+    updatePrice(item.id, Math.max(0, base - discount));
+  };
+  const printPieceDiscount = (item: any) => {
+    const discount = lineDiscounts[item.id] || 0;
+    if (discount <= 0) return alert('أضيفي خصمًا على القطعة أولًا');
+    printBarcodeLabels({ name: item.name, code: String(item.barcode || item.id), price: lineBasePrices[item.id] ?? item.sale_price + discount, discountPrice: item.sale_price, labelText: `خصم ${discount} لكل قطعة`, currency: storeSettings.currency, count: Math.max(1, Math.floor(item.quantity || 1)) });
+  };
   const [reopenBusy, setReopenBusy] = useState(false);
   // Transfer day-closing balance to savings (with manager OTP)
   const [showSaveXfer, setShowSaveXfer] = useState(false);
@@ -4115,6 +4131,8 @@ export default function POS() {
                         <span className="font-black text-lg text-indigo-600 dark:text-indigo-400">
                           {(item.sale_price * item.quantity).toFixed(2)} <span className="text-[10px] text-gray-500">{storeSettings.currency}</span>
                         </span>
+                        {(lineDiscounts[item.id] || 0) > 0 && <span className="text-[10px] text-emerald-600 font-black">خصم القطعة: {lineDiscounts[item.id].toFixed(2)} {storeSettings.currency}</span>}
+                        <div className="flex gap-1 mt-1"><button onClick={() => setPieceDiscount(item)} className="text-[10px] px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold">خصم/قطعة</button>{(lineDiscounts[item.id] || 0) > 0 && <button onClick={() => printPieceDiscount(item)} className="text-[10px] px-2 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold"><Printer size={11} className="inline ml-1"/>طباعة</button>}</div>
                       </>
                     )}
                   </div>

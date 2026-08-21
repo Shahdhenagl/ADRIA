@@ -14,6 +14,7 @@ export interface ProductDiscount {
   is_active: boolean;
   label_text: string | null;
   barcode_format: BarcodeFormat;
+  quantity_limit?: number | null;
   created_at?: string;
   product?: { id: string; name: string; barcode: string | null; sale_price: number };
 }
