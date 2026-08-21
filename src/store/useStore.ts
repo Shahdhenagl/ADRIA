@@ -193,6 +193,11 @@ export interface PurchaseInvoice {
   payment_method: 'cash' | 'visa' | 'wallet' | 'instapay' | 'method5' | 'method6';
   created_at: string;
   notes?: string;
+  /** خصم فاتورة المورد قبل توزيع التكلفة على الأصناف. */
+  discount_type?: 'fixed' | 'percentage' | null;
+  discount_value?: number;
+  discount_amount?: number;
+  gross_total?: number;
   /** لصفوف مرتجع المورد: id فاتورة الشراء الأصلية (db/46). */
   source_invoice_id?: string | null;
   items?: PurchaseItem[];
@@ -6347,6 +6352,10 @@ setupRealtime: () => {
         paid_method5: splits.method5 || 0,
         paid_method6: splits.method6 || 0,
         payment_method: invoice.payment_method,
+        gross_total: (invoice as any).gross_total ?? invoice.total,
+        discount_type: (invoice as any).discount_type ?? null,
+        discount_value: (invoice as any).discount_value ?? 0,
+        discount_amount: (invoice as any).discount_amount ?? 0,
         notes: (invoice as any).notes || null,
         created_at: createdAt
       })
@@ -6517,6 +6526,10 @@ setupRealtime: () => {
         paid_method5: splits.method5 || 0,
         paid_method6: splits.method6 || 0,
         payment_method: invoice.payment_method,
+        gross_total: (invoice as any).gross_total ?? invoice.total,
+        discount_type: (invoice as any).discount_type ?? null,
+        discount_value: (invoice as any).discount_value ?? 0,
+        discount_amount: (invoice as any).discount_amount ?? 0,
         notes: (invoice as any).notes || null
       })
       .eq('id', invoiceId)

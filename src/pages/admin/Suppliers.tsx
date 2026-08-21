@@ -198,6 +198,8 @@ export default function Suppliers() {
   const [invTreasurySource, setInvTreasurySource] = useState<'shop' | 'main'>('main');
   // وضع المودال: فاتورة شراء عادية أو فاتورة مرتجع حرّة (بسعر قطعة مخصّص).
   const [invMode, setInvMode] = useState<'purchase' | 'return'>('purchase');
+  const [purchaseDiscountType, setPurchaseDiscountType] = useState<'fixed' | 'percentage'>('fixed');
+  const [purchaseDiscountValue, setPurchaseDiscountValue] = useState('');
   // تسوية المرتجع: استرداد كاش أو خصم من مديونية المورد.
   const [retSettlement, setRetSettlement] = useState<'cash' | 'debt'>('cash');
   const [debtPaySource, setDebtPaySource] = useState<'shop' | 'main'>('main');
@@ -328,9 +330,17 @@ export default function Suppliers() {
     setFormData({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
   };
 
-  const invTotal = invItems.reduce((sum, item) => {
+  const invGrossTotal = invItems.reduce((sum, item) => {
     return sum + (parseFloat(item.quantity || '0') * parseFloat(item.purchase_price || '0'));
   }, 0);
+  const requestedPurchaseDiscount = Math.max(0, Number(purchaseDiscountValue) || 0);
+  const purchaseDiscountAmount = Math.min(
+    invGrossTotal,
+    purchaseDiscountType === 'percentage'
+      ? invGrossTotal * Math.min(100, requestedPurchaseDiscount) / 100
+      : requestedPurchaseDiscount,
+  );
+  const invTotal = Math.max(0, invGrossTotal - purchaseDiscountAmount);
 
   const confirmMainTreasurySpend = async (amount: number, details: string) => {
     const confirmed = window.confirm(`سيتم الصرف من الخزنة الرئيسية بمبلغ ${amount.toFixed(2)} ${storeSettings.currency}.\nسيتم إرسال OTP للمدير للتأكيد.`);
@@ -409,12 +419,27 @@ export default function Suppliers() {
 
     try {
       setIsSaving(true);
-      const items: PurchaseItem[] = validItems.map(i => ({
-        product_id: i.product_id,
-        quantity: parseFloat(i.quantity),
-        purchase_price: parseFloat(i.purchase_price),
-        to_display: Math.max(0, Math.min(parseFloat(i.to_display) || 0, parseFloat(i.quantity) || 0)),
-      }));
+      // توزيع خصم الفاتورة تناسبيًا على قيمة كل سطر، ثم تحويله إلى خصم لكل قطعة.
+      // بهذه الطريقة تدخل كل قطعة للمخزون بتكلفتها الفعلية بعد الخصم.
+      const discountFactor = invGrossTotal > 0 ? purchaseDiscountAmount / invGrossTotal : 0;
+      let allocatedNet = 0;
+      const items: PurchaseItem[] = validItems.map((i, index) => {
+        const quantity = parseFloat(i.quantity);
+        const rawUnitCost = parseFloat(i.purchase_price);
+        const rawLineNet = quantity * rawUnitCost * (1 - discountFactor);
+        // نقرّب كل السطور، ونضع فرق التقريب في آخر سطر حتى يطابق مجموع السطور صافي الفاتورة تمامًا.
+        const lineNet = index === validItems.length - 1
+          ? Math.max(0, invTotal - allocatedNet)
+          : Math.round(rawLineNet * 10000) / 10000;
+        const effectiveUnitCost = Math.round((lineNet / quantity) * 10000) / 10000;
+        allocatedNet += quantity * effectiveUnitCost;
+        return {
+          product_id: i.product_id,
+          quantity,
+          purchase_price: effectiveUnitCost,
+          to_display: Math.max(0, Math.min(parseFloat(i.to_display) || 0, quantity)),
+        };
+      });
 
       const splitPayments: Record<string, number> = {};
       invPayKeys.forEach((k) => { splitPayments[k] = parseFloat(invPay[k] || '') || 0; });
@@ -436,11 +461,15 @@ export default function Suppliers() {
       if (editingPurchaseInvoice) {
         await updatePurchaseInvoice(
           editingPurchaseInvoice.id,
-          {
-            total: invTotal,
-            paid_amount: effectivePaidAmount,
-            payment_method: primaryMethod as any,
-          } as any,
+            {
+              total: invTotal,
+              gross_total: invGrossTotal,
+              discount_type: purchaseDiscountAmount > 0 ? purchaseDiscountType : null,
+              discount_value: requestedPurchaseDiscount,
+              discount_amount: purchaseDiscountAmount,
+              paid_amount: effectivePaidAmount,
+              payment_method: primaryMethod as any,
+            } as any,
           items,
           adjustedSplit as any
         );
@@ -456,6 +485,10 @@ export default function Suppliers() {
           invoice_number: invoiceNumber,
           supplier_id: invSupplierId,
           total: invTotal,
+          gross_total: invGrossTotal,
+          discount_type: purchaseDiscountAmount > 0 ? purchaseDiscountType : null,
+          discount_value: requestedPurchaseDiscount,
+          discount_amount: purchaseDiscountAmount,
           paid_amount: effectivePaidAmount,
           payment_method: primaryMethod as any,
           notes: payFromMainTreasury ? markSavingsGroupNote(markMainTreasuryNote('فاتورة مشتريات مدفوعة من الخزنة الرئيسية'), mainGroupId) : undefined,
@@ -472,6 +505,8 @@ export default function Suppliers() {
       setInvPay({});
       setInvTreasurySource('main');
       setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
+      setPurchaseDiscountType('fixed');
+      setPurchaseDiscountValue('');
       setActiveTab('invoices');
     } catch (error: any) {
       alert(error.message || 'حدث خطأ أثناء حفظ الفاتورة');
@@ -886,6 +921,8 @@ export default function Suppliers() {
               setInvSupplierId('');
               setInvPay({});
               setInvTreasurySource('shop');
+              setPurchaseDiscountType('fixed');
+              setPurchaseDiscountValue('');
               setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
               setAutoOpenRow(null);
               setShowInvoiceModal(true);
@@ -1069,6 +1106,8 @@ export default function Suppliers() {
                         onClick={() => {
                           setEditingPurchaseInvoice(inv);
                           setInvSupplierId(inv.supplier_id);
+                          setPurchaseDiscountType(inv.discount_type === 'percentage' ? 'percentage' : 'fixed');
+                          setPurchaseDiscountValue(String(inv.discount_value || 0));
                           setInvTreasurySource(isMainTreasuryPurchase(inv) ? 'main' : 'shop');
                           {
                             const pop: Record<string, string> = {};
@@ -1534,6 +1573,23 @@ export default function Suppliers() {
                   </div>
                 )}
 
+                {invMode === 'purchase' && (
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <label className="text-sm font-black text-emerald-900">خصم فاتورة المورد</label>
+                      <span className="text-[11px] text-emerald-700 font-bold">يتوزع تلقائيًا على الأصناف حسب قيمة كل سطر</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <select value={purchaseDiscountType} onChange={e => setPurchaseDiscountType(e.target.value as 'fixed' | 'percentage')} className="bg-white border border-emerald-200 rounded-xl px-3 py-2.5 font-bold">
+                        <option value="fixed">مبلغ ثابت</option>
+                        <option value="percentage">نسبة مئوية</option>
+                      </select>
+                      <input type="number" min="0" max={purchaseDiscountType === 'percentage' ? 100 : undefined} value={purchaseDiscountValue} onChange={e => setPurchaseDiscountValue(e.target.value)} placeholder={purchaseDiscountType === 'percentage' ? 'النسبة %' : 'قيمة الخصم'} className="bg-white border border-emerald-200 rounded-xl px-3 py-2.5 font-bold" />
+                    </div>
+                    <div className="flex justify-between text-xs font-bold text-slate-600"><span>قبل الخصم: {invGrossTotal.toLocaleString()} {storeSettings.currency}</span><span className="text-red-600">الخصم: {purchaseDiscountAmount.toLocaleString()} {storeSettings.currency}</span><span className="text-emerald-700">الصافي: {invTotal.toLocaleString()} {storeSettings.currency}</span></div>
+                  </div>
+                )}
+
                 {/* المبلغ المدفوع (شراء) / المسترد (مرتجع نقدي) */}
                 {(invMode === 'purchase' || (invMode === 'return' && retSettlement === 'cash')) && (
                   <div>
@@ -1550,9 +1606,10 @@ export default function Suppliers() {
                 {/* Summary */}
                 <div className="rounded-2xl p-5 border shadow-inner" style={{ backgroundColor: (invMode === 'return' ? '#f59e0b' : tc) + '10', borderColor: (invMode === 'return' ? '#f59e0b' : tc) + '30' }}>
                   <div className="flex justify-between font-black text-slate-800 text-lg mb-3 pb-3 border-b border-white">
-                    <span>{invMode === 'return' ? 'قيمة المرتجع' : 'إجمالي الفاتورة'}</span>
+                    <span>{invMode === 'return' ? 'قيمة المرتجع' : 'صافي الفاتورة بعد الخصم'}</span>
                     <span>{invTotal.toLocaleString()} {storeSettings.currency}</span>
                   </div>
+                  {invMode === 'purchase' && purchaseDiscountAmount > 0 && <div className="flex justify-between text-xs font-bold text-slate-500 mb-3"><span>الإجمالي قبل الخصم</span><span>{invGrossTotal.toLocaleString()} {storeSettings.currency}</span></div>}
 
                   {invMode === 'return' ? (
                     <div className="flex justify-between text-sm font-bold">
