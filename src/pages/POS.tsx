@@ -1910,7 +1910,7 @@ export default function POS() {
     const depositSplit: Record<string, number> = {};
     activePayKeys.forEach((k) => { depositSplit[k] = parseFloat(holdDepositPay[k] || '') || 0; });
     const deposit = activePayKeys.reduce((s, k) => s + depositSplit[k], 0);
-    if (deposit > total + 0.01) { alert('العربون أكبر من إجمالي الفاتورة.'); return; }
+    if (deposit > total + 0.01) { alert('العربون أكبر من صافي الفاتورة بعد الخصم.'); return; }
     setHoldBusy(true);
     const ok = await holdInvoice({
       customerName,
@@ -1919,6 +1919,7 @@ export default function POS() {
       notes: deferredNote,
       deposit,
       depositSplit,
+      discountAmount: totalDiscount,
       kind: holdKind,
       idempotencyKey: holdRequestKey,
       ...(holdKind === 'online' ? { customerAddress: holdAddress, shippingNote: holdShipNote } : {}),
@@ -1962,6 +1963,10 @@ export default function POS() {
       setCustomerPhone(held.customer_phone || '');
       setCustomerId(held.customer_custom_id || '');
       setDeferredNote(held.notes || '');
+      // إعادة خصم الفاتورة المعلقة عند إكمالها؛ وإلا سيظهر الإجمالي الأصلي
+      // ويُحصّل من العميل أكثر من الباقي الحقيقي.
+      setDiscountStr((Number(held.discount_amount) || 0).toString());
+      setCouponInput('');
       setPayInput({});
       const dep = Math.max(0, Number(held.deposit) || 0);
       setActiveDeposit(dep > 0 ? { amount: dep, split: held.deposit_split || { cash: dep } } : null);

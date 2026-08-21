@@ -299,8 +299,8 @@ export interface HeldInvoice {
   /** تاريخ دخول العربون للخزنة، مستقل عن تاريخ التسليم/إتمام البيع. */
   deposit_date?: string | null;
   /** خصم الفاتورة المعلقة، لا يغيّر قيمة العربون السابق إلا بتصحيح واضح. */
-  discount_amount?: number;
-  updated_at?: string | null;
+    discount_amount?: number;
+    updated_at?: string | null;
   created_at: string;
   expires_at: string;
   /** عنوان التوصيل + ملاحظات المندوب — للطلبات الأونلاين (db/53). */
@@ -748,7 +748,7 @@ interface CashierStore {
   /** تعديل بيانات الفاتورة المعلقة مع تصحيح فرق العربون على يوم التعديل. */
   updateHeldInvoice: (id: string, updates: Partial<Pick<HeldInvoice, 'customer_name' | 'customer_phone' | 'customer_custom_id' | 'items' | 'total' | 'invoice_type' | 'salesperson_id' | 'salesperson_name' | 'notes' | 'deposit' | 'deposit_split' | 'discount_amount' | 'created_at'>>) => Promise<boolean>;
   holdInvoice: (data: {
-    customerName?: string;
+     customerName?: string;
     customerPhone?: string;
     customerCustomId?: string;
     notes?: string;
@@ -756,9 +756,11 @@ interface CashierStore {
     depositSplit?: Record<string, number>;
     kind?: HeldKind;
     customerAddress?: string;
-    shippingNote?: string;
-    idempotencyKey?: string;
-  }) => Promise<boolean>;
+     shippingNote?: string;
+     /** إجمالي خصم الفاتورة وقت إنشاء الحجز (قبل الضريبة). */
+     discountAmount?: number;
+     idempotencyKey?: string;
+   }) => Promise<boolean>;
   confirmHeldInvoice: (id: string) => Promise<HeldInvoice | null>;
   returnHeldInvoice: (id: string) => Promise<boolean>;
   loadAllHeldInvoices: () => Promise<HeldInvoice[]>;
@@ -2674,7 +2676,7 @@ export const useStore = create<CashierStore>((set, get) => ({
   // Saves the current cart as a held invoice and RESERVES the stock (deducts it
   // from products.stock_quantity, like a real sale) so the quantity can't be
   // sold twice. No invoice number is consumed until the sale is confirmed.
-  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit, kind = 'shop', customerAddress, shippingNote, idempotencyKey } = {}) => {
+  holdInvoice: async ({ customerName, customerPhone, customerCustomId, notes, deposit = 0, depositSplit, kind = 'shop', customerAddress, shippingNote, discountAmount = 0, idempotencyKey } = {}) => {
     const state = get();
     if (state.cart.length === 0) return false;
     try {
@@ -2693,6 +2695,15 @@ export const useStore = create<CashierStore>((set, get) => ({
       }));
 
       const depAmt = Math.max(0, Number(deposit) || 0);
+      const invoiceDiscount = Math.max(0, Number(discountAmount) || 0);
+      if (invoiceDiscount > total + 0.01) {
+        alert('الخصم لا يمكن أن يكون أكبر من إجمالي الفاتورة.');
+        return false;
+      }
+      if (depAmt > total + 0.01) {
+        alert('العربون لا يمكن أن يكون أكبر من صافي الفاتورة بعد الخصم.');
+        return false;
+      }
       const depSplit = depositSplit || {};
       const isOffline = typeof navigator !== 'undefined' && !navigator.onLine;
 
@@ -2717,7 +2728,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           deposit: depAmt,
           deposit_split: depAmt > 0 ? depSplit : null,
           deposit_date: depAmt > 0 ? new Date().toISOString() : null,
-          discount_amount: 0,
+          discount_amount: invoiceDiscount,
           updated_at: new Date().toISOString(),
           kind: kind || 'shop',
           status: 'held',
@@ -2746,7 +2757,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           p_kind: kind || 'shop',
           p_customer_address: customerAddress?.trim() || null,
           p_shipping_note: shippingNote?.trim() || null,
-          p_discount_amount: 0,
+          p_discount_amount: invoiceDiscount,
         });
         if (error || !resData) {
           console.error('Atomic hold invoice error:', error);
