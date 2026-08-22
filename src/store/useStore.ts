@@ -6459,9 +6459,20 @@ setupRealtime: () => {
   updatePurchaseInvoice: async (invoiceId, invoice, items, splitPayments) => {
     const state = get();
     const oldInvoice = state.purchaseInvoices.find(inv => inv.id === invoiceId);
-    if (!oldInvoice) throw new Error('الفاتورة غير موجودة');
-    if (!(await ensureAccountingDayOpen(state, oldInvoice.created_at))) return;
-
+        if (!oldInvoice) throw new Error('الفاتورة غير موجودة');
+    const closed = await isAccountingDayClosed(state.storeSettings, oldInvoice.created_at);
+    if (closed) {
+      // تعديل الخصم/تكلفة المخزون آمن بعد التقفيل، لكن تغيير المدفوع أو وسيلة الدفع
+      // سيغيّر حركة الخزنة التاريخية؛ لذلك يُمنع فقط هذا الجزء في اليوم المقفول.
+      const oldPaid = Number(oldInvoice.paid_amount) || 0;
+      const newPaid = Number(invoice.paid_amount) || 0;
+      const paymentChanged = Math.abs(oldPaid - newPaid) > 0.001 ||
+        ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'].some((k) => Math.abs((Number((oldInvoice as any)[`paid_${k}`]) || 0) - (Number((splitPayments as any)?.[k]) || 0)) > 0.001);
+      if (paymentChanged) {
+        alert('اليوم المقفول يسمح بتعديل الخصم والأصناف فقط، ولا يسمح بتغيير المدفوع أو وسيلة الدفع.');
+        return;
+      }
+    }
     // 1. Revert old items impact
     const updatedProducts = [...state.products];
     const oldItems = oldInvoice.items || [];
