@@ -23,6 +23,7 @@ import Financing from './pages/admin/Financing';
 import StockAlerts from './pages/admin/StockAlerts';
 import Coupons from './pages/admin/Coupons';
 import Discounts from './pages/admin/Discounts';
+import DiscountBarcodePrint from './pages/admin/DiscountBarcodePrint';
 import HeldInvoices from './pages/admin/HeldInvoices';
 import Manufacturing from './pages/admin/Manufacturing';
 import Managers from './pages/admin/Managers';
@@ -281,6 +282,7 @@ function App() {
             <Route path="offline-invoices" element={<OfflineInvoices />} />
             <Route path="coupons" element={<Coupons />} />
             <Route path="discounts" element={<Discounts />} />
+            <Route path="discount-barcode-print" element={<DiscountBarcodePrint />} />
             <Route path="held-invoices" element={<HeldInvoices />} />
             <Route path="employees" element={<Employees />} />
             <Route path="stock-alerts" element={<StockAlerts />} />
