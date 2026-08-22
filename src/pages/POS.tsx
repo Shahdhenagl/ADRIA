@@ -122,9 +122,15 @@ export default function POS() {
     updatePrice(item.id, Math.max(0, base - discount));
   };
   const printPieceDiscount = (item: any) => {
-    const discount = lineDiscounts[item.id] || 0;
-    if (discount <= 0) return alert('أضيفي خصمًا على القطعة أولًا');
-    printBarcodeLabels({ name: item.name, code: String(item.barcode || item.id), price: lineBasePrices[item.id] ?? item.sale_price + discount, discountPrice: item.sale_price, labelText: `خصم ${discount} لكل قطعة`, currency: storeSettings.currency, count: Math.max(1, Math.floor(item.quantity || 1)) });
+    const product = products.find((p: any) => p.id === item.id);
+    const manualDiscount = Number(lineDiscounts[item.id] || 0);
+    const scheduledPrice = Number(product?.discount_price || 0);
+    const currentPrice = Number(item.sale_price || 0);
+    const hasScheduledDiscount = scheduledPrice > 0 && Number(product?.sale_price || 0) > scheduledPrice && Math.abs(currentPrice - scheduledPrice) < 0.01;
+    const originalPrice = lineBasePrices[item.id] ?? (manualDiscount > 0 ? currentPrice + manualDiscount : (hasScheduledDiscount ? Number(product?.sale_price) : currentPrice));
+    if (originalPrice <= currentPrice) return alert('لا يوجد خصم فعال لهذا المنتج');
+    const labelText = manualDiscount > 0 ? `خصم ${manualDiscount.toFixed(2)} لكل قطعة` : 'عرض خصم';
+    printBarcodeLabels({ name: item.name, code: String(item.barcode || product?.barcode || item.id), price: originalPrice, discountPrice: currentPrice, labelText, currency: storeSettings.currency, count: Math.max(1, Math.floor(item.quantity || 1)), storeName: storeSettings.name });
   };
   const [reopenBusy, setReopenBusy] = useState(false);
   // Transfer day-closing balance to savings (with manager OTP)
@@ -4132,7 +4138,7 @@ export default function POS() {
                           {(item.sale_price * item.quantity).toFixed(2)} <span className="text-[10px] text-gray-500">{storeSettings.currency}</span>
                         </span>
                         {(lineDiscounts[item.id] || 0) > 0 && <span className="text-[10px] text-emerald-600 font-black">خصم القطعة: {lineDiscounts[item.id].toFixed(2)} {storeSettings.currency}</span>}
-                        <div className="flex gap-1 mt-1"><button onClick={() => setPieceDiscount(item)} className="text-[10px] px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold">خصم/قطعة</button>{(lineDiscounts[item.id] || 0) > 0 && <button onClick={() => printPieceDiscount(item)} className="text-[10px] px-2 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold"><Printer size={11} className="inline ml-1"/>طباعة</button>}</div>
+                        <div className="flex gap-1 mt-1"><button onClick={() => setPieceDiscount(item)} className="text-[10px] px-2 py-1 rounded-lg bg-emerald-50 text-emerald-700 font-bold">خصم/قطعة</button>{(() => { const p = products.find((x: any) => x.id === item.id); const scheduled = Number(p?.discount_price || 0) > 0 && Number(p?.sale_price || 0) > Number(p?.discount_price || 0) && Math.abs(Number(item.sale_price || 0) - Number(p?.discount_price || 0)) < 0.01; return ((lineDiscounts[item.id] || 0) > 0 || scheduled) ? <button onClick={() => printPieceDiscount(item)} className="text-[10px] px-2 py-1 rounded-lg bg-slate-100 text-slate-700 font-bold"><Printer size={11} className="inline ml-1"/>طباعة باركود</button> : null; })()}</div>
                       </>
                     )}
                   </div>
