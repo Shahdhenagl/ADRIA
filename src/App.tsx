@@ -167,6 +167,19 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function ProtectedAdminPermission({ path, children }: { path: string; children: React.ReactNode }) {
+  const { adminPermissions } = useStore();
+  if (adminPermissions !== null && !adminPermissions.includes(path)) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-slate-50 gap-4 p-8 text-center" dir="rtl">
+        <div className="text-5xl">🔒</div>
+        <h2 className="text-2xl font-black text-slate-800">ليس لديك صلاحية لهذه الصفحة</h2>
+        <p className="text-slate-500 font-bold">اطلب من المدير العام تفعيل صلاحية خزينة الكاشير لهذا المستخدم.</p>
+      </div>
+    );
+  }
+  return <>{children}</>;
+}
 function ProtectedRoutePOS({ children }: { children: React.ReactNode }) {
   const { isPOSAuthenticated } = useStore();
   if (!isPOSAuthenticated) {
@@ -276,7 +289,7 @@ function App() {
             <Route path="suppliers" element={<Suppliers />} />
             <Route path="cashiers" element={<Cashiers />} />
             <Route path="deferred" element={<DeferredAccounts />} />
-            <Route path="finance" element={<Finance />} />
+            <Route path="finance" element={<ProtectedAdminPermission path="/admin/finance"><Finance /></ProtectedAdminPermission>} />
             <Route path="payment-accounts" element={<PaymentAccounts />} />
             <Route path="financing" element={<Financing />} />
             <Route path="offline-invoices" element={<OfflineInvoices />} />
