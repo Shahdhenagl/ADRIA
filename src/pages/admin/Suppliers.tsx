@@ -764,7 +764,7 @@ export default function Suppliers() {
         <tr>
           <td style="text-align:center;">${index + 1}</td>
           <td style="text-align:right;font-weight:bold;">${escapeHtml(product?.name || 'منتج غير معروف')}</td>
-          <td style="text-align:center; font-weight:700; color:#334155;">${escapeHtml(productCode)}</td>
+          <td class="product-code" style="text-align:center;">${escapeHtml(productCode)}</td>
           <td style="text-align:center;">${item.quantity}</td>
           <td style="text-align:center;">${Number(item.purchase_price || 0).toFixed(2)}</td>
           <td style="text-align:left;font-weight:bold;">${(Number(item.purchase_price || 0) * Number(item.quantity || 0)).toFixed(2)}</td>
@@ -800,8 +800,8 @@ export default function Suppliers() {
   thead th{font-size:9px;padding:4px 1px;text-align:center;border-bottom:1px solid #000;font-weight:900;}
   thead th:nth-child(2){text-align:right;}
   thead th:last-child{text-align:left;}
-  tbody td{font-size:9px;padding:3px 1px;border-bottom:1px dotted #bbb;}
-
+    tbody td{font-size:9px;padding:3px 1px;border-bottom:1px dotted #000;color:#000;font-weight:700;}
+  .product-code{font-family:monospace;font-size:10.5px !important;font-weight:900 !important;color:#000 !important;letter-spacing:.2px;white-space:nowrap;}
   .summary-section{width:100%;margin-top:4px;}
   .summary-row{display:flex;justify-content:space-between;padding:2px 0;font-size:10px;}
   .summary-row.total{border-top:1px solid #000;border-bottom:1px solid #000;margin-top:3px;padding:4px 0;font-size:14px;font-weight:900;}
@@ -810,10 +810,16 @@ export default function Suppliers() {
   .footer-text{font-size:9px;color:#333;text-align:center;}
   .qr-code{width:80px;height:80px;}
 
+  /* طباعة الفاتورة بالأبيض والأسود لزيادة الوضوح */
+  .invoice-container, .invoice-container *{color:#000 !important;}
+  .invoice-container [style*="background"]{background:#fff !important;}
+  .invoice-title-badge{background:#000 !important;color:#fff !important;}
   @media print{
     @page{size:72mm auto;margin:0;}
-    body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
-    .invoice-container{width:72mm;padding:2mm 1.5mm;}
+    body{-webkit-print-color-adjust:exact;print-color-adjust:exact;background:#fff !important;color:#000 !important;}
+    .invoice-container{width:72mm;padding:2mm 1.5mm;background:#fff;color:#000;}
+    .invoice-container *{color:#000 !important;border-color:#000 !important;}
+    .invoice-title-badge{background:#000 !important;color:#fff !important;border-color:#000 !important;}
   }
 </style>
 </head>
