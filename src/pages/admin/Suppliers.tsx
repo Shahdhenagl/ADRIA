@@ -1810,40 +1810,44 @@ export default function Suppliers() {
           }
         };
 
-        const exportSupplierPDF = () => {
+        const reportCss = `
+          @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
+          *{font-family:'Cairo',sans-serif;box-sizing:border-box;} body{padding:12mm;color:#000;}
+          h1{font-size:22px;text-align:center;margin:0;} h2{font-size:13px;text-align:center;color:#555;margin:4px 0;font-weight:700;}
+          h3{font-size:14px;margin:16px 0 6px;} .sum{display:flex;gap:10px;justify-content:center;margin:10px 0;flex-wrap:wrap;}
+          .card{border:1px solid #ccc;border-radius:8px;padding:8px 14px;text-align:center;} .card b{display:block;font-size:16px;}
+          table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;} th,td{border:1px solid #ccc;padding:5px 7px;text-align:right;} thead th{background:#f1f5f9;font-weight:900;}
+          @media print{@page{size:A4;margin:8mm;}}
+        `;
+        const printSupplierReport = (title: string, body: string) => {
+          const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"/><title>${title}</title><style>${reportCss}</style></head><body>${body}<p style="margin-top:16px;font-size:11px;color:#888;text-align:center;">تم الإصدار: ${new Date().toLocaleString('ar-EG')}</p><script>window.onload=()=>{setTimeout(()=>{window.print();},400);}</script></body></html>`;
+          openPrintWindow(html);
+        };
+        const exportSupplierFinancialPDF = () => {
           const cur = storeSettings.currency;
           const period = (supFrom || supTo) ? `الفترة: ${supFrom || '...'} ← ${supTo || '...'}` : 'كل الفترات';
-          const prodRows = productStats.map((s: any) => `<tr><td>${escapeHtml(s.name)}</td><td>${formatQty(s.totalQty, s.unit)}</td><td>${s.avgPrice.toFixed(2)}</td><td>${s.lastPrice.toFixed(2)}</td><td>${formatQty(s.currentStock, s.unit)}</td><td>${formatQty(s.sold, s.unit)}</td></tr>`).join('');
           const ledgerHtml = ledgerRows.map((r) => {
             const bal = r.balance > 0.009 ? `${r.balance.toFixed(2)} علينا` : r.balance < -0.009 ? `${Math.abs(r.balance).toFixed(2)} لينا` : '0';
             return `<tr><td>${new Date(r.inv.created_at).toLocaleDateString('ar-EG')}</td><td>${escapeHtml(r.label)} (${escapeHtml(String(r.inv.invoice_number))})</td><td>${r.credit > 0.009 ? r.credit.toFixed(2) : '—'}</td><td>${r.debit > 0.009 ? r.debit.toFixed(2) : '—'}</td><td>${bal}</td></tr>`;
           }).join('');
           const netLabel = netBalance > 0.009 ? 'الرصيد: علينا للمورد' : netBalance < -0.009 ? 'الرصيد: لينا عند المورد' : 'الرصيد: مُصفّى';
-          const html = `<!DOCTYPE html><html dir="rtl" lang="ar"><head><meta charset="UTF-8"/><title>كشف حساب مورد - ${escapeHtml(selectedSupplierProfile.name)}</title><style>
-            @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
-            *{font-family:'Cairo',sans-serif;box-sizing:border-box;} body{padding:12mm;color:#000;}
-            h1{font-size:22px;text-align:center;margin:0;} h2{font-size:13px;text-align:center;color:#555;margin:4px 0;font-weight:700;}
-            h3{font-size:14px;margin:16px 0 6px;} .sum{display:flex;gap:10px;justify-content:center;margin:10px 0;flex-wrap:wrap;}
-            .card{border:1px solid #ccc;border-radius:8px;padding:8px 14px;text-align:center;} .card b{display:block;font-size:16px;}
-            table{width:100%;border-collapse:collapse;margin-top:6px;font-size:12px;} th,td{border:1px solid #ccc;padding:5px 7px;text-align:right;} thead th{background:#f1f5f9;font-weight:900;}
-            @media print{@page{size:A4;margin:8mm;}}
-          </style></head><body>
+          printSupplierReport(`كشف مالي - ${escapeHtml(selectedSupplierProfile.name)}`, `
             <h1>${escapeHtml(storeSettings.name)}</h1>
-            <h2>كشف حساب المورد: ${escapeHtml(selectedSupplierProfile.name)} — ${escapeHtml(selectedSupplierProfile.phone || '')}</h2>
+            <h2>كشف الحساب المالي للمورد: ${escapeHtml(selectedSupplierProfile.name)} — ${escapeHtml(selectedSupplierProfile.phone || '')}</h2>
             <h2>${period}</h2>
-            <div class="sum">
-              <div class="card">إجمالي المشتريات<b>${totalPurchases.toFixed(2)} ${cur}</b></div>
-              <div class="card">المدفوع<b>${totalPaid.toFixed(2)} ${cur}</b></div>
-              <div class="card">${netLabel}<b>${Math.abs(netBalance).toFixed(2)} ${cur}</b></div>
-            </div>
-            <h3>الأصناف المشتراة</h3>
-            <table><thead><tr><th>المنتج</th><th>الكمية</th><th>متوسط الشراء</th><th>آخر شراء</th><th>المتاح بالمخزون</th><th>المباع</th></tr></thead><tbody>${prodRows || '<tr><td colspan=6>لا يوجد</td></tr>'}</tbody></table>
-            <h3>كشف الحساب (دائن / مدين)</h3>
-            <table><thead><tr><th>التاريخ</th><th>البيان</th><th>دائن (علينا)</th><th>مدين (له/سداد)</th><th>الرصيد الجاري</th></tr></thead><tbody>${ledgerHtml || '<tr><td colspan=5>لا يوجد</td></tr>'}</tbody></table>
-            <p style="margin-top:16px;font-size:11px;color:#888;text-align:center;">تم الإصدار: ${new Date().toLocaleString('ar-EG')}</p>
-            <script>window.onload=()=>{setTimeout(()=>{window.print();},400);}</script>
-          </body></html>`;
-          openPrintWindow(html);
+            <div class="sum"><div class="card">إجمالي المشتريات / الدائن<b>${totalPurchases.toFixed(2)} ${cur}</b></div><div class="card">إجمالي المدفوع / المدين<b>${totalPaid.toFixed(2)} ${cur}</b></div><div class="card">${netLabel}<b>${Math.abs(netBalance).toFixed(2)} ${cur}</b></div></div>
+            <h3>كشف الحساب المالي — مدين ودائن</h3>
+            <table><thead><tr><th>التاريخ</th><th>البيان</th><th>دائن (علينا للمورد)</th><th>مدين (سداد/تحصيل)</th><th>الرصيد الجاري</th></tr></thead><tbody>${ledgerHtml || '<tr><td colspan=5>لا يوجد</td></tr>'}</tbody></table>`);
+        };
+        const exportSupplierProductsPDF = () => {
+          const period = (supFrom || supTo) ? `الفترة: ${supFrom || '...'} ← ${supTo || '...'}` : 'كل الفترات';
+          const prodRows = productStats.map((s: any) => { const p = products.find(pr => pr.id === s.product_id); return `<tr><td>${escapeHtml(p?.barcode || '—')}</td><td>${escapeHtml(s.name)}</td><td>${formatQty(s.totalQty, s.unit)}</td><td>${s.avgPrice.toFixed(2)}</td><td>${s.lastPrice.toFixed(2)}</td><td>${formatQty(s.currentStock, s.unit)}</td><td>${formatQty(s.sold, s.unit)}</td></tr>`; }).join('');
+          printSupplierReport(`كشف أصناف - ${escapeHtml(selectedSupplierProfile.name)}`, `
+            <h1>${escapeHtml(storeSettings.name)}</h1>
+            <h2>كشف أصناف المورد: ${escapeHtml(selectedSupplierProfile.name)} — ${escapeHtml(selectedSupplierProfile.phone || '')}</h2>
+            <h2>${period}</h2>
+            <h3>تفاصيل الأصناف المشتراة</h3>
+            <table><thead><tr><th>كود الصنف</th><th>اسم المنتج</th><th>إجمالي الكمية</th><th>متوسط الشراء</th><th>آخر شراء</th><th>المتاح بالمخزون</th><th>المباع</th></tr></thead><tbody>${prodRows || '<tr><td colspan=7>لا يوجد</td></tr>'}</tbody></table>`);
         };
 
         // تصدير أصناف المورد المشتراة إلى Excel (يمكن تعديله وإعادة استيراده في فاتورة شراء)
@@ -1893,7 +1897,8 @@ export default function Suppliers() {
                     {(supFrom || supTo) && <button onClick={() => { setSupFrom(''); setSupTo(''); }} className="text-slate-400 hover:text-red-500 px-1">✕</button>}
                   </div>
                   <button onClick={exportSupplierExcel} className="text-emerald-700 bg-emerald-50 hover:bg-emerald-100 px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition"><FileSpreadsheet size={16} /> تصدير Excel</button>
-                  <button onClick={exportSupplierPDF} style={{ backgroundColor: tc }} className="text-white px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 hover:opacity-90 transition"><Download size={16} /> تصدير PDF</button>
+                  <button onClick={exportSupplierFinancialPDF} style={{ backgroundColor: tc }} className="text-white px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 hover:opacity-90 transition"><Download size={16} /> PDF كشف الحساب</button>
+                  <button onClick={exportSupplierProductsPDF} className="text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-4 py-2.5 rounded-2xl font-bold text-sm flex items-center gap-2 transition"><Download size={16} /> PDF كشف الأصناف</button>
                   <button
                     onClick={() => {
                       setSupplierFinancialType(netBalance < -0.009 ? 'collect_from_supplier' : 'pay_to_supplier');
