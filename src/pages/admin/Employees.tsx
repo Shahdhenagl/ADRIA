@@ -40,8 +40,11 @@ export default function Employees() {
     addEmployeeLeave, updateEmployeeLeave, deleteEmployeeLeave,
     addEmployeeDeduction, updateEmployeeDeduction, deleteEmployeeDeduction,
     addEmployeeBonus, deleteEmployeeBonus,
-    addEmployeeAttendance, updateEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut
+    addEmployeeAttendance, updateEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut,
+    adminPermissions
   } = useStore();
+  // مستخدم HR المحدود يرى الموظفين والرواتب والحضور، ويسجل/يعدل الحضور اليدوي فقط.
+  const isHrLimited = adminPermissions !== null && adminPermissions.includes('/admin/hr') && !adminPermissions.includes('/admin/employees');
 
   // ── أساس واحد لـ«النهاردة» و«الشهر الحالي» في كل الصفحة ──────────────────
   // كان فيه أساسين مختلفين: toISOString() (UTC) في المعاملات والإجازات والمبيعات،
@@ -1138,6 +1141,7 @@ export default function Employees() {
   };
 
   const handleDeleteAttendance = async (attId: string) => {
+    if (isHrLimited) return alert('هذا المستخدم يمكنه تسجيل وتعديل الحضور فقط، ولا يملك صلاحية الحذف.');
     if (!confirm('هل تريد حذف سجل الحضور؟ سيُلغى خصم التأخير المرتبط به.')) return;
     await deleteEmployeeAttendance(attId);
   };
@@ -1146,6 +1150,7 @@ export default function Employees() {
   // لازم يقدر يسامح أو يزوّد قبل صرف الراتب. التعديل بينزل على المتبقي على طول
   // لأن getEmployeeMonthStats بتجمع خصومات الحضور من نفس الصفوف دي.
   const handleEditAttendanceFine = async (rec: EmployeeAttendance) => {
+    if (isHrLimited) return alert('لا تملك صلاحية تعديل غرامات التأخير.');
     const emp = employees.find((e) => e.id === rec.employee_id);
     const cur = storeSettings.currency;
     const entered = window.prompt(
@@ -1276,11 +1281,13 @@ export default function Employees() {
   };
 
   const handleDeleteLeave = async (leaveId: string) => {
+    if (isHrLimited) return alert('هذا المستخدم لا يملك صلاحية حذف الإجازات.');
     if (!confirm('هل تريد حذف سجل الإجازة؟')) return;
     await deleteEmployeeLeave(leaveId);
   };
 
   const handleDeleteTransaction = async (transactionId: string) => {
+    if (isHrLimited) return alert('هذا المستخدم لا يملك صلاحية حذف معاملات الموظفين.');
     if (!confirm('هل تريد حذف هذه المعاملة؟ سيتم حذف أثرها من الخزينة والميزانية أيضاً.')) return;
     await deleteEmployeeTransaction(transactionId);
   };
@@ -1709,7 +1716,7 @@ export default function Employees() {
                       <td className="p-6">
                         <div className="flex items-center justify-end gap-2">
                           <button
-                            onClick={() => { if (window.confirm(`حذف خصم ${Number(d.amount).toLocaleString()} ${storeSettings.currency}؟\nهيرجع للمتبقي في راتب شهر ${d.month}.`)) deleteEmployeeDeduction(d.id); }}
+                            onClick={() => { if (isHrLimited) return alert('لا تملك صلاحية حذف الخصومات.'); if (window.confirm(`حذف خصم ${Number(d.amount).toLocaleString()} ${storeSettings.currency}؟\nهيرجع للمتبقي في راتب شهر ${d.month}.`)) deleteEmployeeDeduction(d.id); }}
                             className="p-2 text-slate-400 hover:text-red-500 transition"
                             title="حذف"
                           >
@@ -1761,7 +1768,7 @@ export default function Employees() {
                       <td className="p-6">
                         <div className="flex items-center justify-end gap-2">
                           <button
-                            onClick={() => { if (window.confirm(`حذف مكافأة ${Number(b.amount).toLocaleString()} ${storeSettings.currency}؟\nهتتشال من المتبقي في راتب شهر ${b.month}.`)) deleteEmployeeBonus(b.id); }}
+                            onClick={() => { if (isHrLimited) return alert('لا تملك صلاحية حذف المكافآت.'); if (window.confirm(`حذف مكافأة ${Number(b.amount).toLocaleString()} ${storeSettings.currency}؟\nهتتشال من المتبقي في راتب شهر ${b.month}.`)) deleteEmployeeBonus(b.id); }}
                             className="p-2 text-slate-400 hover:text-red-500 transition"
                             title="حذف"
                           >

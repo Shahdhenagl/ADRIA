@@ -1,5 +1,5 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Package, Settings, LogOut, FileText, Users, BarChart3, Wallet, MessageCircle, CreditCard, Building2, BellRing, WifiOff, Ticket, PieChart, Scissors, Briefcase, Handshake, PiggyBank, ClipboardCheck, FileBarChart, RotateCcw, Landmark, PackageSearch, Menu, X, Network, Printer } from 'lucide-react';
+import { LayoutDashboard, Package, Settings, LogOut, FileText, Users, BarChart3, Wallet, MessageCircle, CreditCard, Building2, BellRing, WifiOff, Ticket, PieChart, Scissors, Briefcase, Handshake, PiggyBank, ClipboardCheck, FileBarChart, RotateCcw, Landmark, PackageSearch, Menu, X, Network, Printer, UserCheck } from 'lucide-react';
 import { useStore } from '../../store/useStore';
 import { useEffect, useState } from 'react';
 
@@ -90,6 +90,7 @@ export default function AdminLayout() {
     { section: 'الموظفين', items: [
       { name: 'إدارة المحاسبين', path: '/admin/cashiers', icon: Users },
       { name: 'الرواتب والموظفين', path: '/admin/employees', icon: Users },
+      { name: 'الموظفون والرواتب والحضور', path: '/admin/hr', icon: UserCheck },
     ]},
     { section: 'الإعدادات', items: [
       { name: 'إعدادات النظام', path: '/admin/settings', icon: Settings },

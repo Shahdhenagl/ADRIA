@@ -9,7 +9,7 @@ const PERM_GROUPS: { section: string; items: [string, string][] }[] = [
   { section: 'العملاء', items: [['/admin/customers', 'قاعدة العملاء'], ['/admin/deferred', 'حسابات الآجل'], ['/admin/whatsapp-campaigns', 'حملات واتساب']] },
   { section: 'الموردين', items: [['/admin/suppliers', 'الموردين والمشتريات']] },
   { section: 'المالية والخزائن', items: [['/admin/finance', 'الخزينة والمصاريف'], ['/admin/payment-accounts', 'كشوف حسابات الوسائل'], ['/admin/savings', 'الخزنة الرئيسية'], ['/admin/budget', 'الميزانية العامة'], ['/admin/financing', 'سلف وتمويل'], ['/admin/managers', 'المدراء والسحوبات'], ['/admin/partners', 'الشركاء']] },
-  { section: 'الموظفين', items: [['/admin/cashiers', 'إدارة المحاسبين'], ['/admin/employees', 'الرواتب والموظفين']] },
+  { section: 'الموظفين', items: [['/admin/cashiers', 'إدارة المحاسبين'], ['/admin/employees', 'الرواتب والموظفين'], ['/admin/hr', 'الموظفون والرواتب والحضور (تسجيل يدوي)']] },
   { section: 'الإعدادات', items: [['/admin/settings', 'إعدادات النظام']] },
 ];
 const ALL_PATHS = PERM_GROUPS.flatMap((g) => g.items.map(([p]) => p));

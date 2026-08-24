@@ -285,6 +285,7 @@ function App() {
             <Route path="discount-barcode-print" element={<DiscountBarcodePrint />} />
             <Route path="held-invoices" element={<HeldInvoices />} />
             <Route path="employees" element={<Employees />} />
+            <Route path="hr" element={<Employees />} />
             <Route path="stock-alerts" element={<StockAlerts />} />
             <Route path="budget" element={<Budget />} />
             <Route path="settings" element={<Settings />} />
