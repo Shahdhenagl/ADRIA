@@ -808,8 +808,26 @@ export default function POS() {
       shopExpenses.filter(inDayRec).filter((e) => e.category === 'تحويل للخزنة الرئيسية').forEach((e) => addM(savingsOutBy, e, 'amount'));
       // تسوية جرد (نقص): فرق سالب بين المعدود والمحسوب — له خانته المستقلة.
       bd.reconcileOut = shopExpenses.filter(inDayRec).filter((e) => isReconcile(e.category)).reduce((s, e) => s + Math.abs(+e.amount || 0), 0);
-      // صافي المحصّل من الحجوزات اليوم = عرابين محصّلة − عرابين مرتجعة (category='حجز').
-      bd.reservationsNet = expensesArr.filter(inDayRec).filter((e) => e.category === 'حجز').reduce((s, e) => s - (Number(e.amount) || 0), 0);
+      // صافي المحصّل من الحجوزات اليوم = عرابين محصّلة − عرابين مرتجعة.
+      // بعد تحويل حجز إلى فاتورة ثم إعادة تعليقه كانت بعض النسخ القديمة تسجل
+      // نفس قيد العربون مرتين. نزيل التكرار المتطابق من العرض فقط؛ لا نحذف
+      // أي سجل من قاعدة البيانات ولا نلمس رصيد الخزنة أو التقفيلات السابقة.
+      const reservationRows = expensesArr.filter(inDayRec).filter((e) => e.category === 'حجز');
+      const seenReservationDeposits = new Set<string>();
+      const uniqueReservationRows = reservationRows.filter((e) => {
+        const amount = Number(e.amount) || 0;
+        // المرتجعات الموجبة لا نزيلها تلقائيًا؛ قد تكون عمليتين شرعيتين.
+        if (amount >= 0) return true;
+        const note = String(e.note || '').trim().replace(/\s+/g, ' ');
+        if (!note) return true;
+        const split = ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6']
+          .map((k) => `${k}:${Number(e[`paid_${k}`]) || 0}`).join('|');
+        const key = `${note}|${Math.abs(amount).toFixed(2)}|${split}`;
+        if (seenReservationDeposits.has(key)) return false;
+        seenReservationDeposits.add(key);
+        return true;
+      });
+      bd.reservationsNet = uniqueReservationRows.reduce((s, e) => s - (Number(e.amount) || 0), 0);
       bd.purchasesTotal = ((purRes.data as any[]) || []).filter((p) => !isMainTreasuryPurchase(p)).filter(inDayRec).reduce((s, p) => s + Math.abs(+p.paid_amount || 0), 0);
       bd.salariesTotal = ((salRes.data as any[]) || []).filter((t) => !isMainTreasuryExpense(t)).filter(inDayRec).reduce((s, t) => s + Math.abs(+t.amount || 0), 0);
       const sum = (o: Record<string, number>) => methods.reduce((s, m) => s + (o[m] || 0), 0);
