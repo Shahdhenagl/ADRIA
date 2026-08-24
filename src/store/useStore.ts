@@ -751,7 +751,7 @@ interface CashierStore {
   heldInvoices: HeldInvoice[];
   loadHeldInvoices: () => Promise<void>;
   /** تعديل بيانات الفاتورة المعلقة مع تصحيح فرق العربون على يوم التعديل. */
-  updateHeldInvoice: (id: string, updates: Partial<Pick<HeldInvoice, 'customer_name' | 'customer_phone' | 'customer_custom_id' | 'items' | 'total' | 'invoice_type' | 'salesperson_id' | 'salesperson_name' | 'notes' | 'deposit' | 'deposit_split' | 'discount_amount' | 'created_at'>>) => Promise<boolean>;
+  updateHeldInvoice: (id: string, updates: Partial<Pick<HeldInvoice, 'customer_name' | 'customer_phone' | 'customer_custom_id' | 'customer_address' | 'shipping_note' | 'items' | 'total' | 'invoice_type' | 'salesperson_id' | 'salesperson_name' | 'notes' | 'deposit' | 'deposit_split' | 'discount_amount' | 'created_at'>>) => Promise<boolean>;
   holdInvoice: (data: {
      customerName?: string;
     customerPhone?: string;
@@ -2626,6 +2626,27 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (!ACTIVE_HELD_STATUSES.includes(status)) { alert('لا يمكن تعديل فاتورة انتهت أو أُلغيت.'); return false; }
     const oldDeposit = Math.max(0, Number(held.deposit) || 0);
     const nextDeposit = Math.max(0, Number(updates.deposit ?? oldDeposit) || 0);
+    // المخزون محجوز بالفعل. عند تعديل الحجز نطبق فرق الكمية فقط:
+    // الزيادة تُخصم من المتاح، والنقصان يعود للمخزون، بلا حركة مالية.
+    if (updates.items) {
+      const oldQty: Record<string, number> = {};
+      const nextQty: Record<string, number> = {};
+      (held.items || []).forEach((i: any) => { oldQty[i.id] = (oldQty[i.id] || 0) + (Number(i.quantity) || 0); });
+      (updates.items || []).forEach((i: any) => { nextQty[i.id] = (nextQty[i.id] || 0) + (Number(i.quantity) || 0); });
+      const ids = new Set([...Object.keys(oldQty), ...Object.keys(nextQty)]);
+      for (const productId of ids) {
+        const delta = (nextQty[productId] || 0) - (oldQty[productId] || 0);
+        if (Math.abs(delta) < 0.0001) continue;
+        const product = state.products.find((p) => p.id === productId);
+        if (!product) { alert(`الصنف ${productId} غير موجود بالمخزون.`); return false; }
+        const nextStock = Number(product.stock_quantity) - delta;
+        if (nextStock < -0.0001) { alert(`الكمية المتاحة من ${product.name} لا تكفي للتعديل.`); return false; }
+        const stockPatch = { stock_quantity: Math.max(0, nextStock), display_quantity: Math.max(0, nextStock) };
+        const { error: stockError } = await supabase.from('products').update(stockPatch).eq('id', productId);
+        if (stockError) { alert('تعذّر تحديث مخزون الصنف: ' + stockError.message); return false; }
+        set((s) => ({ products: s.products.map((p) => p.id === productId ? { ...p, ...stockPatch } : p) }));
+      }
+    }
     const nextTotal = Math.max(0, Number(updates.total ?? held.total) || 0);
     const nextDiscount = Math.max(0, Number(updates.discount_amount ?? held.discount_amount) || 0);
     if (nextDiscount > nextTotal + 0.01) { alert('الخصم لا يمكن أن يكون أكبر من إجمالي الفاتورة.'); return false; }

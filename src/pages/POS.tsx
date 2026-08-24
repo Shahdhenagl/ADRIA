@@ -109,7 +109,7 @@ async function loadDayBudgetSource(dayStr: string, start: Date, end: Date, local
 }
 
 export default function POS() {
-  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, reopenDay, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
+  const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, reopenDay, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, updateHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
   const [lineDiscounts, setLineDiscounts] = useState<Record<string, number>>({});
   const [lineBasePrices, setLineBasePrices] = useState<Record<string, number>>({});
   const setPieceDiscount = (item: any) => {
@@ -919,6 +919,7 @@ export default function POS() {
   const [heldFilter, setHeldFilter] = useState<'all' | 'shop' | HeldStatus>('all');
   const [returningHeld, setReturningHeld] = useState<HeldInvoice | null>(null);
   const [holdBusy, setHoldBusy] = useState(false);
+  const [editingHeldId, setEditingHeldId] = useState<string | null>(null);
   // يظل ثابتًا داخل نفس نموذج الحجز حتى لا تعيد retry إنشاء حجز أو عربون جديد.
   const [holdRequestKey, setHoldRequestKey] = useState('');
   // نموذج حفظ فاتورة معلّقة مع عربون
@@ -1945,8 +1946,49 @@ export default function POS() {
     setShowHoldForm(true);
   };
 
+  const startEditHeld = (held: HeldInvoice) => {
+    if (cart.length > 0 && !window.confirm('سيتم استبدال السلة الحالية بمحتوى الحجز. متابعة؟')) return;
+    const nextCart = (held.items || []).map((item: any) => {
+      const product = products.find((p) => p.id === item.id);
+      return { ...(product || item), ...item, returned_quantity: 0 } as any;
+    });
+    restoreCart(nextCart, held.invoice_type || 'retail', held.salesperson_id ? { id: held.salesperson_id, name: held.salesperson_name || '' } as any : null);
+    setEditingHeldId(held.id);
+    setCustomerName(held.customer_name || '');
+    setCustomerPhone(held.customer_phone || '');
+    setCustomerId(held.customer_custom_id || '');
+    setDeferredNote(held.notes || '');
+    setHoldKind(held.kind || 'shop');
+    setHoldAddress(held.customer_address || '');
+    setHoldShipNote(held.shipping_note || '');
+    setDiscountStr(String(Number(held.discount_amount) || 0));
+    setShowHeldModal(false);
+    setMobileView('cart');
+    alert('تم تحميل الحجز للتعديل. أضف أو غيّر الأصناف ثم اضغط «حفظ تعديل الحجز».');
+  };
+
   const handleHoldInvoice = async () => {
     if (cart.length === 0 || holdBusy) return;
+    if (editingHeldId) {
+      setHoldBusy(true);
+      const ok = await updateHeldInvoice(editingHeldId, {
+        customer_name: customerName,
+        customer_phone: customerPhone,
+        customer_custom_id: customerId,
+        customer_address: holdAddress,
+        shipping_note: holdShipNote,
+        notes: deferredNote,
+        items: cart.map((i: any) => ({ id: i.id, name: i.name, barcode: i.barcode, quantity: i.quantity, sale_price: i.sale_price, purchase_price: i.purchase_price, average_purchase_price: i.average_purchase_price, unit: i.unit, category_id: i.category_id })),
+        total,
+        discount_amount: totalDiscount,
+      });
+      setHoldBusy(false);
+      if (ok) {
+        setEditingHeldId(null); clearCart(); setCustomerName(''); setCustomerPhone(''); setCustomerId(''); setHoldAddress(''); setHoldShipNote(''); setDeferredNote(''); setDiscountStr('');
+        alert('✅ تم تحديث الحجز بنجاح. العربون القديم لم يُسجّل مرة أخرى.');
+      }
+      return;
+    }
     const depositSplit: Record<string, number> = {};
     activePayKeys.forEach((k) => { depositSplit[k] = parseFloat(holdDepositPay[k] || '') || 0; });
     const deposit = activePayKeys.reduce((s, k) => s + depositSplit[k], 0);
@@ -4300,11 +4342,11 @@ export default function POS() {
           </div>
           {perm('held') && (
           <button
-            onClick={openHoldForm}
+            onClick={editingHeldId ? () => setShowHoldForm(true) : openHoldForm}
             disabled={cart.length === 0 || pricesHidden || holdBusy}
             className="w-full mt-2 bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400 hover:bg-orange-100 disabled:opacity-40 disabled:cursor-not-allowed py-3 rounded-2xl font-black flex items-center justify-center gap-2 transition-all text-sm active:scale-95 border border-orange-100 dark:border-orange-900/30"
           >
-            <PauseCircle size={18} /> {holdBusy ? 'جاري الحفظ...' : 'حفظ كفاتورة معلقة'}
+            <PauseCircle size={18} /> {holdBusy ? 'جاري الحفظ...' : (editingHeldId ? 'حفظ تعديل الحجز' : 'حفظ كفاتورة معلقة')}
           </button>
           )}
           <button
@@ -4505,7 +4547,15 @@ export default function POS() {
                   {!customerPhone.trim() && <p className="text-[11px] font-black text-amber-600">⚠️ اكتب موبايل العميل — المندوب محتاجه.</p>}
                 </div>
               )}
-              <div>
+              {editingHeldId && (
+                <div className="space-y-3 bg-indigo-50 dark:bg-indigo-900/20 border border-indigo-100 dark:border-indigo-800/40 rounded-2xl p-4">
+                  <div className="text-sm font-black text-indigo-700 dark:text-indigo-300">تعديل بيانات الحجز</div>
+                  <textarea value={holdAddress} onChange={(e) => setHoldAddress(e.target.value)} placeholder="عنوان العميل / التوصيل" className="w-full bg-white dark:bg-slate-900 border-2 border-transparent focus:border-indigo-500 py-2.5 px-3 rounded-xl outline-none font-bold text-sm resize-none h-20" />
+                  <input value={holdShipNote} onChange={(e) => setHoldShipNote(e.target.value)} placeholder="رقم أو مرجع الحجز / ملاحظة للمندوب" className="w-full bg-white dark:bg-slate-900 border-2 border-transparent focus:border-indigo-500 py-2.5 px-3 rounded-xl outline-none font-bold text-sm" />
+                  <p className="text-[11px] font-bold text-indigo-600 dark:text-indigo-300">العربون الحالي محفوظ ولن يتم تحصيله أو تسجيله مرة أخرى.</p>
+                </div>
+              )}
+              {!editingHeldId && <div>
                 <label className="text-xs font-black text-slate-500 uppercase tracking-widest mb-2 block">العربون المحصّل (اختياري) — يدخل الخزنة</label>
                 <div className="grid grid-cols-2 gap-3">
                   {activePayKeys.map((k) => (
@@ -4522,9 +4572,9 @@ export default function POS() {
                   <span className="text-lg font-black text-orange-600">{holdDepositTotal.toFixed(2)} {storeSettings.currency}</span>
                 </div>
                 {holdDepositTotal > 0 && <div className="text-[11px] font-bold text-slate-400 mt-1">الباقي بعد العربون: {Math.max(0, total - holdDepositTotal).toFixed(2)} {storeSettings.currency} — يتحصّل وقت الإتمام أو يتحط آجل.</div>}
-              </div>
+              </div>}
               <div className="flex gap-3 pt-1">
-                <button onClick={handleHoldInvoice} disabled={holdBusy} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-3.5 rounded-2xl font-black flex items-center justify-center gap-2 transition active:scale-95"><PauseCircle size={18} /> {holdBusy ? 'جاري الحفظ...' : 'تأكيد الحجز'}</button>
+                <button onClick={handleHoldInvoice} disabled={holdBusy} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:opacity-50 text-white py-3.5 rounded-2xl font-black flex items-center justify-center gap-2 transition active:scale-95"><PauseCircle size={18} /> {holdBusy ? 'جاري الحفظ...' : (editingHeldId ? 'حفظ تعديل الحجز' : 'تأكيد الحجز')}</button>
                 <button onClick={() => setShowHoldForm(false)} className="px-5 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-2xl font-black">إلغاء</button>
               </div>
             </div>
@@ -4762,6 +4812,14 @@ export default function POS() {
                             </button>
                           )}
                         </div>
+                      )}
+                      {(h.status || 'held') === 'held' && (
+                        <button
+                          onClick={() => startEditHeld(h)}
+                          className="w-full mb-2 bg-indigo-50 dark:bg-indigo-900/20 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1.5 transition active:scale-95"
+                        >
+                          <Edit2 size={16} /> تعديل الحجز وإضافة/تغيير صنف
+                        </button>
                       )}
                       <div className="flex gap-2">
                         <button
