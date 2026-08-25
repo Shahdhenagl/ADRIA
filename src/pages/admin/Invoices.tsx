@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useRef, useState, useMemo } from 'react';
 import { useStore } from '../../store/useStore';
 import { ArrowRightLeft, Search, User, Printer, CreditCard, FileText, Table as TableIcon, TrendingUp, Calendar, X, Trash2, Archive, Edit2, Eye, Undo2 } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
@@ -33,6 +33,21 @@ export default function Invoices() {
   // المبيعات كأنها مبيعات النهاردة.
   const [dateBasis, setDateBasis] = useState<'invoice' | 'refund' | 'exchange'>('invoice');
   const [selectedMonth, setSelectedMonth] = useState<string>('all');
+  // لمس الشاشة أثناء السحب لا يجب أن يُفسَّر كنقرة على زر داخل الصف.
+  const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
+  const scrollingRef = useRef(false);
+  const markPointerStart = (e: React.PointerEvent) => {
+    pointerStartRef.current = { x: e.clientX, y: e.clientY };
+    scrollingRef.current = false;
+  };
+  const markPointerMove = (e: React.PointerEvent) => {
+    const start = pointerStartRef.current;
+    if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) > 8) scrollingRef.current = true;
+  };
+  const guardedAction = (action: () => void) => {
+    if (scrollingRef.current) return;
+    action();
+  };
   const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
   const [selectedCashier, setSelectedCashier] = useState<string>('all');
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>('all');
@@ -527,7 +542,7 @@ export default function Invoices() {
         </div>
       </div>
 
-      <div id="invoices-table" className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[500px]">
+      <div id="invoices-table" onPointerDownCapture={markPointerStart} onPointerMoveCapture={markPointerMove} onPointerUpCapture={() => { pointerStartRef.current = null; }} className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden flex flex-col min-h-[500px]">
         {/* Advanced Filters */}
         <div className="p-5 border-b border-slate-100 bg-slate-50 grid grid-cols-1 xl:grid-cols-5 gap-4 items-center">
           <div className="relative xl:col-span-2">
@@ -935,14 +950,14 @@ export default function Invoices() {
                       <td className="p-4 text-center">
                         <div className="flex items-center justify-center gap-2">
                           <button
-                            onClick={() => window.open(`/view-invoice/${order.id}`, '_blank')}
+                            onClick={() => guardedAction(() => window.open(`/view-invoice/${order.id}`, '_blank'))}
                             className="p-2 rounded-lg bg-slate-50 text-slate-600 hover:bg-slate-200 transition-all shadow-sm border border-slate-100"
                             title="عرض تفاصيل الفاتورة"
                           >
                             <Eye size={18} />
                           </button>
                           <button 
-                            onClick={() => handlePrint(order)}
+                            onClick={() => guardedAction(() => handlePrint(order))}
                             style={{ backgroundColor: storeSettings.themeColor + '10', color: storeSettings.themeColor }}
                             className="p-2 rounded-lg hover:bg-opacity-20 transition-all shadow-sm border border-transparent hover:border-current"
                             title="طباعة الفاتورة"
@@ -951,7 +966,7 @@ export default function Invoices() {
                           </button>
                           {order.customer?.phone && (
                             <button
-                              onClick={() => handleSendWhatsApp(order)}
+                              onClick={() => guardedAction(() => handleSendWhatsApp(order))}
                               className="p-2 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 transition-all shadow-sm border border-emerald-100"
                               title="إرسال الفاتورة عبر واتساب"
                             >
@@ -962,7 +977,7 @@ export default function Invoices() {
                           )}
                           {!order.is_deleted && order.type === 'sale' && !String(order.id).startsWith('OFF-') && (
                             <button
-                              onClick={() => setEditingOrder(order)}
+                              onClick={() => guardedAction(() => setEditingOrder(order))}
                               className="p-2 rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100 transition-all shadow-sm border border-indigo-100"
                               title="تعديل الفاتورة"
                             >
@@ -972,7 +987,7 @@ export default function Invoices() {
                           {/* بيظهر بس لو على الفاتورة مرتجع فعلاً */}
                           {!order.is_deleted && (order.items || []).some((it: any) => (Number(it.returned_quantity) || 0) > 0) && (
                             <button
-                              onClick={() => handleUndoReturn(order)}
+                              onClick={() => guardedAction(() => handleUndoReturn(order))}
                               className="p-2 rounded-lg bg-amber-50 text-amber-600 hover:bg-amber-100 transition-all shadow-sm border border-amber-100"
                               title="إلغاء المرتجع (يرجّع الفاتورة لحالتها قبل الإرجاع)"
                             >
@@ -981,7 +996,7 @@ export default function Invoices() {
                           )}
                           {!order.is_deleted && (
                             <button
-                              onClick={() => handleDeleteOrder(order)}
+                              onClick={() => guardedAction(() => handleDeleteOrder(order))}
                               className="p-2 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 transition-all shadow-sm border border-red-100"
                               title="حذف الفاتورة"
                             >
