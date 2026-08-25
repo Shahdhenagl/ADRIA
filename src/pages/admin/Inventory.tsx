@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef } from 'react';
 import { useStore, type Product } from '../../store/useStore';
-import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight, Layers, Trash2, History } from 'lucide-react';
+import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight, Layers, Trash2, History, Users } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { splitStockValueBySource, totalIntakeValue, intakeSourceLabel } from '../../utils/stockIntake';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
@@ -171,6 +171,27 @@ export default function Inventory() {
     () => products.find(p => p.id === movementProductId) || null,
     [products, movementProductId]
   );
+  const productSupplierHistory = useMemo(() => {
+    if (!movementProductId) return [] as Array<{ id: string; name: string; invoiceCount: number; quantity: number; totalValue: number; lastPrice: number; lastDate: string | null }>;
+    const grouped = new Map<string, { id: string; name: string; invoiceCount: number; quantity: number; totalValue: number; lastPrice: number; lastDate: string | null; invoiceIds: Set<string> }>();
+    purchaseInvoices.forEach((inv: any) => {
+      const supplier = suppliers.find((s: any) => s.id === inv.supplier_id);
+      if (!supplier) return;
+      (inv.items || []).forEach((item: any) => {
+        if (item.product_id !== movementProductId) return;
+        const qty = Number(item.quantity) || 0;
+        const price = Number(item.purchase_price) || 0;
+        const key = supplier.id;
+        const row = grouped.get(key) || { id: supplier.id, name: supplier.name, invoiceCount: 0, quantity: 0, totalValue: 0, lastPrice: 0, lastDate: null, invoiceIds: new Set<string>() };
+        row.quantity += qty;
+        row.totalValue += qty * price;
+        row.invoiceIds.add(String(inv.id));
+        if (!row.lastDate || new Date(inv.created_at).getTime() > new Date(row.lastDate).getTime()) { row.lastDate = inv.created_at; row.lastPrice = price; }
+        grouped.set(key, row);
+      });
+    });
+    return Array.from(grouped.values()).map(({ invoiceIds, ...row }) => ({ ...row, invoiceCount: invoiceIds.size })).sort((a, b) => new Date(b.lastDate || 0).getTime() - new Date(a.lastDate || 0).getTime());
+  }, [movementProductId, purchaseInvoices, suppliers]);
 
   const openMovementModal = async (product: Product) => {
     setMovementProductId(product.id);
@@ -1536,6 +1557,20 @@ export default function Inventory() {
                 </div>
               )}
 
+              <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-4 mb-4">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <h4 className="font-black text-indigo-800 flex items-center gap-2"><Users size={18} /> الموردون الذين تم الشراء منهم</h4>
+                  <span className="text-xs font-bold text-indigo-500">{productSupplierHistory.length} مورد</span>
+                </div>
+                {productSupplierHistory.length === 0 ? (
+                  <p className="text-sm font-bold text-slate-400">لم يتم تسجيل فاتورة شراء لهذا المنتج حتى الآن.</p>
+                ) : (
+                  <div className="overflow-x-auto"><table className="w-full text-sm">
+                    <thead><tr className="text-right text-slate-500 border-b border-indigo-100"><th className="p-2">المورد</th><th className="p-2 text-center">الفواتير</th><th className="p-2 text-center">إجمالي الكمية</th><th className="p-2 text-center">متوسط التكلفة</th><th className="p-2 text-center">آخر سعر</th><th className="p-2 text-center">آخر شراء</th></tr></thead>
+                    <tbody>{productSupplierHistory.map((row) => <tr key={row.id} className="border-b border-indigo-50 last:border-0"><td className="p-2 font-black text-slate-800">{row.name}</td><td className="p-2 text-center font-bold">{row.invoiceCount}</td><td className="p-2 text-center font-black">{formatQty(row.quantity, movementProduct?.unit || 'قطعة')}</td><td className="p-2 text-center font-bold">{fmtMoney(row.quantity ? row.totalValue / row.quantity : 0)} {storeSettings.currency}</td><td className="p-2 text-center font-bold">{fmtMoney(row.lastPrice)} {storeSettings.currency}</td><td className="p-2 text-center text-xs font-bold">{row.lastDate ? new Date(row.lastDate).toLocaleDateString('ar-EG', { calendar: 'gregory' }) : '—'}</td></tr>)}</tbody>
+                  </table></div>
+                )}
+              </div>
               <div className="overflow-x-auto border border-slate-100 rounded-2xl">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 text-slate-500">
