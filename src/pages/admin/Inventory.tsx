@@ -29,6 +29,7 @@ export default function Inventory() {
   const [newCategoryName, setNewCategoryName] = useState('');
   const [showCatForm, setShowCatForm] = useState(false);
   const [showLowStock, setShowLowStock] = useState(false);
+  const [showOutOfStock, setShowOutOfStock] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
   
@@ -120,7 +121,8 @@ export default function Inventory() {
   const filteredProducts = products.filter(p => {
     const normalizedName = normalizeArabic(p.name);
     const matchesSearch = searchTerms.length === 0 || searchTerms.every(term => normalizedName.includes(term)) || (p.barcode && p.barcode.includes(searchQuery));
-    const matchesStock = showLowStock ? qtyOf(p) < 5 : true;
+    const availableQty = qtyOf(p);
+    const matchesStock = showOutOfStock ? availableQty <= 0 : (showLowStock ? availableQty > 0 && availableQty < 5 : true);
     const matchesHidden = showHidden ? p.is_hidden === true : !p.is_hidden; // showHidden=true → المخفيين فقط
     const matchesCategory = selectedCategory === 'all' || p.category_id === selectedCategory;
     const matchesSeason = seasonFilter === 'all' || p.season === seasonFilter;
@@ -133,7 +135,8 @@ export default function Inventory() {
     && (selectedCategory === 'all' || p.category_id === selectedCategory)
     && (seasonFilter === 'all' || p.season === seasonFilter));
   const totalStockValue = statsBase.reduce((acc, p) => acc + (qtyOf(p) * (p.average_purchase_price || p.purchase_price || 0)), 0);
-  const lowStockCount = statsBase.filter(p => qtyOf(p) < 5).length;
+  const lowStockCount = statsBase.filter(p => qtyOf(p) > 0 && qtyOf(p) < 5).length;
+  const outOfStockCount = statsBase.filter(p => qtyOf(p) <= 0).length;
   const totalItems = statsBase.reduce((acc, p) => acc + qtyOf(p), 0);
 
   // ── مخزون دخل بدون فاتورة شراء (db/59) ──────────────────────────────
@@ -927,8 +930,24 @@ export default function Inventory() {
           </div>
         </div>
 
+        <div
+          onClick={() => { setShowOutOfStock(!showOutOfStock); setShowLowStock(false); }}
+          className={`bg-white rounded-[32px] p-6 shadow-sm border flex items-center gap-6 group hover:border-slate-900 transition-all cursor-pointer ${showOutOfStock ? 'border-slate-900 bg-slate-50 ring-4 ring-slate-100' : 'border-slate-100'}`}
+        >
+          <div className="w-16 h-16 bg-slate-100 rounded-2xl flex items-center justify-center text-slate-800 group-hover:scale-110 transition-transform">
+            <Box size={32} />
+          </div>
+          <div>
+            <p className="text-slate-400 font-bold text-sm">منتجات نفذت</p>
+            <h3 className="text-2xl font-black text-slate-800">
+              {outOfStockCount} <span className="text-sm font-normal text-slate-400">منتج</span>
+            </h3>
+            <p className="text-[11px] font-bold text-slate-400 mt-1">اضغط لعرض المنتجات ذات الرصيد صفر</p>
+          </div>
+        </div>
+
         <div 
-          onClick={() => setShowLowStock(!showLowStock)}
+          onClick={() => { setShowLowStock(!showLowStock); setShowOutOfStock(false); }}
           className={`bg-white rounded-[32px] p-6 shadow-sm border flex items-center gap-6 group hover:border-red-200 transition-all cursor-pointer ${showLowStock ? 'border-red-500 bg-red-50/20 ring-4 ring-red-50' : 'border-slate-100'}`}
         >
           <div className="w-16 h-16 bg-red-50 rounded-2xl flex items-center justify-center text-red-600 group-hover:scale-110 transition-transform">
