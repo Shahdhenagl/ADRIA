@@ -75,15 +75,20 @@ export default function Invoices() {
       ? [{name: order.notes || 'سداد مديونية سابقة', quantity: 1, sale_price: order.paid_amount}] 
       : order.items;
 
-    const itemsHtml = cart.map((item: any, index: number) =>
-      `<tr>
+    const itemsHtml = cart.map((item: any, index: number) => {
+      const finalPrice = Number(item.sale_price) || 0;
+      const originalPrice = Number(item.original_sale_price ?? item.products?.sale_price ?? finalPrice) || finalPrice;
+      const unitDiscount = Math.max(0, originalPrice - finalPrice);
+      const discountLine = unitDiscount > 0.009 ? `<div style="color:#b91c1c;font-size:8px;font-weight:900;">خصم القطعة: -${unitDiscount.toFixed(2)} ${storeSettings.currency}</div>` : '';
+      const priceLine = unitDiscount > 0.009 ? `<div style="font-size:8px;color:#555;">قبل: ${originalPrice.toFixed(2)}</div><div style="font-weight:900;">بعد: ${finalPrice.toFixed(2)}</div>${discountLine}` : `${finalPrice.toFixed(2)}`;
+      return `<tr>
         <td style="text-align:center;">${index + 1}</td>
         <td style="text-align:right;font-weight:bold;">${escapeHtml(item.name)}${item.returned_quantity > 0 ? ` <span style="color:red;font-size:8px;">(مرتجع: ${item.returned_quantity})</span>` : ''}</td>
         <td style="text-align:center;">${item.quantity}</td>
-        <td style="text-align:center;">${item.sale_price.toFixed(2)}</td>
-        <td style="text-align:left;font-weight:bold;">${(item.sale_price * item.quantity).toFixed(2)}</td>
-      </tr>`
-    ).join('');
+        <td style="text-align:center;line-height:1.25;">${priceLine}</td>
+        <td style="text-align:left;font-weight:bold;">${(finalPrice * (Number(item.quantity) || 0)).toFixed(2)}</td>
+      </tr>`;
+    }).join('');
 
     const invoiceUrl = `${window.location.origin}/view-invoice/${order.id}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(invoiceUrl)}`;

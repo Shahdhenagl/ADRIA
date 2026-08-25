@@ -2219,7 +2219,11 @@ export const useStore = create<CashierStore>((set, get) => ({
 
   updatePrice: (productId, price) =>
     set((state) => ({
-      cart: state.cart.map((i) => (i.id === productId ? { ...i, sale_price: Math.max(0, Number(price) || 0) } : i))
+      cart: state.cart.map((i) => {
+        if (i.id !== productId) return i;
+        const nextPrice = Math.max(0, Number(price) || 0);
+        return { ...i, original_sale_price: Number((i as any).original_sale_price ?? i.sale_price) || i.sale_price, sale_price: nextPrice };
+      })
     })),
 
   clearCart: () => set({ cart: [] }),
@@ -2489,9 +2493,9 @@ export const useStore = create<CashierStore>((set, get) => ({
         returned_quantity: 0,
         sale_price: item.sale_price,
         purchase_price: item.average_purchase_price || item.purchase_price,
-        original_sale_price: item.sale_price,
+        original_sale_price: Number((item as any).original_sale_price ?? item.sale_price) || item.sale_price,
         discount_type: couponCode ? (state.coupons.find((c) => c.code === couponCode)?.discount_type || 'fixed') : 'fixed',
-        discount_value: discountAmount || 0,
+        discount_value: couponCode ? (discountAmount || 0) : Math.max(0, (Number((item as any).original_sale_price ?? item.sale_price) || item.sale_price) - item.sale_price),
       }));
       const { error: itemsError } = await supabase.from('order_items').insert(itemsPayload);
       if (itemsError) {

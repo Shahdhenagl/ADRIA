@@ -54,8 +54,9 @@ export default function PublicInvoice() {
             name: i.product_name || i.products?.name || 'منتج غير معروف',
             quantity: i.quantity,
             sale_price: i.sale_price,
-            regular_price: i.products?.sale_price,
-            discount_price: i.products?.discount_price,
+            regular_price: i.original_sale_price ?? i.products?.sale_price,
+            discount_price: i.sale_price,
+            unit_discount: Math.max(0, Number(i.original_sale_price ?? i.products?.sale_price ?? i.sale_price) - Number(i.sale_price || 0)),
             returned_quantity: i.returned_quantity || 0,
           }));
 
@@ -452,8 +453,8 @@ export default function PublicInvoice() {
                     <td className="p-4 font-black text-slate-800 text-sm">{item.name}</td>
                     {!isPayment && <td className="p-4 text-center font-black text-slate-800">{item.quantity}</td>}
                     <td className="p-4 text-center font-bold text-slate-600 text-xs">
-                      {(item as any).regular_price && ((item as any).discount_price || 0) > 0 && Math.abs(item.sale_price - ((item as any).discount_price || 0)) < 0.01 && (item as any).regular_price > item.sale_price ? (
-                        <span className="inline-flex items-center gap-1"><span className="line-through text-slate-400">{(item as any).regular_price.toFixed(2)}</span><span className="text-emerald-600 font-black">{item.sale_price.toFixed(2)}</span></span>
+                      {(item as any).unit_discount > 0.009 && (item as any).regular_price > item.sale_price ? (
+                        <span className="inline-flex flex-col items-center leading-tight gap-0.5"><span className="line-through text-slate-400 text-xs">قبل: {(item as any).regular_price.toFixed(2)}</span><span className="text-emerald-600 font-black">بعد: {item.sale_price.toFixed(2)}</span><span className="text-rose-600 text-xs font-black">خصم القطعة: -{(item as any).unit_discount.toFixed(2)}</span></span>
                       ) : item.sale_price.toFixed(2)}
                     </td>
                     <td className="p-4 text-left font-black text-slate-900 text-sm">{ (item.quantity * item.sale_price).toFixed(2) }</td>
