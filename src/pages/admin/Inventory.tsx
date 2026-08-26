@@ -809,12 +809,19 @@ export default function Inventory() {
       return alert(`الكمية (${qty}) أكبر من مخزون «${from.name}» المتاح (${from.stock_quantity}).`);
     try {
       setSwapBusy(true);
-      const fromNewStock = (Number(from.stock_quantity) || 0) - qty;
-      const fromNewDisplay = Math.min(Number(from.display_quantity) || 0, fromNewStock);
-      const toNewStock = (Number(to.stock_quantity) || 0) + qty;
+      const fromStock = Number(from.stock_quantity) || 0;
+      const fromDisplay = Math.min(Number(from.display_quantity) || 0, fromStock);
+      const fromNewStock = fromStock - qty;
+      // نحافظ على مكان القطع أثناء النقل: ننقل من المحل أولاً، ثم من المستودع إذا لزم.
+      const displayTransfer = Math.min(qty, fromDisplay);
+      const fromNewDisplay = Math.max(0, fromDisplay - displayTransfer);
+      const toStock = Number(to.stock_quantity) || 0;
+      const toDisplay = Math.min(Number(to.display_quantity) || 0, toStock);
+      const toNewStock = toStock + qty;
+      const toNewDisplay = Math.min(toNewStock, toDisplay + displayTransfer);
       // skipIntakeLog: الاستبدال نقل بين منتجين — مش دخول مخزون جديد، فمايتقيّدش في سجل «بدون شراء».
       await updateProduct(from.id, { stock_quantity: fromNewStock, display_quantity: fromNewDisplay }, { skipIntakeLog: true });
-      await updateProduct(to.id, { stock_quantity: toNewStock }, { skipIntakeLog: true });
+      await updateProduct(to.id, { stock_quantity: toNewStock, display_quantity: toNewDisplay }, { skipIntakeLog: true });
       // تسجيل الحركة في تعديلات المخزون (للمتابعة)
       try {
         const { supabase } = await import('../../lib/supabase');
@@ -825,7 +832,7 @@ export default function Inventory() {
         ]);
       } catch (e) { console.warn('تعذّر تسجيل حركة الاستبدال', e); }
       alert(`تم الاستبدال ✅\n«${from.name}»: ${from.stock_quantity} ← ${fromNewStock}\n«${to.name}»: ${to.stock_quantity} ← ${toNewStock}`);
-      setShowSwapModal(false); setSwapFromId(''); setSwapToId(''); setSwapQty('');
+      setShowSwapModal(false); setSwapFromId(''); setSwapToId(''); setSwapFromSearch(''); setSwapToSearch(''); setSwapQty('');
     } catch (e) {
       console.error('Swap error:', e); alert('تعذّر تنفيذ الاستبدال.');
     } finally {
