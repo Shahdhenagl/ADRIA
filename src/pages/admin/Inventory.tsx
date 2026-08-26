@@ -80,6 +80,8 @@ export default function Inventory() {
   const [quickMovementSearch, setQuickMovementSearch] = useState('');
   const [swapFromId, setSwapFromId] = useState('');
   const [swapToId, setSwapToId] = useState('');
+  const [swapFromSearch, setSwapFromSearch] = useState('');
+  const [swapToSearch, setSwapToSearch] = useState('');
   const [swapQty, setSwapQty] = useState('');
   const [swapBusy, setSwapBusy] = useState(false);
   const [formData, setFormData] = useState({
@@ -786,6 +788,10 @@ export default function Inventory() {
   // استبدال مخزون: ينقص من منتج ويزيد في منتج آخر بنفس سعر البيع (قيمة المخزون لا تتأثر).
   const swapFrom = products.find(p => p.id === swapFromId);
   const swapTo = products.find(p => p.id === swapToId);
+  const searchableProducts = (items: Product[], query: string) => {
+    const q = normalizeArabic(query.trim());
+    return items.filter(p => !p.is_hidden && (!q || normalizeArabic(p.name).includes(q) || String(p.barcode || '').includes(query.trim()))).slice(0, 30);
+  };
   // المنتجات المسموح الاستبدال إليها = نفس سعر البيع تماماً (وغير المنتج المصدر ومش مخفية)
   const swapToCandidates = swapFrom
     ? products.filter(p => p.id !== swapFrom.id && !p.is_hidden && (Number(p.sale_price) || 0) === (Number(swapFrom.sale_price) || 0))
@@ -1418,26 +1424,18 @@ export default function Inventory() {
               {/* المنتج الناقص */}
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">المنتج اللي هينقص من المخزون <span className="text-red-500">*</span></label>
-                <select value={swapFromId} onChange={e => { setSwapFromId(e.target.value); setSwapToId(''); }} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-orange-400 focus:outline-none">
-                  <option value="">-- اختر المنتج --</option>
-                  {products.filter(p => !p.is_hidden).map(p => (
-                    <option key={p.id} value={p.id}>{p.name} — {p.barcode || 'بدون كود'} — {p.sale_price} {storeSettings.currency} (متاح {formatQty(p.stock_quantity, p.unit)})</option>
-                  ))}
-                </select>
+                <input value={swapFromSearch} onChange={e => { setSwapFromSearch(e.target.value); setSwapFromId(''); setSwapToId(''); setSwapToSearch(''); }} placeholder="اكتب اسم المنتج أو الباركود..." className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-orange-400 focus:outline-none" />
+                {swapFromSearch && !swapFrom && <div className="mt-2 max-h-40 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">{searchableProducts(products, swapFromSearch).map(p => <button type="button" key={p.id} onClick={() => { setSwapFromId(p.id); setSwapFromSearch(`${p.name} — ${p.barcode || 'بدون كود'}`); setSwapToId(''); setSwapToSearch(''); }} className="w-full text-right px-3 py-2 hover:bg-orange-50 border-b last:border-0 text-sm"><b>{p.name}</b><span className="block text-xs text-slate-500">كود: {p.barcode || 'بدون كود'} · متاح: {formatQty(p.stock_quantity, p.unit)} · سعر البيع: {p.sale_price} {storeSettings.currency}</span></button>)}{searchableProducts(products, swapFromSearch).length === 0 && <p className="p-3 text-xs text-red-500 font-bold">لا توجد نتائج.</p>}</div>}
+                {swapFrom && <p className="text-xs text-emerald-600 mt-1 font-bold">تم اختيار: {swapFrom.name} · متاح {formatQty(swapFrom.stock_quantity, swapFrom.unit)}</p>}
               </div>
 
               {/* المنتج الزائد — نفس سعر البيع فقط */}
               <div>
                 <label className="block text-sm font-bold text-slate-700 mb-1">المنتج اللي هيزيد في المخزون <span className="text-red-500">*</span></label>
-                <select value={swapToId} onChange={e => setSwapToId(e.target.value)} disabled={!swapFrom} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-orange-400 focus:outline-none disabled:opacity-50">
-                  <option value="">{swapFrom ? '-- اختر منتج بنفس السعر --' : 'اختر المنتج الناقص أولاً'}</option>
-                  {swapToCandidates.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} — {p.barcode || 'بدون كود'} — {p.sale_price} {storeSettings.currency} (متاح {formatQty(p.stock_quantity, p.unit)})</option>
-                  ))}
-                </select>
-                {swapFrom && swapToCandidates.length === 0 && (
-                  <p className="text-xs text-red-500 mt-1 font-bold">لا يوجد منتج آخر بنفس سعر البيع ({swapFrom.sale_price} {storeSettings.currency}).</p>
-                )}
+                <input value={swapToSearch} onChange={e => { setSwapToSearch(e.target.value); setSwapToId(''); }} disabled={!swapFrom} placeholder={swapFrom ? 'اكتب اسم المنتج أو الباركود...' : 'اختر المنتج الناقص أولاً'} className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-orange-400 focus:outline-none disabled:opacity-50" />
+                {swapToSearch && !swapTo && swapFrom && <div className="mt-2 max-h-40 overflow-y-auto rounded-xl border border-slate-200 bg-white shadow-sm">{searchableProducts(swapToCandidates, swapToSearch).map(p => <button type="button" key={p.id} onClick={() => { setSwapToId(p.id); setSwapToSearch(`${p.name} — ${p.barcode || 'بدون كود'}`); }} className="w-full text-right px-3 py-2 hover:bg-orange-50 border-b last:border-0 text-sm"><b>{p.name}</b><span className="block text-xs text-slate-500">كود: {p.barcode || 'بدون كود'} · متاح: {formatQty(p.stock_quantity, p.unit)} · سعر البيع: {p.sale_price} {storeSettings.currency}</span></button>)}{searchableProducts(swapToCandidates, swapToSearch).length === 0 && <p className="p-3 text-xs text-red-500 font-bold">لا توجد نتائج بنفس سعر البيع.</p>}</div>}
+                {swapTo && <p className="text-xs text-emerald-600 mt-1 font-bold">تم اختيار: {swapTo.name} · متاح {formatQty(swapTo.stock_quantity, swapTo.unit)}</p>}
+                {swapFrom && swapToCandidates.length === 0 && <p className="text-xs text-red-500 mt-1 font-bold">لا يوجد منتج آخر بنفس سعر البيع ({swapFrom.sale_price} {storeSettings.currency}).</p>}
               </div>
 
               {/* الكمية */}
