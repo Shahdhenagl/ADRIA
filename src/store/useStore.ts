@@ -6399,7 +6399,8 @@ setupRealtime: () => {
       invoice_id: newInvoiceId,
       product_id: item.product_id,
       quantity: item.quantity,
-      purchase_price: item.purchase_price
+      purchase_price: item.purchase_price,
+      to_display: Math.max(0, Math.min(Number(item.to_display) || 0, Number(item.quantity) || 0))
     }));
 
     if (itemsToInsert.length > 0) {
@@ -6503,18 +6504,20 @@ setupRealtime: () => {
     const oldItems = oldInvoice.items || [];
     
     // Group differences by product_id
-    const productDeltas: Record<string, { oldQty: number; oldValue: number; newQty: number; newValue: number; newPrice?: number }> = {};
+    const productDeltas: Record<string, { oldQty: number; oldValue: number; oldDisplay: number; newQty: number; newValue: number; newDisplay: number; newPrice?: number }> = {};
     
     oldItems.forEach(item => {
-      if (!productDeltas[item.product_id]) productDeltas[item.product_id] = { oldQty: 0, oldValue: 0, newQty: 0, newValue: 0 };
+      if (!productDeltas[item.product_id]) productDeltas[item.product_id] = { oldQty: 0, oldValue: 0, oldDisplay: 0, newQty: 0, newValue: 0, newDisplay: 0 };
       productDeltas[item.product_id].oldQty += item.quantity;
       productDeltas[item.product_id].oldValue += (item.quantity * item.purchase_price);
+      productDeltas[item.product_id].oldDisplay += Math.max(0, Math.min(Number(item.to_display) || 0, Number(item.quantity) || 0));
     });
 
     items.forEach(item => {
-      if (!productDeltas[item.product_id]) productDeltas[item.product_id] = { oldQty: 0, oldValue: 0, newQty: 0, newValue: 0 };
+      if (!productDeltas[item.product_id]) productDeltas[item.product_id] = { oldQty: 0, oldValue: 0, oldDisplay: 0, newQty: 0, newValue: 0, newDisplay: 0 };
       productDeltas[item.product_id].newQty += item.quantity;
       productDeltas[item.product_id].newValue += (item.quantity * item.purchase_price);
+      productDeltas[item.product_id].newDisplay += Math.max(0, Math.min(Number(item.to_display) || 0, Number(item.quantity) || 0));
       productDeltas[item.product_id].newPrice = item.purchase_price;
     });
 
@@ -6528,6 +6531,8 @@ setupRealtime: () => {
         const currentTotalValue = currentStock * currentAvgPrice;
 
         const newStock = Math.max(0, currentStock - delta.oldQty + delta.newQty);
+        const currentDisplay = Math.min(Number(product.display_quantity) || 0, currentStock);
+        const newDisplay = Math.max(0, Math.min(newStock, currentDisplay - delta.oldDisplay + delta.newDisplay));
         const adjustedTotalValue = Math.max(0, currentTotalValue - delta.oldValue + delta.newValue);
         const newAvgPrice = newStock > 0 ? adjustedTotalValue / newStock : 0;
         
@@ -6535,6 +6540,7 @@ setupRealtime: () => {
 
         await supabase.from('products').update({
           stock_quantity: newStock,
+          display_quantity: newDisplay,
           average_purchase_price: newAvgPrice,
           purchase_price: finalPurchasePrice
         }).eq('id', productId);
@@ -6542,6 +6548,7 @@ setupRealtime: () => {
         updatedProducts[productIndex] = {
           ...product,
           stock_quantity: newStock,
+          display_quantity: newDisplay,
           average_purchase_price: newAvgPrice,
           purchase_price: finalPurchasePrice
         };
@@ -6581,7 +6588,8 @@ setupRealtime: () => {
       invoice_id: invoiceId,
       product_id: item.product_id,
       quantity: item.quantity,
-      purchase_price: item.purchase_price
+      purchase_price: item.purchase_price,
+      to_display: Math.max(0, Math.min(Number(item.to_display) || 0, Number(item.quantity) || 0))
     }));
 
     if (itemsToInsert.length > 0) {
