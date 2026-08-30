@@ -114,13 +114,20 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
     ).slice(0, 5);
   }, [searchQuery, products]);
 
+  const effectiveSalePrice = (product: Product) => {
+    const sale = Number(product.sale_price) || 0;
+    const discount = Number(product.discount_price) || 0;
+    return discount > 0 && discount < sale ? discount : sale;
+  };
+
   const handleAddProduct = (product: Product) => {
+    const price = effectiveSalePrice(product);
     setCart(prev => {
       const existing = prev.find(p => p.id === product.id);
       if (existing) {
-        return prev.map(p => p.id === product.id ? { ...p, quantity: p.quantity + 1 } : p);
+        return prev.map(p => p.id === product.id ? { ...p, quantity: p.quantity + 1, sale_price: price } : p);
       }
-      return [...prev, { ...product, quantity: 1, returned_quantity: 0 }];
+      return [...prev, { ...product, sale_price: price, quantity: 1, returned_quantity: 0 }];
     });
     setSearchQuery('');
   };
@@ -193,7 +200,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   const splitOk = settleTotal < 0.01 || Math.abs(splitRemaining) < 0.01;
   const settleMethod = primaryMethod_(effectiveSplit as any);
 
-  const printExchangeReceipt = () => {
+  const printExchangeReceipt = async () => {
     const cur = storeSettings.currency;
     const date = new Date().toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     const rows = (items: OrderItem[]) => items.map(i => `<tr><td style="text-align:right;font-weight:700;">${escapeHtml(i.name)}</td><td style="text-align:center;">${i.quantity}</td><td style="text-align:left;">${(i.quantity * (i.sale_price || 0)).toFixed(2)}</td></tr>`).join('');
@@ -243,7 +250,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       ${(() => { const b = buildPagesQrBlock(storeSettings); return b ? `<div class="qr-row">${b}</div>` : ''; })()}
       <div class="ft">شكراً لتعاملكم معنا</div>
     </div><script>window.onload=()=>{setTimeout(()=>{window.print();},400);}</script></body></html>`;
-    void printDocument('invoice', html);
+    await printDocument('invoice', html);
   };
 
   const handleSave = async () => {
@@ -352,7 +359,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
           // عشان الشاشات القديمة تفضل شغالة من غير تعديل.
           history: previousExchanges,
         });
-        printExchangeReceipt();
+        await printExchangeReceipt();
       }
       onClose();
     } else {
@@ -446,7 +453,10 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                       <div className="font-bold text-slate-800">{product.name}</div>
                       <div className="text-xs text-slate-500">متاح: {product.stock_quantity}</div>
                     </div>
-                    <div className="font-bold text-indigo-600">{product.sale_price} {storeSettings.currency}</div>
+                    <div className="text-left font-bold">
+                      {effectiveSalePrice(product) < (Number(product.sale_price) || 0) && <div className="text-xs text-slate-400 line-through">{product.sale_price}</div>}
+                      <div className="text-indigo-600">{effectiveSalePrice(product)} {storeSettings.currency}</div>
+                    </div>
                   </button>
                 ))}
               </div>
@@ -531,7 +541,10 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                     <tbody className="divide-y divide-slate-100">
                       {cart.map(item => (
                         <tr key={item.id}>
-                          <td className="p-3 font-bold text-slate-800">{item.name}</td>
+                          <td className="p-3 font-bold text-slate-800">
+                            {item.name}
+                            {effectiveSalePrice(products.find(p => p.id === item.id) || item as any) < (Number((products.find(p => p.id === item.id) || item as any).sale_price) || 0) && <div className="text-[11px] text-emerald-600 font-bold">خصم: {((Number((products.find(p => p.id === item.id) || item as any).sale_price) || 0) - Number(item.sale_price || 0)).toFixed(2)} {storeSettings.currency}</div>}
+                          </td>
                           <td className="p-3">
                             <div className="flex items-center justify-center gap-2">
                               <button onClick={() => handleUpdateQuantity(item.id, -1)} className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded"><Minus size={16} /></button>
