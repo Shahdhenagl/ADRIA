@@ -136,6 +136,24 @@ export default function Reports() {
   const sales = useMemo(() => orders.filter((o: any) => !o.is_deleted && o.type === 'sale' && inRange(o.date)).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()), [orders, from, to]);
   const salesTotals = useMemo(() => sales.reduce((acc: any, o: any) => { acc.total += effectiveTotalOf(o); acc.paid += originalPaidOf(o); acc.profit += profitOf(o); return acc; }, { total: 0, paid: 0, profit: 0 }), [sales, orders]);
 
+  // ملخص ربحية الفترة: المشتريات النقدية ليست مصروفًا بالكامل؛ تكلفة البضاعة
+  // المباعة محسوبة داخل ربح الفواتير، ونضيف فقط المصروفات التشغيلية والرواتب.
+  const financialTotals = useMemo(() => {
+    const isSupplierMovement = (e: any) => {
+      const text = `${e.category || ''} ${e.note || ''}`.toLowerCase();
+      return ['مورد', 'المورد', 'supplier'].some(w => text.includes(w)) && ['سداد', 'دفع', 'مديونية', 'حسابات', 'pay', 'payment', 'debt'].some(w => text.includes(w));
+    };
+    const operatingExpenses = extra.expenses
+      .filter((e: any) => inRange(e.created_at || e.date) && !isMainTreasuryExpense(e) && !isInternalTransfer(e.category) && e.category !== 'حجز' && e.category !== 'تحويل حجز' && e.category !== 'رواتب' && !isSupplierMovement(e) && Number(e.amount) > 0)
+      .reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
+    const salaries = extra.salaries
+      .filter((s: any) => inRange(s.created_at) && !isMainTreasuryExpense(s) && !findLinkedSalaryExpense(extra.expenses as any[], s))
+      .reduce((sum: number, s: any) => sum + Number(s.amount || 0), 0);
+    const costOfGoodsSold = Math.max(0, salesTotals.total - salesTotals.profit);
+    const totalExpenses = costOfGoodsSold + operatingExpenses + salaries;
+    return { revenue: salesTotals.total, costOfGoodsSold, operatingExpenses, salaries, totalExpenses, netProfit: salesTotals.profit - operatingExpenses - salaries };
+  }, [salesTotals, extra, from, to]);
+
   const fmt = (n: number) => `${(n || 0).toFixed(2)} ${cur}`;
   const productFilterText = productFilter.trim();
   const selectedSupplier = suppliers.find((s: any) => String(s.id) === String(selectedSupplierId));
@@ -363,9 +381,15 @@ export default function Reports() {
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 border-b border-slate-100 dark:border-slate-700">
             <Stat label="عدد الفواتير" value={String(sales.length)} />
-            <Stat label="إجمالي المبيعات" value={fmt(salesTotals.total)} />
+            <Stat label="إجمالي الإيراد" value={fmt(financialTotals.revenue)} />
             <Stat label="المحصّل" value={fmt(salesTotals.paid)} green />
-            <Stat label="إجمالي الربح" value={fmt(salesTotals.profit)} green />
+            <Stat label="إجمالي الربح الإجمالي" value={fmt(salesTotals.profit)} green />
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-4 pb-4">
+            <Stat label="تكلفة البضاعة المباعة" value={fmt(financialTotals.costOfGoodsSold)} />
+            <Stat label="المصروفات التشغيلية" value={fmt(financialTotals.operatingExpenses)} />
+            <Stat label="الرواتب" value={fmt(financialTotals.salaries)} />
+            <Stat label="صافي الربح" value={fmt(financialTotals.netProfit)} green={financialTotals.netProfit >= 0} />
           </div>
           <div className="overflow-x-auto max-h-[55vh]">
             <table className="w-full text-right text-sm">

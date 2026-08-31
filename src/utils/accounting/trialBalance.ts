@@ -4,6 +4,7 @@ import {
   isMainTreasuryPurchase, refundRecordOf,
 } from '../treasury';
 import type { AccountType } from './accounts';
+import { calculateCustomerDebt } from '../customerDebt';
 
 /**
  * بناء أرصدة شجرة الحسابات من الجداول القائمة — **قراءة فقط، مافيش كتابة**.
@@ -149,31 +150,24 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
   add('12', stockValue);
 
   // ── 131 ذمم العملاء + 51 تكلفة البضاعة + 41/42 المبيعات ──────────────────
-  let receivable = 0, salesTotal = 0, refundsTotal = 0, cogs = 0;
+  let salesTotal = 0, refundsTotal = 0, cogs = 0;
   live.forEach((o) => {
     const ref = refundedOf(o);
     if (o.type === 'sale') {
       const total = Number(o.total) || 0;
       salesTotal += total;
       refundsTotal += ref;
-      // المستحق بعد المرتجع − المدفوع = مديونية العميل (السالب = دفع زيادة).
-      const returnedValue = (o.items || []).reduce((s: number, it: any) => {
-        const q = Number(it.returned_quantity) || 0;
-        return s + q * (Number(it.sale_price) || 0);
-      }, 0);
-      const due = Math.max(0, total - returnedValue) - (Number(o.paid_amount) || 0);
-      if (due > 0.009) receivable += due;
       // تكلفة المباع = (المباع − المرتجع) × سعر الشراء.
       cogs += (o.items || []).reduce((s: number, it: any) => {
         const q = (Number(it.quantity) || 0) - (Number(it.returned_quantity) || 0);
         const c = Number(it.average_purchase_price ?? it.purchase_price) || 0;
         return s + q * c;
       }, 0);
-    } else if (o.type === 'previous_debt') {
-      receivable += Math.max(0, (Number(o.total) || 0) - (Number(o.paid_amount) || 0));
     }
   });
-  add('131', receivable);
+  // نفس خوارزمية التسوية المستخدمة في الميزانية والتحليلات، بما فيها
+  // دفعات الأجل المرتبطة برقم الفاتورة والدفعات العامة الموزعة زمنيًا.
+  add('131', calculateCustomerDebt(orders));
   add('41', salesTotal);
   add('42', -refundsTotal);
   add('51', cogs);

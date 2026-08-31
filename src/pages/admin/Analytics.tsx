@@ -9,13 +9,14 @@ import {
 import { useStore } from '../../store/useStore';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { splitStockValueBySource, totalIntakeValue } from '../../utils/stockIntake';
-import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
+import { calculateCashRefunded } from '../../utils/returns';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
 // html2canvas-pro supports Tailwind v4's oklch() colors (the original html2canvas throws on them).
 import html2canvas from 'html2canvas-pro';
 import { allocatePayment } from '../../utils/paymentAllocator';
+import { calculateCustomerDebt } from '../../utils/customerDebt';
 
 // Fix for jspdf-autotable typing
 declare module 'jspdf' {
@@ -142,14 +143,7 @@ export default function Analytics() {
       }
     });
 
-    const totalCustomerDebt = Math.max(0, globalOrders
-      .filter((o: any) => !o.is_deleted && o.type === 'sale')
-      .reduce((sum: number, o: any) => {
-        const effectiveTotal = Math.max(0, (Number(o.total) || 0) - calculateOrderReturnValue(o));
-        const splitPaid = (Number(o.paid_cash) || 0) + (Number(o.paid_visa) || 0) + (Number(o.paid_wallet) || 0) + (Number(o.paid_instapay) || 0) + (Number(o.paid_method5) || 0) + (Number(o.paid_method6) || 0);
-        const paid = Math.max(Number(o.paid_amount) || 0, splitPaid + (debtPaymentsByInvoice.get(o.id) || 0));
-        return sum + Math.max(0, effectiveTotal - paid);
-      }, 0));
+    const totalCustomerDebt = calculateCustomerDebt(globalOrders);
     const totalSupplierDebt = Math.max(0, purchaseInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0));
 
     const profit = revenue - cost;

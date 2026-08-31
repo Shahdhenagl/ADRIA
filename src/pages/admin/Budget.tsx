@@ -9,9 +9,10 @@ import {
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
-import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
+import { calculateCashRefunded } from '../../utils/returns';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 import { computeShopAvailable, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundPartsOf } from '../../utils/treasury';
+import { calculateCustomerDebt } from '../../utils/customerDebt';
 
 interface UnifiedTransaction {
   id: string;
@@ -488,21 +489,7 @@ export default function Budget() {
     };
   }, [filteredTransactions, allTransactions, orders, expenses, treasuryExpenses, purchaseInvoices, treasuryPurchases, employeeTransactions, dateFilter, customDate, customMonth, customYear, methodFilter, storeSettings, activePayKeys, savingsTransactions]);
 
-  const totalCustomerDebt = useMemo(() => {
-    const debtPaidByInvoice = new Map<string, number>();
-    orders.filter(o => !o.is_deleted && o.type === 'payment').forEach((o: any) => {
-      const match = String(o.notes || '').match(/سداد [آأ]?جل للفاتورة رقم #([\w-]+)/);
-      if (match?.[1]) debtPaidByInvoice.set(match[1], (debtPaidByInvoice.get(match[1]) || 0) + (Number(o.paid_amount) || 0));
-    });
-    return Math.max(0, orders
-      .filter(o => !o.is_deleted && o.type === 'sale')
-      .reduce((sum, o: any) => {
-        const effectiveTotal = Math.max(0, (Number(o.total) || 0) - calculateOrderReturnValue(o));
-        const splitPaid = ALL_PAYMENT_KEYS.reduce((s, k) => s + Math.abs(Number(o[`paid_${k}`]) || 0), 0);
-        const paid = Math.max(Number(o.paid_amount) || 0, splitPaid + (debtPaidByInvoice.get(o.id) || 0));
-        return sum + Math.max(0, effectiveTotal - paid);
-      }, 0));
-  }, [orders]);
+  const totalCustomerDebt = useMemo(() => calculateCustomerDebt(orders), [orders]);
 
   const totalSupplierDebt = useMemo(() => {
     return Math.max(0, purchaseInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0));
