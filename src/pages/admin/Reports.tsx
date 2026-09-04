@@ -20,6 +20,7 @@ export default function Reports() {
   const [to, setTo] = useState(currentBusinessDay());
   const [tab, setTab] = useState<'sales' | 'product-analysis' | 'methods' | 'treasury'>('sales');
   const [productMode, setProductMode] = useState<'sales' | 'purchases' | 'inventory' | 'stock-intakes'>('sales');
+  const [inventoryAvailableOnly, setInventoryAvailableOnly] = useState(false);
   const [productFilter, setProductFilter] = useState('');
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('all');
   const [extra, setExtra] = useState<{ expenses: any[]; purchases: any[]; salaries: any[] }>({ expenses: [], purchases: [], salaries: [] });
@@ -242,6 +243,7 @@ export default function Reports() {
 
   const inventoryRows = useMemo(() => products
     .filter((p: any) => !p.is_hidden)
+    .filter((p: any) => !inventoryAvailableOnly || Number(p.stock_quantity || 0) > 0)
     .filter((p: any) => matchesProductFilter(p, p.id))
     .filter((p: any) => matchesSupplierFilter(p))
     .map((p: any) => ({
@@ -253,7 +255,7 @@ export default function Reports() {
       display: Number(p.display_quantity || 0),
       totalValue: (Number(p.average_purchase_price || p.purchase_price || 0)) * (Number(p.stock_quantity || 0)),
     }))
-    .sort((a, b) => b.totalValue - a.totalValue), [products, productFilterText, selectedSupplierId, suppliers]);
+    .sort((a, b) => b.totalValue - a.totalValue), [products, productFilterText, selectedSupplierId, suppliers, inventoryAvailableOnly]);
 
   const stockIntakeRows = useMemo(() => {
     const rows: any[] = [];
@@ -433,9 +435,15 @@ export default function Reports() {
               <option value="all">كل الموردين</option>
               {suppliers.map((s: any) => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
-            {(productFilter || selectedSupplierId !== 'all') && (
+            {productMode === 'inventory' && (
+              <label className="flex items-center gap-2 bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 rounded-xl px-3 py-2 text-sm font-black text-emerald-700 dark:text-emerald-300 cursor-pointer">
+                <input type="checkbox" checked={inventoryAvailableOnly} onChange={(e) => setInventoryAvailableOnly(e.target.checked)} />
+                المتوفر فقط
+              </label>
+            )}
+            {(productFilter || selectedSupplierId !== 'all' || inventoryAvailableOnly) && (
               <button
-                onClick={() => { setProductFilter(''); setSelectedSupplierId('all'); }}
+                onClick={() => { setProductFilter(''); setSelectedSupplierId('all'); setInventoryAvailableOnly(false); }}
                 className="bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-red-50 hover:text-red-600 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-sm font-black transition"
               >
                 مسح الفلاتر
