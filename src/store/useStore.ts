@@ -6569,6 +6569,7 @@ setupRealtime: () => {
     const { data: invData, error: invError } = await supabase
       .from('purchase_invoices')
       .update({
+        supplier_id: invoice.supplier_id,
         total: invoice.total,
         paid_amount: invoice.paid_amount,
         paid_cash: splits.cash,
