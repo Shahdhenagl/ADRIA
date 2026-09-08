@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { supabase } from '../lib/supabase';
+import { supabase, fetchAllRows } from '../lib/supabase';
 import { unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf, ALL_PAYMENT_KEYS } from '../utils/paymentMethods';
 // الربط بين صف الموظف وصف المصروف — دوال نقية في utils عشان تتغطّى بالتستات.
@@ -4063,22 +4063,18 @@ export const useStore = create<CashierStore>((set, get) => ({
 
   // ── Admin ──────────────────────────────────────────────────
   loadAnalyticsData: async (startDate, endDate) => {
-    let query = supabase
-      .from('orders')
-      .select('*, customers(*), order_items(*, products(*))')
-      .neq('is_deleted', true)
-      .order('created_at', { ascending: false });
+    // لا تستخدم limit(1000) هنا: Supabase يعيد أول 1000 صف فقط، ما كان
+    // يسقط الفواتير الأقدم من التحليل بعد تجاوز عدد الطلبات هذا الحد.
+    const rows = await fetchAllRows<Record<string, unknown>>(
+      'orders',
+      '*, customers(*), order_items(*, products(*))',
+      { column: 'created_at', ascending: false },
+    );
+    const data = rows.filter((o) => o.is_deleted !== true
+      && (!startDate || new Date(String(o.created_at)).getTime() >= new Date(startDate).getTime())
+      && (!endDate || new Date(String(o.created_at)).getTime() <= new Date(endDate).getTime()));
 
-    if (startDate) query = query.gte('created_at', startDate);
-    if (endDate) query = query.lte('created_at', endDate);
-
-    const { data, error } = await query.limit(1000);
-    if (error) {
-      console.error("Analytics Load Error:", error);
-      return [];
-    }
-
-    const orders: Order[] = (data as Record<string, unknown>[]).map((o) => {
+    const orders: Order[] = data.map((o) => {
       const custRow = o.customers as Record<string, unknown> | null;
       const itemRows = (o.order_items as Record<string, unknown>[]) ?? [];
       const items: OrderItem[] = itemRows.map((i) => {

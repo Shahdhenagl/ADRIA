@@ -14,7 +14,7 @@ export default function Overview() {
   activeOrders.forEach(order => {
     if (order.type === 'payment') {
       totalNetRevenue += order.paid_amount;
-    } else {
+    } else if (order.type === 'sale') {
       validOrdersCount++;
       order.items.forEach(item => {
         const qty = item.quantity - item.returned_quantity;
