@@ -249,7 +249,6 @@ export default function Analytics() {
     const supplierPaidTotal = procurementCost + supplierDebtPayments;
 
     collectedFromOther += extraIncomes;
-    revenue += extraIncomes;
     const finalNetProfit = invoiceProfit + extraIncomes - totalExpenses;
 
     return { 
