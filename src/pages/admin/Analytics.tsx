@@ -17,6 +17,7 @@ import 'jspdf-autotable';
 import html2canvas from 'html2canvas-pro';
 import { allocatePayment } from '../../utils/paymentAllocator';
 import { calculateCustomerDebt } from '../../utils/customerDebt';
+import { isMainTreasuryExpense, isInternalTransfer } from '../../utils/treasury';
 
 // Fix for jspdf-autotable typing
 declare module 'jspdf' {
@@ -215,7 +216,13 @@ export default function Analytics() {
       const hasSettlement = supplierSettlementWords.some((word) => text.includes(word));
       return hasSupplier && hasSettlement;
     };
-    const operatingExpenses = filteredExpenses.filter((exp) => !isSupplierAccountMovement(exp));
+    const operatingExpenses = filteredExpenses.filter((exp) =>
+      !isMainTreasuryExpense(exp)
+      && !isInternalTransfer(exp.category)
+      && exp.category !== 'حجز'
+      && exp.category !== 'تحويل حجز'
+      && !isSupplierAccountMovement(exp)
+    );
 
     const extraIncomes = operatingExpenses.filter(e => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
     const totalExpenses = operatingExpenses.filter(e => e.amount > 0).reduce((sum, exp) => sum + exp.amount, 0);
