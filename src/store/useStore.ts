@@ -742,7 +742,7 @@ interface CashierStore {
   deleteOrder: (orderId: string, reason?: string) => Promise<boolean>;
   /** إلغاء مرتجع اتعمل بالغلط — بيرجّع الفاتورة لحالتها قبل الإرجاع. */
   undoReturn: (orderId: string) => Promise<boolean>;
-  editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string, opts?: { exchange?: boolean }) => Promise<boolean>;
+  editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string, opts?: { exchange?: boolean; paymentOnly?: boolean }) => Promise<boolean>;
   markOrderExchanged: (orderId: string, exchangeData: any) => Promise<boolean>;
   updateOrderRefundedAt: (orderId: string, refundedAt: string) => Promise<boolean>;
   ensureDayOpen: (value?: string | Date | null) => Promise<boolean>;
@@ -3768,8 +3768,11 @@ export const useStore = create<CashierStore>((set, get) => ({
     // بيتسجّل كصف مالي مستقل بتاريخ الاستبدال (اللي بيتفحص لوحده في EditInvoiceModal
     // + markOrderExchanged). فمنع استبدال فاتورة يوم مقفول كان بيقفل عملية شرعية
     // من غير ما يحمي أي رقم. أما التعديل العادي فبيغيّر أرقام يوم البيع فعلاً → ممنوع.
-    if (!opts?.exchange && !(await ensureAccountingDayOpen(state, order.date))) return false;
-    if (updatedData.date && !(await ensureAccountingDayOpen(state, updatedData.date))) return false;
+    // تصحيح وسيلة الدفع فقط لا يغيّر البيع أو المخزون أو تاريخ الفاتورة؛ نسمح به
+    // من شاشة المدير حتى بعد تقفيل يوم البيع، لأن منعَه يترك طريقة الدفع خاطئة
+    // ويمنع مطابقة الخزينة. أي تعديل آخر يظل ممنوعاً على اليوم المقفول.
+    if (!opts?.exchange && !opts?.paymentOnly && !(await ensureAccountingDayOpen(state, order.date))) return false;
+    if (updatedData.date && !opts?.paymentOnly && !(await ensureAccountingDayOpen(state, updatedData.date))) return false;
 
     const oldTotal = order.total;
     const oldPaid = order.paid_amount;

@@ -325,7 +325,23 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       updatedData = { total, paid_amount: paidAmount, paid_cash: pay.cash || 0, paid_visa: pay.visa || 0, paid_wallet: pay.wallet || 0, paid_instapay: pay.instapay || 0, paid_method5: pay.method5 || 0, paid_method6: pay.method6 || 0, payment_method: paymentMethod as any, date: newDateISO };
     }
 
-    const success = await editOrder(invoice.id, updatedData, exchangeMode ? finalExchangeItems : cart, reason, { exchange: !!exchangeMode });
+    const paymentOnly = !exchangeMode
+      && Math.abs(total - oldTotal) < 0.01
+      && orderDate === toDateInput(invoice.date)
+      && cart.length === invoice.items.length
+      && cart.every((item) => {
+        const old = invoice.items.find((x) => x.id === item.id);
+        return !!old
+          && Number(item.quantity) === Number(old.quantity)
+          && Math.abs(Number(item.sale_price) - Number(old.sale_price)) < 0.01;
+      });
+    const success = await editOrder(
+      invoice.id,
+      updatedData,
+      exchangeMode ? finalExchangeItems : cart,
+      reason,
+      { exchange: !!exchangeMode, paymentOnly },
+    );
 
     if (success) {
       if (exchangeMode) {
