@@ -3768,10 +3768,16 @@ export const useStore = create<CashierStore>((set, get) => ({
     // بيتسجّل كصف مالي مستقل بتاريخ الاستبدال (اللي بيتفحص لوحده في EditInvoiceModal
     // + markOrderExchanged). فمنع استبدال فاتورة يوم مقفول كان بيقفل عملية شرعية
     // من غير ما يحمي أي رقم. أما التعديل العادي فبيغيّر أرقام يوم البيع فعلاً → ممنوع.
-    // تصحيح وسيلة الدفع فقط لا يغيّر البيع أو المخزون أو تاريخ الفاتورة؛ نسمح به
-    // من شاشة المدير حتى بعد تقفيل يوم البيع، لأن منعَه يترك طريقة الدفع خاطئة
-    // ويمنع مطابقة الخزينة. أي تعديل آخر يظل ممنوعاً على اليوم المقفول.
-    if (!opts?.exchange && !opts?.paymentOnly && !(await ensureAccountingDayOpen(state, order.date))) return false;
+    // تصحيح وسيلة الدفع فقط لا يغيّر البيع أو المخزون أو تاريخ الفاتورة.
+    // إذا كانت الفاتورة مرتجعة، فالتعديل مرتبط بحركة المرتجع ويُفحص على يوم
+    // المرتجع؛ أما الفاتورة بلا مرتجع فتظل مرتبطة بيوم البيع. أي تعديل آخر
+    // يظل ممنوعاً على اليوم المقفول.
+    if (!opts?.exchange) {
+      const accountingDate = opts?.paymentOnly && order.refunded_at
+        ? order.refunded_at
+        : order.date;
+      if (!(await ensureAccountingDayOpen(state, accountingDate))) return false;
+    }
     if (updatedData.date && !opts?.paymentOnly && !(await ensureAccountingDayOpen(state, updatedData.date))) return false;
 
     const oldTotal = order.total;
