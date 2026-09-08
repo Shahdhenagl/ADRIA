@@ -101,7 +101,6 @@ export default function Analytics() {
         const { toSales, toServices, toOldDebt } = allocatePayment(order, globalOrders);
         collectedFromInvoices += toSales;
         collectedFromOther += toOldDebt + toServices;
-        revenue += (order.paid_amount || 0);
         return; // Skip items calculation for payment orders
       }
 
@@ -116,8 +115,7 @@ export default function Analytics() {
       invoiceProfit += calculateInvoiceProfit(order);
       
       collectedFromInvoices += initialPaid;
-      revenue += initialPaid;
-
+      
       let netOrderTotal = 0;
       
       order.items?.forEach((item: any) => {
@@ -134,6 +132,11 @@ export default function Analytics() {
         productsMap[item.id].revenue += itemRevenue;
         productsMap[item.id].profit += (itemRevenue - itemCost);
       });
+
+      // الإيراد = قيمة البيع الفعلية بعد المرتجع، وليس النقد المحصل.
+      // التحصيل يُعرض منفصلًا في collectedFromInvoices/collectedFromOther
+      // حتى لا تختلط الفواتير الآجلة بإيراد المبيعات.
+      revenue += netOrderTotal;
 
       if (order.customer) {
         if (!customersMap[order.customer.id]) {
@@ -441,7 +444,7 @@ export default function Analytics() {
       {/* Stats Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard 
-          title="إجمالي الداخل" 
+          title="إجمالي المبيعات بعد المرتجعات" 
           value={stats.revenue} 
           unit={storeSettings.currency}
           icon={TrendingUp} 
