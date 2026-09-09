@@ -4072,9 +4072,16 @@ export const useStore = create<CashierStore>((set, get) => ({
       '*, customers(*), order_items(*, products(*))',
       { column: 'created_at', ascending: false },
     );
+    const startMs = startDate ? new Date(startDate).getTime() : -Infinity;
+    const endMs = endDate ? new Date(endDate).getTime() : Infinity;
+    const inSelectedRange = (value: unknown) => {
+      const ms = new Date(String(value)).getTime();
+      return Number.isFinite(ms) && ms >= startMs && ms <= endMs;
+    };
+    // الفاتورة القديمة لازم تدخل التحليل إذا حصل مرتجعها داخل الفترة، وإلا
+    // لا يظهر المرتجع لا في الحسابات ولا في ربح/إيراد اليوم المختار.
     const data = rows.filter((o) => o.is_deleted !== true
-      && (!startDate || new Date(String(o.created_at)).getTime() >= new Date(startDate).getTime())
-      && (!endDate || new Date(String(o.created_at)).getTime() <= new Date(endDate).getTime()));
+      && (inSelectedRange(o.created_at) || (o.refunded_at && inSelectedRange(o.refunded_at))));
 
     const orders: Order[] = data.map((o) => {
       const custRow = o.customers as Record<string, unknown> | null;
@@ -4109,6 +4116,8 @@ export const useStore = create<CashierStore>((set, get) => ({
         type: (o.type as string) as 'sale' | 'payment' ?? 'sale',
         payment_method: (o.payment_method as any) ?? 'cash',
         date: o.created_at as string,
+        refunded_at: (o.refunded_at as string) ?? null,
+        _saleInSelectedRange: inSelectedRange(o.created_at),
         items,
         cashier_name: (o.cashier_name as string) ?? undefined,
         is_deleted: Boolean(o.is_deleted),

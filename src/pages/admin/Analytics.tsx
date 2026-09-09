@@ -97,6 +97,18 @@ export default function Analytics() {
     });
 
     activeOrders.forEach(order => {
+      // فاتورة بيع قديمة ظهر هنا فقط لأن مرتجعها حدث داخل الفترة المختارة.
+      // لا نعيد احتساب البيع الأصلي؛ نسجل أثر المرتجع السالب في يومه فقط.
+      if ((order as any)._saleInSelectedRange === false) {
+        const returnedRevenue = (order.items || []).reduce((sum: number, item: any) =>
+          sum + (Number(item.sale_price) || 0) * (Number(item.returned_quantity) || 0), 0);
+        const returnedCost = (order.items || []).reduce((sum: number, item: any) =>
+          sum + (Number(item.average_purchase_price) || 0) * (Number(item.returned_quantity) || 0), 0);
+        revenue -= returnedRevenue;
+        cost -= returnedCost;
+        invoiceProfit -= returnedRevenue - returnedCost;
+        return;
+      }
       if (order.type === 'payment') {
         const { toSales, toServices, toOldDebt } = allocatePayment(order, globalOrders);
         collectedFromInvoices += toSales;
