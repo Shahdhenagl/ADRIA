@@ -3322,7 +3322,9 @@ export const useStore = create<CashierStore>((set, get) => ({
         : order.paid_amount;
       // نفس تاريخ الاسترجاع اللي بيتحفظ في الطابور، عشان القائمة تعرضه صح على طول
       // من غير استنّي المزامنة.
-      const offlineRefundedAt = new Date().toISOString();
+      // استخدم اليوم الذي اختاره المستخدم، وليس وقت تنفيذ المزامنة؛ وإلا
+      // المرتجع الذي سُجّل أوفلاين ليوم أمس سيظهر في تقفيل يوم آخر.
+      const offlineRefundedAt = refundStamp;
 
       const updatedOrders = state.orders.map((o, idx) =>
         idx === orderIndex ? { ...o, items: updatedItems, paid_amount: offlinePaidAmount, refunded_at: offlineRefundedAt } : o

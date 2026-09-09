@@ -111,6 +111,7 @@ export default function PublicInvoice() {
             type: o.type,
             payment_method: o.payment_method,
             date: o.created_at,
+            refunded_at: o.refunded_at || null,
             items,
             cashier_name: o.cashier_name,
             salesperson_name: o.salesperson_name,
@@ -412,13 +413,19 @@ export default function PublicInvoice() {
                   <span className="text-[10px] text-slate-400 font-mono">{new Date(order.date).toLocaleDateString('ar-EG', { calendar: 'gregory' })}</span>
                 </div>
                 <div className="flex justify-between items-center">
-                  <span className="text-xs font-bold text-slate-600">التاريخ:</span>
+                  <span className="text-xs font-bold text-slate-600">تاريخ الفاتورة:</span>
                   <span className="text-[13px] font-black text-slate-800">{new Date(order.date).toLocaleDateString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-xs font-bold text-slate-600">التوقيت:</span>
                   <span className="text-[13px] font-black text-slate-800">{new Date(order.date).toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
+                {(order as any).refunded_at && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs font-bold text-rose-600">تاريخ المرتجع:</span>
+                    <span className="text-[13px] font-black text-rose-700">{new Date((order as any).refunded_at).toLocaleString('ar-EG', { calendar: 'gregory', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                )}
                 {visitId && (
                   <div className="flex justify-between items-center">
                     <span className="text-xs font-bold text-slate-600">رقم الزيارة:</span>
