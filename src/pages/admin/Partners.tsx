@@ -9,7 +9,7 @@ const TREASURIES = [
 ];
 
 export default function Partners() {
-  const { storeSettings, recordPartnerTransaction, deletePartnerTransaction } = useStore();
+  const { storeSettings, recordPartnerTransaction, deletePartnerTransaction, recordMainTreasuryIn, recordMainTreasuryOut } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
@@ -59,23 +59,51 @@ export default function Partners() {
 
   const addPartner = async () => {
     if (!pName.trim()) { alert('اسم الشريك مطلوب'); return; }
+    const opening = Math.max(0, Number(pOpening) || 0);
     const { supabase } = await import('../../lib/supabase');
-    const { data, error } = await supabase.from('partners').insert({ name: pName.trim(), share_percent: Number(pShare) || 0, opening_balance: Number(pOpening) || 0 }).select().single();
+    const { data, error } = await supabase.from('partners').insert({ name: pName.trim(), share_percent: Number(pShare) || 0, opening_balance: opening }).select().single();
     if (error) { alert('فشل: ' + error.message); return; }
-    if (data) { setPartners((p) => [...p, data as any]); setPName(''); setPShare(''); setPOpening(''); }
+    if (data) {
+      if (opening > 0) {
+        const note = `[PARTNER_OPENING:${data.id}] رأس مال افتتاحي للشريك: ${pName.trim()}`;
+        const cashRecorded = await recordMainTreasuryIn({ cash: opening }, 'partner_capital_opening', note, new Date().toISOString());
+        if (!cashRecorded) {
+          await supabase.from('partners').delete().eq('id', data.id);
+          alert('تم إلغاء إضافة الشريك لأن إيداع رأس المال في الخزنة الرئيسية فشل.');
+          return;
+        }
+      }
+      setPartners((p) => [...p, data as any]); setPName(''); setPShare(''); setPOpening('');
+    }
   };
 
   const editPartner = async (p: any) => {
     const share = prompt(`نسبة ${p.name} %`, String(p.share_percent ?? 0));
     if (share === null) return;
-    const opening = prompt(`الرصيد الافتتاحي لـ ${p.name}`, String(p.opening_balance ?? 0));
+    const opening = prompt(`الرصيد الافتتاحي النقدي لـ ${p.name}`, String(p.opening_balance ?? 0));
     if (opening === null) return;
+    const oldOpening = Math.max(0, Number(p.opening_balance) || 0);
+    const newOpening = Math.max(0, Number(opening) || 0);
     const { supabase } = await import('../../lib/supabase');
-    await supabase.from('partners').update({ share_percent: Number(share) || 0, opening_balance: Number(opening) || 0 }).eq('id', p.id);
-    setPartners((arr) => arr.map((x) => (x.id === p.id ? { ...x, share_percent: Number(share) || 0, opening_balance: Number(opening) || 0 } : x)));
+    const delta = newOpening - oldOpening;
+    if (Math.abs(delta) > 0.001) {
+      const note = `[PARTNER_OPENING:${p.id}] رأس مال افتتاحي للشريك: ${p.name}`;
+      const ok = delta > 0
+        ? await recordMainTreasuryIn({ cash: delta }, 'partner_capital_opening', note, new Date().toISOString())
+        : await recordMainTreasuryOut({ cash: Math.abs(delta) }, 'partner_capital_opening_reversal', note, new Date().toISOString());
+      if (!ok) { alert('تعذّر تحديث أثر رأس المال في الخزنة الرئيسية.'); return; }
+    }
+    const { error } = await supabase.from('partners').update({ share_percent: Number(share) || 0, opening_balance: newOpening }).eq('id', p.id);
+    if (error) { alert('تم تعديل الخزنة لكن تعذّر تحديث بيانات الشريك: ' + error.message); return; }
+    setPartners((arr) => arr.map((x) => (x.id === p.id ? { ...x, share_percent: Number(share) || 0, opening_balance: newOpening } : x)));
   };
 
   const removePartner = async (p: any) => {
+    const linkedRows = txs.filter((t) => t.partner_id === p.id);
+    if (Math.abs(Number(p.opening_balance) || 0) > 0.001 || linkedRows.length > 0) {
+      alert('لا يمكن حذف شريك لديه رأس مال افتتاحي أو حركات مالية. صفّر الرصيد الافتتاحي واحذف/اعكس الحركات أولاً حتى لا يختل رصيد الخزنة والتقارير.');
+      return;
+    }
     if (!confirm(`حذف الشريك ${p.name}؟ (معاملاته تفضل محفوظة)`)) return;
     const { supabase } = await import('../../lib/supabase');
     await supabase.from('partners').delete().eq('id', p.id);
@@ -146,7 +174,7 @@ export default function Partners() {
             <div><label className="text-[11px] font-bold text-slate-500">الطريقة</label><select className={input} value={txMethod} onChange={(e) => setTxMethod(e.target.value)}>{METHODS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}</select></div>
             <div><label className="text-[11px] font-bold text-slate-500">ملاحظة</label><input className={input} value={txNote} onChange={(e) => setTxNote(e.target.value)} placeholder="اختياري" /></div>
           </div>
-          <p className="text-[11px] text-slate-400">كل معاملات الشركاء (إيداع/سحب) تتم على <span className="font-black text-indigo-600">الخزنة الرئيسية</span> فقط — لا تؤثر على خزنة الكاشير. السحب يخصم من رصيد الرئيسية والإيداع يضيف له.</p>
+          <p className="text-[11px] text-slate-400">كل معاملات الشركاء تتم على <span className="font-black text-indigo-600">الخزنة الرئيسية</span>. الرصيد الافتتاحي للشريك يُسجّل كإيداع نقدي في الرئيسية ويظهر في التقارير كرأس مال، وليس إيرادًا أو ربحًا.</p>
           <button onClick={submitTx} disabled={saving} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black py-3 rounded-xl">{saving ? 'جاري...' : editingTx ? 'حفظ التعديل' : 'تسجيل المعاملة'}</button>
         </div>
 
@@ -157,7 +185,7 @@ export default function Partners() {
             <input className={input} placeholder="اسم الشريك" value={pName} onChange={(e) => setPName(e.target.value)} />
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <div><label className="text-[11px] font-bold text-slate-500">النسبة %</label><input className={input} type="number" placeholder="0" value={pShare} onChange={(e) => setPShare(e.target.value)} /></div>
-              <div><label className="text-[11px] font-bold text-slate-500">رصيد افتتاحي</label><input className={input} type="number" placeholder="0" value={pOpening} onChange={(e) => setPOpening(e.target.value)} /></div>
+              <div><label className="text-[11px] font-bold text-slate-500">رأس مال افتتاحي نقدي</label><input className={input} type="number" placeholder="0" value={pOpening} onChange={(e) => setPOpening(e.target.value)} /></div>
             </div>
           </div>
           <button onClick={addPartner} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-2"><Plus size={18} /> إضافة شريك</button>

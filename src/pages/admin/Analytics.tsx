@@ -76,7 +76,7 @@ export default function Analytics() {
   const stats = useMemo(() => {
     let revenue = 0;
     let cost = 0;
-    let invoiceProfit = 0;
+      let invoiceProfit = 0;
     let collectedFromInvoices = 0;
     let collectedFromOther = 0;
 
@@ -124,15 +124,22 @@ export default function Analytics() {
         initialPaid = (order.paid_amount || 0) - (debtPaymentsByInvoice.get(order.id) || 0) + calculateCashRefunded(order);
       }
 
-      invoiceProfit += calculateInvoiceProfit(order);
+      const orderProfit = calculateInvoiceProfit(order);
+      invoiceProfit += orderProfit;
       
       collectedFromInvoices += initialPaid;
       
+      const effectiveOrderTotal = Math.max(0, (Number(order.total) || 0) - calculateCashRefunded(order));
+      const grossItemsTotal = (order.items || []).reduce((sum: number, item: any) => {
+        const qty = Math.max(0, (Number(item.quantity) || 0) - (Number(item.returned_quantity) || 0));
+        return sum + (Number(item.sale_price) || 0) * qty;
+      }, 0);
       let netOrderTotal = 0;
       
       order.items?.forEach((item: any) => {
         const qty = item.quantity - item.returned_quantity;
-        const itemRevenue = item.sale_price * qty;
+        const itemGross = (Number(item.sale_price) || 0) * qty;
+        const itemRevenue = grossItemsTotal > 0 ? itemGross * (effectiveOrderTotal / grossItemsTotal) : 0;
         const itemCost = item.average_purchase_price * qty; // Note: using average_purchase_price here for Branch 1
         cost += itemCost;
         netOrderTotal += itemRevenue;
@@ -148,7 +155,9 @@ export default function Analytics() {
       // الإيراد = قيمة البيع الفعلية بعد المرتجع، وليس النقد المحصل.
       // التحصيل يُعرض منفصلًا في collectedFromInvoices/collectedFromOther
       // حتى لا تختلط الفواتير الآجلة بإيراد المبيعات.
-      revenue += netOrderTotal;
+      // إجمالي التكلفة هنا يظل تكلفة البنود، بينما الربح الموحد يعتمد على
+      // نفس صافي الفاتورة بعد الخصم والمرتجع.
+      revenue += effectiveOrderTotal;
 
       if (order.customer) {
         if (!customersMap[order.customer.id]) {
@@ -220,7 +229,7 @@ export default function Analytics() {
     ];
 
     const filteredExpenses = expenses.filter(exp => {
-      const expDate = new Date(exp.date);
+      const expDate = new Date((exp as any).created_at || exp.date);
       if (startLimit && expDate < startLimit) return false;
       if (endLimit && expDate > endLimit) return false;
       return true;
@@ -231,17 +240,20 @@ export default function Analytics() {
       const hasSettlement = supplierSettlementWords.some((word) => text.includes(word));
       return hasSupplier && hasSettlement;
     };
+    const salaryExpenses = filteredExpenses.filter((exp) => exp.category === 'رواتب' && Number(exp.amount) > 0);
+    const salariesTotal = salaryExpenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
     const operatingExpenses = filteredExpenses.filter((exp) =>
       !isMainTreasuryExpense(exp)
       && !isInternalTransfer(exp.category)
       && !isSavingsTransfer(exp.category)
       && exp.category !== 'حجز'
       && exp.category !== 'تحويل حجز'
+      && exp.category !== 'رواتب'
       && !isSupplierAccountMovement(exp)
     );
 
     const extraIncomes = operatingExpenses.filter(e => e.amount < 0).reduce((sum, e) => sum + Math.abs(e.amount), 0);
-    const totalExpenses = operatingExpenses.filter(e => e.amount > 0).reduce((sum, exp) => sum + exp.amount, 0);
+    const totalExpenses = operatingExpenses.filter(e => e.amount > 0).reduce((sum, exp) => sum + exp.amount, 0) + salariesTotal;
     const filteredPurchases = purchaseInvoices.filter(inv => {
       const d = new Date(inv.created_at);
       if (startLimit && d < startLimit) return false;
@@ -274,6 +286,7 @@ export default function Analytics() {
       noPurchaseCapital,
       inventorySplit,
       totalExpenses,
+      salaries: salariesTotal,
       finalNetProfit,
       collectedFromInvoices,
       collectedFromOther,

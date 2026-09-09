@@ -5,6 +5,7 @@ import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
+import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundRecordOf } from '../../utils/treasury';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 import { intakeSourceLabel } from '../../utils/stockIntake';
@@ -23,7 +24,7 @@ export default function Reports() {
   const [inventoryAvailableOnly, setInventoryAvailableOnly] = useState(false);
   const [productFilter, setProductFilter] = useState('');
   const [selectedSupplierId, setSelectedSupplierId] = useState<string>('all');
-  const [extra, setExtra] = useState<{ expenses: any[]; purchases: any[]; salaries: any[] }>({ expenses: [], purchases: [], salaries: [] });
+  const [extra, setExtra] = useState<{ expenses: any[]; purchases: any[]; salaries: any[]; partners: any[] }>({ expenses: [], purchases: [], salaries: [], partners: [] });
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -33,13 +34,14 @@ export default function Reports() {
       try {
         const { fetchAllRows } = await import('../../lib/supabase');
         // جلب كل الصفوف (تخطّي حد 1000) عشان الرصيد الافتتاحي والخزنة يطلعوا صح.
-        const [e, p, s, o] = await Promise.all([
+        const [e, p, s, o, partners] = await Promise.all([
           fetchAllRows('expenses'),
-          fetchAllRows('purchase_invoices'),
+          fetchAllRows('purchase_invoices', '*, purchase_items(*)'),
           fetchAllRows('employee_transactions'),
           fetchAllRows('orders', '*, order_items(*)'),
+          fetchAllRows('partners', 'id, name, opening_balance, share_percent, created_at'),
         ]);
-        setExtra({ expenses: (e as any[]) || [], purchases: (p as any[]) || [], salaries: (s as any[]) || [] });
+        setExtra({ expenses: (e as any[]) || [], purchases: (p as any[]) || [], salaries: (s as any[]) || [], partners: (partners as any[]) || [] });
         setOrders(((o as any[]) || []).map((r) => ({ ...r, date: r.created_at, items: r.order_items || [] })));
       } catch (err) { console.error(err); }
       setLoading(false);
@@ -48,7 +50,8 @@ export default function Reports() {
 
   const start = useMemo(() => businessDayRange(from, storeSettings as any).start, [from, storeSettings.dayStartHour]);
   const end = useMemo(() => businessDayRange(to, storeSettings as any).end, [to, storeSettings.dayStartHour]);
-  const inRange = (dt: any) => { const d = new Date(dt); return d >= start && d < end; };
+  const dateOf = (row: any) => row?.created_at || row?.date || row?.timestamp;
+  const inRange = (dt: any) => { const d = new Date(dt); return !Number.isNaN(d.getTime()) && d >= start && d < end; };
 
   // ── per-method in/out (with manual-income handling) ──
   const computeMethods = (rangeOnly: boolean, beforeStart = false) => {
@@ -87,13 +90,13 @@ export default function Reports() {
       // المرتجع على يوم الاسترجاع (refunded_at) لا يوم البيع؛ fallback للتاريخ القديم.
       if (ref > 0 && pass(o.refunded_at || o.date)) add(outN, refundRecordOf(o, ref), 'paid_amount');
     });
-    extra.expenses.filter((e) => !isMainTreasuryExpense(e) && pass(e.created_at)).forEach((e) => {
+    extra.expenses.filter((e) => !isMainTreasuryExpense(e) && pass(dateOf(e))).forEach((e) => {
       const amt = Number(e.amount) || 0;
       if (isInternalTransfer(e.category)) { routeInternalTransfer(inN, outN, e); return; }
       if (amt < 0) add(inN, { ...absSplits(e), amount: Math.abs(amt) }, 'amount');
       else add(outN, e, 'amount');
     });
-    extra.purchases.filter((p) => !isMainTreasuryPurchase(p) && pass(p.created_at)).forEach((p) => {
+    extra.purchases.filter((p) => !isMainTreasuryPurchase(p) && pass(dateOf(p))).forEach((p) => {
       const paid = Number(p.paid_amount) || 0;
       if (paid > 0) add(outN, p, 'paid_amount');
       else if (paid < 0) add(inN, { ...absSplits(p), paid_amount: Math.abs(paid) }, 'paid_amount');
@@ -104,7 +107,7 @@ export default function Reports() {
     // للصفوف القديمة بس — راجع findLinkedSalaryExpense في الستور.
     const hasMatchingSalaryExpense = (tx: any) => Boolean(findLinkedSalaryExpense(extra.expenses as any[], tx));
     extra.salaries
-      .filter((s) => !isMainTreasuryExpense(s) && !hasMatchingSalaryExpense(s) && pass(s.created_at))
+      .filter((s) => !isMainTreasuryExpense(s) && !hasMatchingSalaryExpense(s) && pass(dateOf(s)))
       .forEach((s) => add(outN, s, 'amount'));
     return { inN, outN };
   };
@@ -122,7 +125,7 @@ export default function Reports() {
   const closing = opening + totalIn - totalOut;
 
   // ── sales list ──
-  const profitOf = (o: any) => (o.items || []).reduce((s: number, it: any) => { const q = (Number(it.quantity) || 0) - (Number(it.returned_quantity) || 0); const cost = Number(it.average_purchase_price ?? it.purchase_price) || 0; return s + ((Number(it.sale_price) || 0) - cost) * q; }, 0);
+  const profitOf = (o: any) => calculateInvoiceProfit(o);
   const splitsSumAbs = (rec: any) => ALL_PAYMENT_KEYS.reduce((t, k) => t + Math.abs(Number(rec?.['paid_' + k]) || 0), 0);
   const deferredPaidForInvoice = (invoiceId: string) =>
     orders
@@ -145,14 +148,15 @@ export default function Reports() {
       return ['مورد', 'المورد', 'supplier'].some(w => text.includes(w)) && ['سداد', 'دفع', 'مديونية', 'حسابات', 'pay', 'payment', 'debt'].some(w => text.includes(w));
     };
     const operatingExpenses = extra.expenses
-      .filter((e: any) => inRange(e.created_at || e.date) && !isMainTreasuryExpense(e) && !isInternalTransfer(e.category) && e.category !== 'حجز' && e.category !== 'تحويل حجز' && e.category !== 'رواتب' && !isSupplierMovement(e) && Number(e.amount) > 0)
+      .filter((e: any) => inRange(dateOf(e)) && !isMainTreasuryExpense(e) && !isInternalTransfer(e.category) && e.category !== 'حجز' && e.category !== 'تحويل حجز' && e.category !== 'رواتب' && !isSupplierMovement(e) && Number(e.amount) > 0)
       .reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
     const salaries = extra.salaries
-      .filter((s: any) => inRange(s.created_at) && !isMainTreasuryExpense(s) && !findLinkedSalaryExpense(extra.expenses as any[], s))
+      .filter((s: any) => inRange(dateOf(s)) && !isMainTreasuryExpense(s))
       .reduce((sum: number, s: any) => sum + Number(s.amount || 0), 0);
     const costOfGoodsSold = Math.max(0, salesTotals.total - salesTotals.profit);
     const totalExpenses = costOfGoodsSold + operatingExpenses + salaries;
-    return { revenue: salesTotals.total, costOfGoodsSold, operatingExpenses, salaries, totalExpenses, netProfit: salesTotals.profit - operatingExpenses - salaries };
+    const partnerOpeningCapital = extra.partners.reduce((sum: number, p: any) => sum + Math.max(0, Number(p.opening_balance) || 0), 0);
+    return { revenue: salesTotals.total, returns: sales.filter((o: any) => calculateOrderReturnValue(o) > 0).reduce((sum: number, o: any) => sum + calculateOrderReturnValue(o), 0), costOfGoodsSold, operatingExpenses, salaries, totalExpenses, partnerOpeningCapital, netProfit: salesTotals.profit - operatingExpenses - salaries };
   }, [salesTotals, extra, from, to]);
 
   const fmt = (n: number) => `${(n || 0).toFixed(2)} ${cur}`;
@@ -381,17 +385,19 @@ export default function Reports() {
 
       {tab === 'sales' && (
         <div className="bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 overflow-hidden">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4 border-b border-slate-100 dark:border-slate-700">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 p-4 border-b border-slate-100 dark:border-slate-700">
             <Stat label="عدد الفواتير" value={String(sales.length)} />
-            <Stat label="إجمالي الإيراد" value={fmt(financialTotals.revenue)} />
+            <Stat label="صافي المبيعات" value={fmt(financialTotals.revenue)} />
             <Stat label="المحصّل" value={fmt(salesTotals.paid)} green />
             <Stat label="إجمالي الربح الإجمالي" value={fmt(salesTotals.profit)} green />
+            <Stat label="المرتجعات" value={fmt(financialTotals.returns)} red />
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-4 pb-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 px-4 pb-4">
             <Stat label="تكلفة البضاعة المباعة" value={fmt(financialTotals.costOfGoodsSold)} />
             <Stat label="المصروفات التشغيلية" value={fmt(financialTotals.operatingExpenses)} />
             <Stat label="الرواتب" value={fmt(financialTotals.salaries)} />
             <Stat label="صافي الربح" value={fmt(financialTotals.netProfit)} green={financialTotals.netProfit >= 0} />
+            <Stat label="رأس مال الشركاء الافتتاحي" value={fmt(financialTotals.partnerOpeningCapital)} />
           </div>
           <div className="overflow-x-auto max-h-[55vh]">
             <table className="w-full text-right text-sm">
