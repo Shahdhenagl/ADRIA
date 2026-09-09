@@ -459,9 +459,10 @@ export default function Suppliers() {
       }
 
       if (editingPurchaseInvoice) {
-        await updatePurchaseInvoice(
+        const updated = await updatePurchaseInvoice(
           editingPurchaseInvoice.id,
             {
+              supplier_id: invSupplierId,
               total: invTotal,
               gross_total: invGrossTotal,
               discount_type: purchaseDiscountAmount > 0 ? purchaseDiscountType : null,
@@ -473,6 +474,9 @@ export default function Suppliers() {
           items,
           adjustedSplit as any
         );
+        // الدالة ترجع false عندما يمنع التقفيل المحاسبي التعديل؛ لا نغلق
+        // النموذج ولا نعرض نجاحاً في هذه الحالة.
+        if (!updated) return;
         alert('تم تعديل الفاتورة بنجاح وتحديث المخزن');
       } else {
         const invoiceNumber = `PO-${Date.now()}`;

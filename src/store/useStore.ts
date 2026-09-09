@@ -5,7 +5,7 @@ import { payLabelOf, ALL_PAYMENT_KEYS } from '../utils/paymentMethods';
 // الربط بين صف الموظف وصف المصروف — دوال نقية في utils عشان تتغطّى بالتستات.
 import { findLinkedSalaryExpense, findLinkedEmployeeTx } from '../utils/salaryLink';
 export { findLinkedSalaryExpense, findLinkedEmployeeTx };
-import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
+import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, isMainTreasuryPurchase, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassword, hasOfflinePassword } from '../utils/offlineCache';
 import { withTimeout, isNetworkError, NET_TIMEOUT } from '../utils/net';
@@ -915,7 +915,7 @@ interface CashierStore {
     invoice: Omit<PurchaseInvoice, 'id' | 'created_at' | 'items' | 'paid_cash' | 'paid_visa' | 'paid_wallet' | 'paid_instapay'>, 
       items: PurchaseItem[],
     splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }
-  ) => Promise<void>;
+  ) => Promise<boolean>;
   deletePurchaseInvoice: (id: string) => Promise<void>;
   paySupplierDebt: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string, fromMainTreasury?: boolean) => Promise<void>;
   collectSupplierCredit: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string, toMainTreasury?: boolean) => Promise<void>;
@@ -6501,7 +6501,7 @@ setupRealtime: () => {
   updatePurchaseInvoice: async (invoiceId, invoice, items, splitPayments) => {
     const state = get();
     const oldInvoice = state.purchaseInvoices.find(inv => inv.id === invoiceId);
-        if (!oldInvoice) throw new Error('الفاتورة غير موجودة');
+    if (!oldInvoice) throw new Error('الفاتورة غير موجودة');
     const closed = await isAccountingDayClosed(state.storeSettings, oldInvoice.created_at);
     if (closed) {
       // تعديل الخصم/تكلفة المخزون آمن بعد التقفيل، لكن تغيير المدفوع أو وسيلة الدفع
@@ -6512,7 +6512,7 @@ setupRealtime: () => {
         ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'].some((k) => Math.abs((Number((oldInvoice as any)[`paid_${k}`]) || 0) - (Number((splitPayments as any)?.[k]) || 0)) > 0.001);
       if (paymentChanged) {
         alert('اليوم المقفول يسمح بتعديل الخصم والأصناف فقط، ولا يسمح بتغيير المدفوع أو وسيلة الدفع.');
-        return;
+        return false;
       }
     }
     // 1. Revert old items impact
@@ -6554,12 +6554,15 @@ setupRealtime: () => {
         
         const finalPurchasePrice = delta.newPrice !== undefined ? delta.newPrice : product.purchase_price;
 
-        await supabase.from('products').update({
+        const { error: productError } = await supabase.from('products').update({
           stock_quantity: newStock,
           display_quantity: newDisplay,
           average_purchase_price: newAvgPrice,
           purchase_price: finalPurchasePrice
         }).eq('id', productId);
+        if (productError) {
+          throw new Error(`تعذّر تحديث مخزون المنتج: ${productError.message}`);
+        }
 
         updatedProducts[productIndex] = {
           ...product,
@@ -6576,6 +6579,7 @@ setupRealtime: () => {
     const { data: invData, error: invError } = await supabase
       .from('purchase_invoices')
       .update({
+        // مهم عند تغيير المورد أثناء التعديل؛ بدونه تظل الفاتورة مرتبطة بالمورد القديم.
         supplier_id: invoice.supplier_id,
         total: invoice.total,
         paid_amount: invoice.paid_amount,
@@ -6599,7 +6603,8 @@ setupRealtime: () => {
     if (invError) throw new Error(`خطأ في تحديث الفاتورة: ${invError.message}`);
 
     // 3. Replace Items (Delete old, Insert new)
-    await supabase.from('purchase_items').delete().eq('invoice_id', invoiceId);
+    const { error: deleteItemsError } = await supabase.from('purchase_items').delete().eq('invoice_id', invoiceId);
+    if (deleteItemsError) throw new Error(`تعذّر حذف بنود الفاتورة القديمة: ${deleteItemsError.message}`);
     
     const itemsToInsert = items.map(item => ({
       invoice_id: invoiceId,
@@ -6614,6 +6619,42 @@ setupRealtime: () => {
       if (itemsError) throw new Error(`خطأ في حفظ أصناف الفاتورة: ${itemsError.message}`);
     }
 
+    // فاتورة مدفوعة من الخزنة الرئيسية لها صفوف مقابلة في savings_transactions.
+    // عند تعديل المبلغ أو تقسيمة وسائل الدفع يجب استبدال الصفوف المرتبطة، وإلا
+    // يظل رصيد الخزنة الرئيسية بالقيمة القديمة رغم نجاح تعديل الفاتورة.
+    if (isMainTreasuryPurchase(oldInvoice)) {
+      const groupId = savingsGroupIdOf(oldInvoice.notes);
+      if (groupId) {
+        const { data: oldTreasuryRows, error: treasuryReadError } = await supabase
+          .from('savings_transactions')
+          .select('source, note, created_at')
+          .eq('group_id', groupId);
+        if (treasuryReadError) throw new Error(`تعذّر قراءة حركة الخزنة المرتبطة: ${treasuryReadError.message}`);
+
+        const { error: treasuryDeleteError } = await supabase
+          .from('savings_transactions')
+          .delete()
+          .eq('group_id', groupId);
+        if (treasuryDeleteError) throw new Error(`تعذّر تحديث حركة الخزنة المرتبطة: ${treasuryDeleteError.message}`);
+
+        const treasuryRows = (['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'] as const)
+          .map((method) => ({
+            direction: 'out',
+            amount: Number((splits as any)[method]) || 0,
+            method,
+            source: oldTreasuryRows?.[0]?.source || 'main_purchase',
+            note: oldTreasuryRows?.[0]?.note || null,
+            group_id: groupId,
+            ...(oldTreasuryRows?.[0]?.created_at ? { created_at: oldTreasuryRows[0].created_at } : {}),
+          }))
+          .filter((row) => row.amount > 0);
+        if (treasuryRows.length > 0) {
+          const { error: treasuryInsertError } = await supabase.from('savings_transactions').insert(treasuryRows);
+          if (treasuryInsertError) throw new Error(`تعذّر حفظ حركة الخزنة الجديدة: ${treasuryInsertError.message}`);
+        }
+      }
+    }
+
     // 4. Update local state
     const completeInvoice: any = {
       ...invData,
@@ -6626,6 +6667,7 @@ setupRealtime: () => {
     });
 
    new BroadcastChannel('cashier-sync').postMessage('sync_products');
+   return true;
   },
 
   deletePurchaseInvoice: async (id) => {
