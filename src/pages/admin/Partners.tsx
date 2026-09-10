@@ -107,12 +107,33 @@ export default function Partners() {
 
   const removePartner = async (p: any) => {
     const linkedRows = txs.filter((t) => t.partner_id === p.id);
-    if (Math.abs(Number(p.opening_balance) || 0) > 0.001 || linkedRows.length > 0) {
-      alert("لا يمكن حذف شريك لديه رأس مال افتتاحي أو حركات مالية. صفّر الرصيد الافتتاحي واحذف/اعكس الحركات أولاً حتى لا يختل رصيد الخزنة والتقارير.");
+    if (linkedRows.length > 0) {
+      alert('لا يمكن حذف الشريك لأن لديه معاملات مالية. احذف أو اعكس المعاملات أولًا حتى لا يختل رصيد الخزنة والتقارير.');
       return;
     }
-    if (!confirm(`حذف الشريك ${p.name}؟ (معاملاته تفضل محفوظة)`)) return;
+    const opening = Math.max(0, Number(p.opening_balance) || 0);
+    if (!confirm(opening > 0
+      ? `حذف الشريك ${p.name}؟\nسيتم عكس رأس المال الافتتاحي ${opening.toFixed(2)} ${cur} من الخزنة الرئيسية ثم حذف الشريك.`
+      : `حذف الشريك ${p.name}؟`)) return;
     const { supabase } = await import('../../lib/supabase');
+    if (opening > 0) {
+      const { data: openingTx, error: openingLookupError } = await supabase
+        .from('savings_transactions')
+        .select('id,amount,method,note')
+        .eq('source', 'partner_capital_opening')
+        .ilike('note', `%[PARTNER_OPENING:${p.id}]%`)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (openingLookupError || !openingTx) {
+        alert('تعذر العثور على حركة رأس المال الافتتاحي، لذلك لم يتم حذف الشريك حفاظًا على تطابق الخزنة.');
+        return;
+      }
+      const reversed = await recordMainTreasuryOut({ [openingTx.method || 'cash']: Number(openingTx.amount) || opening }, 'partner_capital_opening_reversal', `عكس رأس مال افتتاحي للشريك: ${p.name}`, new Date().toISOString());
+      if (!reversed) { alert('تعذر عكس رأس المال من الخزنة، ولم يتم حذف الشريك.'); return; }
+      const { error: openingDeleteError } = await supabase.from('savings_transactions').delete().eq('id', openingTx.id);
+      if (openingDeleteError) { alert('تم عكس رأس المال لكن تعذر حذف القيد الأصلي: ' + openingDeleteError.message); return; }
+    }
     const { error } = await supabase.from('partners').delete().eq('id', p.id);
     if (error) { alert('فشل حذف الشريك: ' + error.message); return; }
     setPartners((arr) => arr.filter((x) => x.id !== p.id));
