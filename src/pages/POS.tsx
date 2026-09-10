@@ -1656,6 +1656,10 @@ export default function POS() {
     const invoiceUrl = `${window.location.origin}/view-invoice/${invId}`;
     const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(invoiceUrl)}`;
     const pagesQrBlock = buildPagesQrBlock(storeSettings);
+    const invoiceReturnPolicy = String(currentSettings.invoiceReturnPolicy || '').trim();
+    const policyHtml = invoiceReturnPolicy
+      ? `<div class="invoice-policy"><div class="invoice-policy-title">سياسة الاستبدال والمرتجع</div><div class="invoice-policy-text">${escapeHtml(invoiceReturnPolicy).replace(/\n/g, '<br/>')}</div></div>`
+      : '';
     const held = orderDetails.heldBreakdown;
     const heldDate = held?.depositDate ? new Date(held.depositDate).toLocaleDateString('ar-EG', { calendar: 'gregory' }) : '—';
     const heldPaymentHtml = held ? `<div style="margin-top:5px;padding:5px;border:1px solid #000;border-radius:4px;font-size:10px;font-weight:700;"><div style="font-weight:900;border-bottom:1px dashed #000;padding-bottom:2px;margin-bottom:2px;">الدفع على جزئين — فاتورة معلقة</div><div class="summary-row"><span>العربون السابق (${heldDate}):</span><span>${held.deposit.toFixed(2)} ${currentSettings.currency}</span></div><div class="summary-row"><span>المحصّل عند التأكيد:</span><span>${held.later.toFixed(2)} ${currentSettings.currency}</span></div><div class="summary-row" style="font-weight:900;border-top:1px dashed #000;margin-top:2px;padding-top:2px;"><span>إجمالي المدفوع:</span><span>${(held.deposit + held.later).toFixed(2)} ${currentSettings.currency}</span></div></div>` : '';
@@ -1719,6 +1723,9 @@ export default function POS() {
   .qr-label{font-size:9px;font-weight:900;color:#000;text-align:center;}
 
   .footer{text-align:center;margin-top:4px;padding-top:3px;border-top:1px dashed #000;font-size:9px;color:#000;font-weight:bold;}
+  .invoice-policy{margin-top:6px;padding:5px;border:1px dashed #000;border-radius:4px;text-align:right;}
+  .invoice-policy-title{font-size:10px;font-weight:900;margin-bottom:2px;text-align:center;}
+  .invoice-policy-text{font-size:9px;font-weight:700;line-height:1.45;white-space:normal;}
 
   @media print{
     @page{size:72mm auto;margin:0;}
@@ -1801,6 +1808,8 @@ export default function POS() {
     </div>
     ${pagesQrBlock}
   </div>
+
+  ${policyHtml}
 
   <div class="footer">شكراً لتعاملكم معنا</div>
 </div>

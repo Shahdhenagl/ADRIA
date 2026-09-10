@@ -552,6 +552,13 @@ export default function PublicInvoice() {
                 {displayMethod6 > 0 && <div className="flex justify-between p-2 bg-slate-50 rounded-lg text-[11px] font-black text-slate-700"><span>{settings.paymentLabels?.method6 || 'طريقة دفع 6'}</span><span>{displayMethod6.toFixed(2)}</span></div>}
               </div>
             </div>
+
+            {!!settings.invoiceReturnPolicy?.trim() && order.type !== 'payment' && (
+              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-2 mt-4">
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest text-center border-b border-slate-200 pb-2 mb-2">سياسة الاستبدال والمرتجع</div>
+                <div className="text-xs sm:text-sm font-bold text-slate-700 text-right whitespace-pre-line leading-relaxed">{settings.invoiceReturnPolicy}</div>
+              </div>
+            )}
           </div>
 
           {/* Footer */}

@@ -459,6 +459,7 @@ export interface StoreSettings {
   pagesQrUrl?: string; // رابط صفحات المحل — QR ثابت على كل فاتورة مطبوعة
   pagesQrLabel?: string; // العنوان تحت QR الصفحات؛ افتراضي «تابعنا»
   pagesQrImage?: string; // صورة QR مرفوعة (data URL) — لها الأولوية على التوليد من الرابط
+  invoiceReturnPolicy?: string; // سياسة الاستبدال والمرتجع المطبوعة أسفل فواتير البيع والاستبدال
 }
 
 export interface Employee {
@@ -1006,6 +1007,7 @@ function mapSettings(row: Record<string, unknown>): StoreSettings {
     pagesQrUrl: (row.pages_qr_url as string) ?? '',
     pagesQrLabel: (row.pages_qr_label as string) ?? '',
     pagesQrImage: (row.pages_qr_image as string) ?? '',
+    invoiceReturnPolicy: (row.invoice_return_policy as string) ?? '',
   };
 }
 
@@ -4494,6 +4496,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     if (newSettings.pagesQrUrl !== undefined) mapped.pages_qr_url = newSettings.pagesQrUrl;
     if (newSettings.pagesQrLabel !== undefined) mapped.pages_qr_label = newSettings.pagesQrLabel;
     if (newSettings.pagesQrImage !== undefined) mapped.pages_qr_image = newSettings.pagesQrImage;
+    if (newSettings.invoiceReturnPolicy !== undefined) mapped.invoice_return_policy = newSettings.invoiceReturnPolicy;
 
     const { data: existing } = await supabase.from('store_settings').select('id').limit(1).maybeSingle();
 

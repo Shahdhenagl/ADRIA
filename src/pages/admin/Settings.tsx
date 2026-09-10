@@ -269,6 +269,18 @@ export default function Settings() {
             </div>
           </div>
 
+          <div className="sm:col-span-2">
+            <label className="block text-sm font-bold text-slate-700 mb-2">سياسة الاستبدال والمرتجع</label>
+            <textarea
+              value={formData.invoiceReturnPolicy || ''}
+              onChange={(e) => setFormData({ ...formData, invoiceReturnPolicy: e.target.value })}
+              rows={4}
+              className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none transition resize-y"
+              placeholder={'مثال:\nالاستبدال خلال 14 يومًا بالفاتورة وبحالة المنتج الأصلية.\nلا يوجد استرجاع نقدي بعد الاستخدام.'}
+            />
+            <p className="text-[11px] text-slate-400 mt-1">اكتب الصيغة التي تريدها، وستظهر تلقائيًا أسفل كل فاتورة بيع أو استبدال مطبوعة.</p>
+          </div>
+
           <div>
             <label className="block text-sm font-bold text-slate-700 mb-2">نسبة الضريبة المضافة (%)</label>
             <input 
