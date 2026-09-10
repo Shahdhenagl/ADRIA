@@ -17,6 +17,7 @@ export default function Partners() {
   const [partners, setPartners] = useState<any[]>([]);
   const [txs, setTxs] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState('');
   const [selected, setSelected] = useState<string | null>(null);
 
   // add-partner form
@@ -35,15 +36,21 @@ export default function Partners() {
 
   const load = async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const { supabase } = await import('../../lib/supabase');
       const [pRes, tRes] = await Promise.all([
         supabase.from('partners').select('*').order('created_at', { ascending: true }),
         supabase.from('partner_transactions').select('*').order('created_at', { ascending: false }),
       ]);
+      if (pRes.error) throw new Error(`تعذر تحميل الشركاء: ${pRes.error.message}`);
+      if (tRes.error) throw new Error(`تعذر تحميل معاملات الشركاء: ${tRes.error.message}`);
       setPartners((pRes.data as any[]) || []);
       setTxs((tRes.data as any[]) || []);
-    } catch (e) { console.error(e); }
+    } catch (e: any) {
+      console.error(e);
+      setLoadError(e?.message || 'تعذر تحميل بيانات الشركاء');
+    }
     setLoading(false);
   };
   useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
@@ -101,12 +108,13 @@ export default function Partners() {
   const removePartner = async (p: any) => {
     const linkedRows = txs.filter((t) => t.partner_id === p.id);
     if (Math.abs(Number(p.opening_balance) || 0) > 0.001 || linkedRows.length > 0) {
-      alert('لا يمكن حذف شريك لديه رأس مال افتتاحي أو حركات مالية. صفّر الرصيد الافتتاحي واحذف/اعكس الحركات أولاً حتى لا يختل رصيد الخزنة والتقارير.');
+      alert("لا يمكن حذف شريك لديه رأس مال افتتاحي أو حركات مالية. صفّر الرصيد الافتتاحي واحذف/اعكس الحركات أولاً حتى لا يختل رصيد الخزنة والتقارير.");
       return;
     }
     if (!confirm(`حذف الشريك ${p.name}؟ (معاملاته تفضل محفوظة)`)) return;
     const { supabase } = await import('../../lib/supabase');
-    await supabase.from('partners').delete().eq('id', p.id);
+    const { error } = await supabase.from('partners').delete().eq('id', p.id);
+    if (error) { alert('فشل حذف الشريك: ' + error.message); return; }
     setPartners((arr) => arr.filter((x) => x.id !== p.id));
   };
 
@@ -162,6 +170,12 @@ export default function Partners() {
         <h1 className="text-3xl font-black text-slate-800 dark:text-white flex items-center gap-3"><Handshake className="text-indigo-600" size={30} /> الشركاء</h1>
         <p className="text-slate-500 mt-1 font-medium text-sm">نِسب الشركاء، الرصيد الافتتاحي، والإيداع/السحب لكل شريك</p>
       </div>
+      {loadError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 font-bold flex items-center justify-between gap-3">
+          <span>{loadError}</span>
+          <button onClick={load} className="underline whitespace-nowrap">إعادة المحاولة</button>
+        </div>
+      )}
 
       {totalShare !== 100 && partners.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl px-4 py-2 text-sm font-bold text-amber-700 dark:text-amber-300">
