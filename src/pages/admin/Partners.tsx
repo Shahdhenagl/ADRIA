@@ -112,11 +112,26 @@ export default function Partners() {
 
   const resetTxForm = () => { setTxAmount(''); setTxNote(''); setEditingTx(null); };
 
+  const availableForWithdrawal = (partnerId: string) => {
+    const stats = partnerStats(partnerId);
+    if (!editingTx || editingTx.partner_id !== partnerId) return stats.net;
+    // عند تعديل حركة قديمة، أخرج أثرها مؤقتاً حتى لا تمنعنا من استبدالها
+    // بسحب صحيح أو تجعل الرصيد المتاح أكبر من الحقيقي.
+    return stats.net + (editingTx.type === 'withdraw' ? Number(editingTx.amount) || 0 : -(Number(editingTx.amount) || 0));
+  };
+
   const submitTx = async () => {
     const partner = partners.find((p) => p.id === txPartner);
     if (!partner) { alert('اختر الشريك'); return; }
     const amt = Number(txAmount) || 0;
     if (amt <= 0) { alert('أدخل مبلغاً صحيحاً'); return; }
+    if (txType === 'withdraw') {
+      const available = Math.max(0, availableForWithdrawal(partner.id));
+      if (amt > available + 0.001) {
+        alert(`لا يمكن سحب ${amt.toFixed(2)} ${cur}. المتاح لرأس مال الشريك ${partner.name} هو ${available.toFixed(2)} ${cur}.`);
+        return;
+      }
+    }
     setSaving(true);
     // نسجّل الجديد الأول، وبعدين نحذف القديم (لو تعديل) — عشان ما يحصلش فقدان بيانات لو فشل أي خطوة.
     const ok = await recordPartnerTransaction({ partner_id: partner.id, partner_name: partner.name, type: txType, amount: amt, treasury: 'main', method: txMethod, note: txNote.trim() });
@@ -166,15 +181,16 @@ export default function Partners() {
             {partners.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.share_percent || 0}%)</option>)}
           </select>
           <div className="grid grid-cols-2 gap-2">
-            <button onClick={() => setTxType('deposit')} className={`py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1 ${txType === 'deposit' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}><ArrowDownCircle size={16} /> إيداع</button>
-            <button onClick={() => setTxType('withdraw')} className={`py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1 ${txType === 'withdraw' ? 'bg-red-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}><ArrowUpCircle size={16} /> سحب</button>
+            <button onClick={() => setTxType('deposit')} className={`py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1 ${txType === 'deposit' ? 'bg-emerald-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}><ArrowDownCircle size={16} /> إضافة رأس مال</button>
+            <button onClick={() => setTxType('withdraw')} className={`py-2.5 rounded-xl font-black text-sm flex items-center justify-center gap-1 ${txType === 'withdraw' ? 'bg-red-600 text-white' : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300'}`}><ArrowUpCircle size={16} /> صرف رأس مال</button>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <div><label className="text-[11px] font-bold text-slate-500">المبلغ</label><input className={input} type="number" placeholder="0" value={txAmount} onChange={(e) => setTxAmount(e.target.value)} /></div>
             <div><label className="text-[11px] font-bold text-slate-500">الطريقة</label><select className={input} value={txMethod} onChange={(e) => setTxMethod(e.target.value)}>{METHODS.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}</select></div>
             <div><label className="text-[11px] font-bold text-slate-500">ملاحظة</label><input className={input} value={txNote} onChange={(e) => setTxNote(e.target.value)} placeholder="اختياري" /></div>
           </div>
-          <p className="text-[11px] text-slate-400">كل معاملات الشركاء تتم على <span className="font-black text-indigo-600">الخزنة الرئيسية</span>. الرصيد الافتتاحي للشريك يُسجّل كإيداع نقدي في الرئيسية ويظهر في التقارير كرأس مال، وليس إيرادًا أو ربحًا.</p>
+          <p className="text-[11px] text-slate-400">إضافة رأس المال تزيد رصيد الشريك والخزنة الرئيسية، وصرف رأس المال ينقص رصيده ويخرج من الرئيسية. لا يُحسب أي منهما إيرادًا أو مصروفًا أو ربحًا.</p>
+          {txPartner && <p className="text-xs font-black text-indigo-600">المتاح للصرف: {Math.max(0, availableForWithdrawal(txPartner)).toFixed(2)} {cur}</p>}
           <button onClick={submitTx} disabled={saving} className="w-full bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-black py-3 rounded-xl">{saving ? 'جاري...' : editingTx ? 'حفظ التعديل' : 'تسجيل المعاملة'}</button>
         </div>
 
