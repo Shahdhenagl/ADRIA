@@ -131,31 +131,33 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
       });
     }
 
-    // الاستبدالات — بتسمّع بنفس موعد الخروج/الاستبدال (exchange_data.date)
-    if (o.exchange_data) {
-      const history = Array.isArray(o.exchange_data.history) ? o.exchange_data.history : [];
-      const exchanges = [...history, o.exchange_data];
-      exchanges.forEach((x: any, idx: number) => {
-        const xDate = x.date || o.refunded_at || o.date;
-        const diff = Number(x.netDifference ?? x.difference ?? 0);
-        const xSplitSum = ALL_PAYMENT_KEYS.reduce((s, k) => s + Math.abs(Number(x[`paid_${k}`]) || 0), 0);
-        if (Math.abs(diff) > 0.001 || xSplitSum > 0.001) {
-          for (const k of ALL_PAYMENT_KEYS) {
-            const rawVal = Number(x[`paid_${k}`]) || 0;
-            const amt = xSplitSum > 0 ? Math.abs(rawVal) : shareOf(x, k, Math.abs(diff));
-            if (amt > 0.001) {
-              const isIn = rawVal !== 0 ? rawVal > 0 : diff > 0;
-              entries.push({
-                id: `${o.id}:exchange:${idx}:${k}`,
-                date: xDate,
-                method: k,
-                desc: `استبدال فاتورة #${shortId(o.id)}`,
-                inAmount: isIn ? amt : 0,
-                outAmount: isIn ? 0 : amt,
-                kind: 'return',
-              });
-            }
-          }
+    // فرق الاستبدال يُسجّل عادةً كقيد مستقل في expenses. نستخدم exchange_data
+    // كـfallback للبيانات القديمة فقط عندما لا يوجد القيد؛ هكذا لا يحدث ازدواج.
+    const exchangeRows = o.exchange_data
+      ? [...(Array.isArray(o.exchange_data.history) ? o.exchange_data.history : []), o.exchange_data]
+      : [];
+    const hasExchangeExpense = (expenses || []).some((e: any) =>
+      String(e.note || '').includes(`فاتورة #${o.id}`) && String(e.category || '').includes('استبدال')
+    );
+    if (!hasExchangeExpense) {
+      exchangeRows.forEach((x: any, idx: number) => {
+        const diff = Number(x.diff ?? x.netDifference ?? x.difference ?? 0);
+        const split = x.split && typeof x.split === 'object' ? x.split : null;
+        const total = split
+          ? ALL_PAYMENT_KEYS.reduce((sum, k) => sum + Math.abs(Number(split[k]) || 0), 0)
+          : Math.abs(diff);
+        if (total <= 0.001) return;
+        for (const k of ALL_PAYMENT_KEYS) {
+          const amount = split ? Math.abs(Number(split[k]) || 0) : k === (x.method || 'cash') ? total : 0;
+          if (amount > 0.001) entries.push({
+            id: `${o.id}:exchange-fallback:${idx}:${k}`,
+            date: x.date || o.refunded_at || o.date,
+            method: k,
+            desc: `استبدال فاتورة #${shortId(o.id)}`,
+            inAmount: diff >= 0 ? amount : 0,
+            outAmount: diff < 0 ? amount : 0,
+            kind: 'return',
+          });
         }
       });
     }

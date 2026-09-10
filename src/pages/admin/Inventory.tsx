@@ -434,6 +434,16 @@ export default function Inventory() {
     if (isNaN(qty) || qty <= 0) return alert('أدخل كمية صحيحة.');
     if (isNaN(cost) || cost < 0) return alert('أدخل تكلفة وحدة صحيحة.');
     const prod = products.find(p => p.id === intakeProductId);
+    if (!prod) return alert('المنتج غير موجود.');
+    const currentQty = Number(prod.stock_quantity) || 0;
+    const currentAvg = Number(prod.average_purchase_price ?? prod.purchase_price) || 0;
+    const nextQty = currentQty + qty;
+    const nextAvg = nextQty > 0 ? ((currentQty * currentAvg) + (qty * cost)) / nextQty : cost;
+    await updateProduct(intakeProductId, {
+      stock_quantity: nextQty,
+      average_purchase_price: nextAvg,
+      purchase_price: nextAvg,
+    }, { skipIntakeLog: true, intakeSource: 'manual' });
     await logStockIntake([{
       product_id: intakeProductId,
       product_name: prod?.name || '',

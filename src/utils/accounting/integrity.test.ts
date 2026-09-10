@@ -135,12 +135,22 @@ describe('تطابق تقسيمة الدفع', () => {
     expect(issues).toHaveLength(0);
   });
 
-  // التقسيمة مابتتعدّلش وقت المرتجع، فالمقارنة لازم تضيف المرتجع.
+  // التقسيمة تمثل التحصيل الأصلي، والمرتجع قيد مستقل لا يضاف إليها.
   it('التقسيمة بعد مرتجع تفضل مطابقة', () => {
     const issues = checkSplitConsistency(input({
       orders: [{
-        id: '1', paid_amount: 50, paid_cash: 300,
+        id: '1', paid_amount: 300, paid_cash: 300,
         items: [{ refunded_amount: 250 }],
+      }],
+    }));
+    expect(issues).toHaveLength(0);
+  });
+
+  it('لا يعتبر الاستبدال غير متطابق لأن فرق الاستبدال قيد مستقل', () => {
+    const issues = checkSplitConsistency(input({
+      orders: [{
+        id: 'exchange-1', paid_amount: 1140, paid_instapay: 985,
+        exchange_data: { originalTotal: 985, finalTotal: 1140 }, items: [],
       }],
     }));
     expect(issues).toHaveLength(0);

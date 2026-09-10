@@ -9,7 +9,7 @@ import {
 import { useStore } from '../../store/useStore';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
 import { splitStockValueBySource, totalIntakeValue } from '../../utils/stockIntake';
-import { calculateCashRefunded } from '../../utils/returns';
+import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import 'jspdf-autotable';
@@ -99,9 +99,9 @@ export default function Analytics() {
     activeOrders.forEach(order => {
       // فاتورة بيع قديمة ظهر هنا فقط لأن مرتجعها حدث داخل الفترة المختارة.
       // لا نعيد احتساب البيع الأصلي؛ نسجل أثر المرتجع السالب في يومه فقط.
+      if (order.type === 'previous_debt') return;
       if ((order as any)._saleInSelectedRange === false) {
-        const returnedRevenue = (order.items || []).reduce((sum: number, item: any) =>
-          sum + (Number(item.sale_price) || 0) * (Number(item.returned_quantity) || 0), 0);
+        const returnedRevenue = calculateOrderReturnValue(order);
         const returnedCost = (order.items || []).reduce((sum: number, item: any) =>
           sum + (Number(item.average_purchase_price) || 0) * (Number(item.returned_quantity) || 0), 0);
         revenue -= returnedRevenue;
@@ -129,7 +129,7 @@ export default function Analytics() {
       
       collectedFromInvoices += initialPaid;
       
-      const effectiveOrderTotal = Math.max(0, (Number(order.total) || 0) - calculateCashRefunded(order));
+      const effectiveOrderTotal = Math.max(0, (Number(order.total) || 0) - calculateOrderReturnValue(order));
       const grossItemsTotal = (order.items || []).reduce((sum: number, item: any) => {
         const qty = Math.max(0, (Number(item.quantity) || 0) - (Number(item.returned_quantity) || 0));
         return sum + (Number(item.sale_price) || 0) * qty;
@@ -140,7 +140,8 @@ export default function Analytics() {
         const qty = item.quantity - item.returned_quantity;
         const itemGross = (Number(item.sale_price) || 0) * qty;
         const itemRevenue = grossItemsTotal > 0 ? itemGross * (effectiveOrderTotal / grossItemsTotal) : 0;
-        const itemCost = item.average_purchase_price * qty; // Note: using average_purchase_price here for Branch 1
+        const unitCost = Number(item.average_purchase_price ?? item.purchase_price ?? 0) || 0;
+        const itemCost = unitCost * qty;
         cost += itemCost;
         netOrderTotal += itemRevenue;
 

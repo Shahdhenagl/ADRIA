@@ -181,14 +181,17 @@ export default function Reports() {
   const productSalesRows = useMemo(() => {
     const rows: any[] = [];
     orders.filter((o: any) => !o.is_deleted && o.type === 'sale' && inRange(o.date)).forEach((o: any) => {
-      const orderTotal = Number(o.total || 0);
+        const grossOrderTotal = Number(o.subtotal_before_discount || 0) > 0
+          ? Number(o.subtotal_before_discount)
+          : (o.items || []).reduce((sum: number, item: any) =>
+              sum + (Number(item.quantity || 0) * Number(item.sale_price || 0)), 0);
       const discountAmount = Number(o.discount_amount || 0);
       (o.items || []).forEach((it: any) => {
         const qty = Math.max(0, Number(it.quantity || 0) - Number(it.returned_quantity || 0));
         if (qty <= 0) return;
         const product = products.find((p: any) => p.id === it.product_id) || (it as any).products || {};
         const lineValue = qty * Number(it.sale_price || 0);
-        const rowDiscount = orderTotal > 0 ? discountAmount * (lineValue / orderTotal) : 0;
+        const rowDiscount = grossOrderTotal > 0 ? discountAmount * (lineValue / grossOrderTotal) : 0;
         const rowNet = lineValue - rowDiscount;
         if (!matchesProductFilter(product, it.product_id)) return;
         if (!matchesSupplierFilter(product)) return;

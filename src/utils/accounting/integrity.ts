@@ -133,9 +133,11 @@ export function checkSplitConsistency(input: IntegrityInput): IntegrityIssue[] {
   input.orders.filter((o) => !o.is_deleted).forEach((o) => {
     const split = ALL_PAYMENT_KEYS.reduce((s, k) => s + (Number(o['paid_' + k]) || 0), 0);
     if (split === 0) return; // مفيش تقسيمة مسجّلة — مقبول للبيانات القديمة
-    const refunded = (o.items || []).reduce((s: number, it: any) => s + (Number(it.refunded_amount) || 0), 0);
-    // التقسيمة مابتتعدّلش مع المرتجع، فالمقارنة مع المدفوع + المرتجع.
-    const expected = (Number(o.paid_amount) || 0) + refunded;
+    // paid_* تمثل التحصيل الأصلي، ولا تُزاد بقيمة المرتجع؛ المرتجع قيد خروج
+    // مستقل. كما أن exchange_data له قيد مستقل في expenses ولا يجوز مقارنته
+    // بالإجمالي النهائي بعد الاستبدال.
+    if (o.exchange_data) return;
+    const expected = Number(o.paid_amount) || 0;
     if (Math.abs(split - expected) > 0.05) {
       bad.push({ id: String(o.id), label: `فاتورة #${o.id} — تقسيمة ${money(split)} مقابل ${money(expected)}`, amount: split - expected });
     }
@@ -145,8 +147,8 @@ export function checkSplitConsistency(input: IntegrityInput): IntegrityIssue[] {
     id: 'split-mismatch',
     severity: 'warning',
     title: 'تقسيمة الدفع مش مطابقة للمبلغ',
-    detail: `${bad.length} فاتورة مجموع تقسيمتها مختلف عن المدفوع + المرتجع. الشاشات اللي بتقرا التقسيمة هتدي رقم مختلف عن اللي بتقرا الإجمالي.`,
-    fix: 'افتح الفاتورة وعدّل توزيع الدفع عشان المجموع يطابق المدفوع.',
+    detail: `${bad.length} فاتورة تقسيمة الدفع فيها مختلفة عن المدفوع الأصلي. المرتجع والاستبدال لهما قيود مستقلة ولا يدخلان في مجموع paid_*.`,
+    fix: 'راجع توزيع الدفع الأصلي فقط؛ لا تضف قيمة المرتجع أو فرق الاستبدال إلى paid_*.',
     rows: bad.slice(0, 50),
   }];
 }
