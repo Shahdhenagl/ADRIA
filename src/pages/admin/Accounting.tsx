@@ -16,6 +16,8 @@ import { runIntegrityChecks } from '../../utils/accounting/integrity';
 export default function Accounting() {
   const { orders, expenses, purchaseInvoices, employeeTransactions, products, stockIntakes, devoItems, storeSettings, loadStockIntakes, loadDevoAndWriteOffs } = useStore();
   const [savingsTransactions, setSavingsTransactions] = useState<any[]>([]);
+  const [partners, setPartners] = useState<any[]>([]);
+  const [partnerTransactions, setPartnerTransactions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'tree' | 'checks'>('tree');
 
@@ -23,8 +25,14 @@ export default function Accounting() {
     setLoading(true);
     try {
       const { fetchAllRows } = await import('../../lib/supabase');
-      const rows = await fetchAllRows('savings_transactions');
+      const [rows, partnerRows, partnerTxRows] = await Promise.all([
+        fetchAllRows('savings_transactions'),
+        fetchAllRows('partners'),
+        fetchAllRows('partner_transactions'),
+      ]);
       setSavingsTransactions(Array.isArray(rows) ? rows : []);
+      setPartners(Array.isArray(partnerRows) ? partnerRows : []);
+      setPartnerTransactions(Array.isArray(partnerTxRows) ? partnerTxRows : []);
       // حركات المخزون لازمة للطرف المقابل في المعادلة.
       await Promise.all([loadStockIntakes(), loadDevoAndWriteOffs()]);
     } catch (e) {
@@ -43,8 +51,8 @@ export default function Accounting() {
 
   const tb = useMemo(() => buildTrialBalance({
     orders, expenses, purchaseInvoices, employeeTransactions,
-    savingsTransactions, products, stockIntakes, devoItems, settings: storeSettings,
-  }), [orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, products, stockIntakes, devoItems, storeSettings]);
+    savingsTransactions, products, stockIntakes, devoItems, partners, partnerTransactions, settings: storeSettings,
+  }), [orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, products, stockIntakes, devoItems, partners, partnerTransactions, storeSettings]);
 
   const issues = useMemo(() => runIntegrityChecks({
     orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions,

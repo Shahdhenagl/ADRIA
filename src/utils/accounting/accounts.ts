@@ -68,10 +68,14 @@ export const BASE_ACCOUNTS: AccountDef[] = [
 
   // ── 3 حقوق الملكية ────────────────────────────────────────────────────────
   { code: '3', name: 'حقوق الملكية', type: 'equity' },
-  { code: '31', name: 'الأرصدة الافتتاحية / رأس المال', type: 'equity', parent: '3',
-    source: 'إعدادات المحل: الأرصدة الافتتاحية للخزنتين' },
+  { code: '31', name: 'رأس المال', type: 'equity', parent: '3',
+    source: 'الأرصدة الافتتاحية وإيداعات الشركاء' },
+  { code: '311', name: 'رأس مال الشركاء الافتتاحي', type: 'equity', parent: '31',
+    source: 'partners.opening_balance + قيد الخزنة الرئيسية المقابل' },
+  { code: '312', name: 'إيداعات رأس مال الشركاء', type: 'equity', parent: '31',
+    source: 'partner_transactions نوع deposit' },
   { code: '32', name: 'مسحوبات الشركاء والمدراء', type: 'equity', parent: '3',
-    source: 'حركات الشركاء والمدراء على الخزنة الرئيسية' },
+    source: 'partner_transactions نوع withdraw' },
   { code: '33', name: 'الأرباح المحتجزة (الفترة)', type: 'equity', parent: '3',
     source: 'الإيرادات − المصروفات (بتتحسب، مش متخزّنة)' },
   // بضاعة دخلت المخزون من غير فاتورة شراء = أصل زاد من غير ما فلوس تخرج،

@@ -67,8 +67,11 @@ export default function Partners() {
   const addPartner = async () => {
     if (!pName.trim()) { alert('اسم الشريك مطلوب'); return; }
     const opening = Math.max(0, Number(pOpening) || 0);
+    const share = Math.max(0, Number(pShare) || 0);
+    if (share > 100) { alert('نسبة الشريك لا يمكن أن تتجاوز 100%'); return; }
+    if (totalShare + share > 100.001) { alert(`مجموع النسب سيتجاوز 100% (${(totalShare + share).toFixed(2)}%)`); return; }
     const { supabase } = await import('../../lib/supabase');
-    const { data, error } = await supabase.from('partners').insert({ name: pName.trim(), share_percent: Number(pShare) || 0, opening_balance: opening }).select().single();
+    const { data, error } = await supabase.from('partners').insert({ name: pName.trim(), share_percent: share, opening_balance: opening }).select().single();
     if (error) { alert('فشل: ' + error.message); return; }
     if (data) {
       if (opening > 0) {
@@ -91,6 +94,9 @@ export default function Partners() {
     if (opening === null) return;
     const oldOpening = Math.max(0, Number(p.opening_balance) || 0);
     const newOpening = Math.max(0, Number(opening) || 0);
+    const nextShare = Math.max(0, Number(share) || 0);
+    const otherShares = totalShare - (Number(p.share_percent) || 0);
+    if (nextShare > 100 || otherShares + nextShare > 100.001) { alert('مجموع نسب الشركاء لا يمكن أن يتجاوز 100%'); return; }
     const { supabase } = await import('../../lib/supabase');
     const delta = newOpening - oldOpening;
     if (Math.abs(delta) > 0.001) {
@@ -100,9 +106,17 @@ export default function Partners() {
         : await recordMainTreasuryOut({ cash: Math.abs(delta) }, 'partner_capital_opening_reversal', note, new Date().toISOString());
       if (!ok) { alert('تعذّر تحديث أثر رأس المال في الخزنة الرئيسية.'); return; }
     }
-    const { error } = await supabase.from('partners').update({ share_percent: Number(share) || 0, opening_balance: newOpening }).eq('id', p.id);
-    if (error) { alert('تم تعديل الخزنة لكن تعذّر تحديث بيانات الشريك: ' + error.message); return; }
-    setPartners((arr) => arr.map((x) => (x.id === p.id ? { ...x, share_percent: Number(share) || 0, opening_balance: newOpening } : x)));
+    const { error } = await supabase.from('partners').update({ share_percent: nextShare, opening_balance: newOpening }).eq('id', p.id);
+    if (error) {
+      // لا نترك فرقاً في الخزنة إذا فشل تحديث سجل الشريك بعد تسجيل delta.
+      if (Math.abs(delta) > 0.001) {
+        const rollbackNote = `[PARTNER_OPENING:${p.id}] عكس فشل تعديل رأس المال: ${p.name}`;
+        if (delta > 0) await recordMainTreasuryOut({ cash: delta }, 'partner_capital_opening_rollback', rollbackNote, new Date().toISOString());
+        else await recordMainTreasuryIn({ cash: Math.abs(delta) }, 'partner_capital_opening_rollback', rollbackNote, new Date().toISOString());
+      }
+      alert('تعذّر تحديث بيانات الشريك وتمت محاولة عكس أثر الخزنة: ' + error.message); return;
+    }
+    setPartners((arr) => arr.map((x) => (x.id === p.id ? { ...x, share_percent: nextShare, opening_balance: newOpening } : x)));
   };
 
   const removePartner = async (p: any) => {

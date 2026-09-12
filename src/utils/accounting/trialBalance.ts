@@ -25,6 +25,9 @@ export interface LedgerInput {
   stockIntakes?: any[];
   /** الديڤو والتوالف — بضاعة خرجت كخسارة. */
   devoItems?: any[];
+  /** الشركاء وحركات رأس المال النقدية — الطرف المقابل لحركات الخزنة الرئيسية. */
+  partners?: any[];
+  partnerTransactions?: any[];
   settings: any;
 }
 
@@ -72,7 +75,7 @@ const refundedOf = (o: any) =>
   (o.items || o.order_items || []).reduce((s: number, it: any) => s + (Number(it.refunded_amount) || 0), 0);
 
 export function buildTrialBalance(input: LedgerInput): TrialBalance {
-  const { orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, products, stockIntakes, devoItems, settings } = input;
+  const { orders, expenses, purchaseInvoices, employeeTransactions, savingsTransactions, products, stockIntakes, devoItems, partners, partnerTransactions, settings } = input;
   const byCode: Record<string, number> = {};
   const partsByCode: Record<string, Record<string, number>> = {};
   const add = (code: string, v: number) => { byCode[code] = (byCode[code] || 0) + v; };
@@ -228,7 +231,21 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
   const openingCapital =
     ALL_PAYMENT_KEYS.reduce((s, k) => s + openingBalanceOf(settings, k), 0) +
     ALL_PAYMENT_KEYS.reduce((s, k) => s + savingsOpeningBalanceOf(settings, k), 0);
+  const partnerOpeningCapital = (partners || [])
+    .reduce((s, p) => s + Math.max(0, Number(p.opening_balance) || 0), 0);
   add('31', openingCapital);
+  add('311', partnerOpeningCapital);
+
+  // رأس مال الشريك النقدي له طرفان متطابقان: دخول في الخزنة الرئيسية
+  // (savings_transactions) وقيد ملكية في دفتر الشركاء. لا يُعامل كإيراد.
+  const partnerDeposits = (partnerTransactions || [])
+    .filter((t) => t.type === 'deposit')
+    .reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
+  const partnerWithdrawals = (partnerTransactions || [])
+    .filter((t) => t.type === 'withdraw')
+    .reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0);
+  add('312', partnerDeposits);
+  add('32', -partnerWithdrawals);
 
   // ── 34 مخزون داخل بدون فاتورة + 55 خسائر الديڤو ──────────────────────────
   // الإدخال بدون شراء بيزوّد أصل من غير ما فلوس تخرج، فلازم يقابله طرف في
