@@ -5,8 +5,9 @@ import { openPrintWindow } from '../../utils/printWindow';
 import { escapeHtml } from '../../utils/escapeHtml';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
+import { buildPaymentLedger } from '../../utils/paymentLedger';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
-import { applySplit, isInternalTransfer, routeInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundRecordOf } from '../../utils/treasury';
+import { applySplit, isInternalTransfer, isMainTreasuryExpense } from '../../utils/treasury';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 import { intakeSourceLabel } from '../../utils/stockIntake';
 import { normalizeArabic } from '../../utils/textUtils';
@@ -53,62 +54,31 @@ export default function Reports() {
   const dateOf = (row: any) => row?.created_at || row?.date || row?.timestamp;
   const inRange = (dt: any) => { const d = new Date(dt); return !Number.isNaN(d.getTime()) && d >= start && d < end; };
 
-  // ── per-method in/out (with manual-income handling) ──
+  // ── per-method in/out ──
+  // نفس دفتر PaymentAccounts/POS حتى لا تختلف التقارير عن كشف الوسائل في
+  // المرتجعات، الفواتير القديمة، التقسيمات، والتحويلات الداخلية.
   const computeMethods = (rangeOnly: boolean, beforeStart = false) => {
     const inN: Record<string, number> = {}; ALL_PAYMENT_KEYS.forEach((k) => { inN[k] = 0; });
     const outN: Record<string, number> = {}; ALL_PAYMENT_KEYS.forEach((k) => { outN[k] = 0; });
     const pass = (dt: any) => beforeStart ? new Date(dt) < start : (rangeOnly ? inRange(dt) : true);
-    const add = (target: Record<string, number>, rec: any, field: string, methodOverride?: string) =>
-      applySplit(target, rec, field, { methodOverride });
-
-    const splitsSumAbs = (rec: any) => ALL_PAYMENT_KEYS.reduce((t, k) => t + Math.abs(Number(rec?.['paid_' + k]) || 0), 0);
-    const absSplits = (rec: any) => {
-      const out: any = { ...rec };
-      ALL_PAYMENT_KEYS.forEach((k) => { out['paid_' + k] = Math.abs(Number(rec?.['paid_' + k]) || 0); });
-      return out;
+    const add = (target: Record<string, number>, entry: any, direction: 'in' | 'out') => {
+      ALL_PAYMENT_KEYS.forEach((k) => {
+        const amount = Number(direction === 'in' ? entry.inAmount : entry.outAmount) || 0;
+        if (amount > 0 && entry.method === k) target[k] += amount;
+      });
     };
-
-    const debtByInvoice = new Map<string, number>();
-    orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
-      if (o.type === 'payment' && /سداد [آأ]?جل للفاتورة رقم #/.test(o.notes || '')) {
-        const match = String(o.notes || '').match(/سداد [آأ]?جل للفاتورة رقم #([\w-]+)/);
-        if (match?.[1]) debtByInvoice.set(match[1], (debtByInvoice.get(match[1]) || 0) + (Number(o.paid_amount) || 0));
-      }
+    const ledger = buildPaymentLedger(orders, extra.expenses, extra.purchases);
+    ledger.filter((entry) => pass(entry.date)).forEach((entry) => {
+      if (entry.inAmount > 0) add(inN, entry, 'in');
+      if (entry.outAmount > 0) add(outN, entry, 'out');
     });
 
-    orders.filter((o: any) => !o.is_deleted).forEach((o: any) => {
-      if ((o.type === 'sale' || o.type === 'payment') && pass(o.date) && !isMainTreasuryOrder(o)) {
-        let paid = Number(o.paid_amount) || 0;
-        if (o.type === 'sale') {
-          const splitSum = splitsSumAbs(o);
-          const refunded = calculateCashRefunded(o);
-          paid = splitSum > 0 ? splitSum : Math.max(0, paid - (debtByInvoice.get(o.id) || 0) + refunded);
-        }
-        if (paid > 0.001) add(inN, { ...o, paid_amount: paid }, 'paid_amount');
-      }
-      const ref = calculateCashRefunded(o);
-      // المرتجع على يوم الاسترجاع (refunded_at) لا يوم البيع؛ fallback للتاريخ القديم.
-      if (ref > 0 && pass(o.refunded_at || o.date)) add(outN, refundRecordOf(o, ref), 'paid_amount');
-    });
-    extra.expenses.filter((e) => !isMainTreasuryExpense(e) && pass(dateOf(e))).forEach((e) => {
-      const amt = Number(e.amount) || 0;
-      if (isInternalTransfer(e.category)) { routeInternalTransfer(inN, outN, e); return; }
-      if (amt < 0) add(inN, { ...absSplits(e), amount: Math.abs(amt) }, 'amount');
-      else add(outN, e, 'amount');
-    });
-    extra.purchases.filter((p) => !isMainTreasuryPurchase(p) && pass(dateOf(p))).forEach((p) => {
-      const paid = Number(p.paid_amount) || 0;
-      if (paid > 0) add(outN, p, 'paid_amount');
-      else if (paid < 0) add(inN, { ...absSplits(p), paid_amount: Math.abs(paid) }, 'paid_amount');
-    });
-
-    // الراتب متسجّل مرتين (صف موظف + مصروف «رواتب») فبنعدّه مرة واحدة.
-    // الأولوية للربط الصريح employee_transaction_id (db/49)، والمطابقة الهشّة
-    // للصفوف القديمة بس — راجع findLinkedSalaryExpense في الستور.
+    // الرواتب مصدرها employee_transactions، ودفتر وسائل الدفع لا يكررها
+    // لأن صف المصروف المرآة موجود في expenses.
     const hasMatchingSalaryExpense = (tx: any) => Boolean(findLinkedSalaryExpense(extra.expenses as any[], tx));
     extra.salaries
-      .filter((s) => !isMainTreasuryExpense(s) && !hasMatchingSalaryExpense(s) && pass(dateOf(s)))
-      .forEach((s) => add(outN, s, 'amount'));
+      .filter((s) => !isMainTreasuryExpense(s) && !hasMatchingSalaryExpense(s) && pass(s.created_at))
+      .forEach((s) => applySplit(outN, s, 'amount'));
     return { inN, outN };
   };
 
