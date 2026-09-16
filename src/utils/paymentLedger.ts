@@ -7,7 +7,7 @@
  */
 import { ALL_PAYMENT_KEYS, type PaymentKey } from './paymentMethods';
 import { calculateCashRefunded } from './returns';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isReservationReclassification, stripTreasuryMarkers, refundPartsOf } from './treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isReservationReclassification, isSavingsTransfer, stripTreasuryMarkers, refundPartsOf } from './treasury';
 
 export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'income' | 'purchase' | 'purchase_return' | 'transfer';
 
@@ -168,6 +168,28 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
     // «تحويل حجز» إعادة تصنيف لعربون سبق تحصيله، وليس خروجًا جديدًا من درج المحل.
     // يجب استبعاده هنا أيضًا؛ وإلا يظهر فرق زائف في صفحة الحسابات، مثل 400 + 400 = 800.
     if (isReservationReclassification(e.category)) continue;
+    // تحويلات الخزائن قد تحتوي عمدًا على وسائل موجبة وسالبة في نفس العملية.
+    // لا نمررها عبر shareOf: ذلك يجمع القيم المطلقة ثم يعيد توزيع صافي amount،
+    // فيحوّل أرقامًا صحيحة مثل 7,160 إلى كسور (مثل 6,341.71). نعرض كل paid_*
+    // كما سُجّل، مع اعتبار الإشارة اتجاه الحركة في كشف خزنة المحل.
+    if (isSavingsTransfer(e.category)) {
+      const fromMain = e.category === 'تحويل من الخزنة الرئيسية';
+      for (const k of ALL_PAYMENT_KEYS) {
+        const raw = Number(e[`paid_${k}`]) || 0;
+        if (Math.abs(raw) <= 0.001) continue;
+        const isIn = fromMain ? raw > 0 : raw < 0;
+        entries.push({
+          id: `${e.id}:${k}`,
+          date: e.date,
+          method: k,
+          desc: stripTreasuryMarkers(e.note) || e.category,
+          inAmount: isIn ? Math.abs(raw) : 0,
+          outAmount: isIn ? 0 : Math.abs(raw),
+          kind: 'transfer',
+        });
+      }
+      continue;
+    }
     const sum = splitsSumAbs(e);
     const isTransfer = Math.abs(e.amount || 0) < 0.001 && sum > 0;
     if (isTransfer) {
