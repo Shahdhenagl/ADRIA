@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
+  preview: {
+    allowedHosts: true,
+  },
   test: {
     exclude: ['**/node_modules/**', '**/e2e/**'],
     setupFiles: ['./tests/setup.ts'],
