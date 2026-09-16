@@ -9,7 +9,7 @@ const TREASURIES = [
 ];
 
 export default function Partners() {
-  const { storeSettings, recordPartnerTransaction, deletePartnerTransaction, recordMainTreasuryIn, recordMainTreasuryOut } = useStore();
+  const { storeSettings, recordPartnerTransaction, deletePartnerTransaction } = useStore();
   const cur = storeSettings.currency;
   const METHODS = activePaymentKeys(storeSettings as any).map((k) => ({ key: k, label: payLabelOf(storeSettings as any, k) }));
   const input = 'w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2.5 text-sm font-bold text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-indigo-500 outline-none';
@@ -74,15 +74,6 @@ export default function Partners() {
     const { data, error } = await supabase.from('partners').insert({ name: pName.trim(), share_percent: share, opening_balance: opening }).select().single();
     if (error) { alert('فشل: ' + error.message); return; }
     if (data) {
-      if (opening > 0) {
-        const note = `[PARTNER_OPENING:${data.id}] رأس مال افتتاحي للشريك: ${pName.trim()}`;
-        const cashRecorded = await recordMainTreasuryIn({ cash: opening }, 'partner_capital_opening', note, new Date().toISOString());
-        if (!cashRecorded) {
-          await supabase.from('partners').delete().eq('id', data.id);
-          alert('تم إلغاء إضافة الشريك لأن إيداع رأس المال في الخزنة الرئيسية فشل.');
-          return;
-        }
-      }
       setPartners((p) => [...p, data as any]); setPName(''); setPShare(''); setPOpening('');
     }
   };
@@ -92,29 +83,14 @@ export default function Partners() {
     if (share === null) return;
     const opening = prompt(`الرصيد الافتتاحي النقدي لـ ${p.name}`, String(p.opening_balance ?? 0));
     if (opening === null) return;
-    const oldOpening = Math.max(0, Number(p.opening_balance) || 0);
     const newOpening = Math.max(0, Number(opening) || 0);
     const nextShare = Math.max(0, Number(share) || 0);
     const otherShares = totalShare - (Number(p.share_percent) || 0);
     if (nextShare > 100 || otherShares + nextShare > 100.001) { alert('مجموع نسب الشركاء لا يمكن أن يتجاوز 100%'); return; }
     const { supabase } = await import('../../lib/supabase');
-    const delta = newOpening - oldOpening;
-    if (Math.abs(delta) > 0.001) {
-      const note = `[PARTNER_OPENING:${p.id}] رأس مال افتتاحي للشريك: ${p.name}`;
-      const ok = delta > 0
-        ? await recordMainTreasuryIn({ cash: delta }, 'partner_capital_opening', note, new Date().toISOString())
-        : await recordMainTreasuryOut({ cash: Math.abs(delta) }, 'partner_capital_opening_reversal', note, new Date().toISOString());
-      if (!ok) { alert('تعذّر تحديث أثر رأس المال في الخزنة الرئيسية.'); return; }
-    }
     const { error } = await supabase.from('partners').update({ share_percent: nextShare, opening_balance: newOpening }).eq('id', p.id);
     if (error) {
-      // لا نترك فرقاً في الخزنة إذا فشل تحديث سجل الشريك بعد تسجيل delta.
-      if (Math.abs(delta) > 0.001) {
-        const rollbackNote = `[PARTNER_OPENING:${p.id}] عكس فشل تعديل رأس المال: ${p.name}`;
-        if (delta > 0) await recordMainTreasuryOut({ cash: delta }, 'partner_capital_opening_rollback', rollbackNote, new Date().toISOString());
-        else await recordMainTreasuryIn({ cash: Math.abs(delta) }, 'partner_capital_opening_rollback', rollbackNote, new Date().toISOString());
-      }
-      alert('تعذّر تحديث بيانات الشريك وتمت محاولة عكس أثر الخزنة: ' + error.message); return;
+      alert('تعذّر تحديث بيانات الشريك: ' + error.message); return;
     }
     setPartners((arr) => arr.map((x) => (x.id === p.id ? { ...x, share_percent: nextShare, opening_balance: newOpening } : x)));
   };
@@ -125,29 +101,8 @@ export default function Partners() {
       alert('لا يمكن حذف الشريك لأن لديه معاملات مالية. احذف أو اعكس المعاملات أولًا حتى لا يختل رصيد الخزنة والتقارير.');
       return;
     }
-    const opening = Math.max(0, Number(p.opening_balance) || 0);
-    if (!confirm(opening > 0
-      ? `حذف الشريك ${p.name}؟\nسيتم عكس رأس المال الافتتاحي ${opening.toFixed(2)} ${cur} من الخزنة الرئيسية ثم حذف الشريك.`
-      : `حذف الشريك ${p.name}؟`)) return;
+    if (!confirm(`حذف الشريك ${p.name}؟`)) return;
     const { supabase } = await import('../../lib/supabase');
-    if (opening > 0) {
-      const { data: openingTx, error: openingLookupError } = await supabase
-        .from('savings_transactions')
-        .select('id,amount,method,note')
-        .eq('source', 'partner_capital_opening')
-        .ilike('note', `%[PARTNER_OPENING:${p.id}]%`)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (openingLookupError || !openingTx) {
-        alert('تعذر العثور على حركة رأس المال الافتتاحي، لذلك لم يتم حذف الشريك حفاظًا على تطابق الخزنة.');
-        return;
-      }
-      const reversed = await recordMainTreasuryOut({ [openingTx.method || 'cash']: Number(openingTx.amount) || opening }, 'partner_capital_opening_reversal', `عكس رأس مال افتتاحي للشريك: ${p.name}`, new Date().toISOString());
-      if (!reversed) { alert('تعذر عكس رأس المال من الخزنة، ولم يتم حذف الشريك.'); return; }
-      const { error: openingDeleteError } = await supabase.from('savings_transactions').delete().eq('id', openingTx.id);
-      if (openingDeleteError) { alert('تم عكس رأس المال لكن تعذر حذف القيد الأصلي: ' + openingDeleteError.message); return; }
-    }
     const { error } = await supabase.from('partners').delete().eq('id', p.id);
     if (error) { alert('فشل حذف الشريك: ' + error.message); return; }
     setPartners((arr) => arr.filter((x) => x.id !== p.id));

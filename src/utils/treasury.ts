@@ -131,6 +131,11 @@ export const isReservationReclassification = (category: any): boolean => categor
 export const isSavingsTransfer = (category: any): boolean =>
   category === 'تحويل للخزنة الرئيسية' || category === 'تحويل من الخزنة الرئيسية';
 
+// رأس المال الافتتاحي القديم يثبت حق الشريك فقط؛ لا يمثل نقدية متاحة حاليًا.
+// يظل السجل موجودًا للتدقيق، لكن لا يدخل في رصيد الخزنة الرئيسية.
+export const isPartnerCapitalOpening = (source: any): boolean =>
+  String(source || '') === 'partner_capital_opening';
+
 export const MAIN_TREASURY_MARKER = '[MAIN_TREASURY]';
 
 export function markMainTreasuryNote(note?: string): string {

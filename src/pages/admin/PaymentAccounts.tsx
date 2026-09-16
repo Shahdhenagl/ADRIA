@@ -3,7 +3,7 @@ import { useStore } from '../../store/useStore';
 import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
 import { activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, ALL_PAYMENT_KEYS, type PaymentKey } from '../../utils/paymentMethods';
 import { addTreasuryCounterpartsForAll, buildPaymentLedger, type LedgerEntry, type LedgerKind } from '../../utils/paymentLedger';
-import { computeShopAvailable, stripTreasuryMarkers } from '../../utils/treasury';
+import { computeShopAvailable, isPartnerCapitalOpening, stripTreasuryMarkers } from '../../utils/treasury';
 import { businessDayRange } from '../../utils/businessDay';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
@@ -97,7 +97,7 @@ export default function PaymentAccounts() {
   // كشف خزنة المحل (فواتير/مصاريف/مشتريات) — يستبعد المعلّم بـ [MAIN_TREASURY].
   const shopLedger = useMemo(() => buildPaymentLedger(orders, expenses, purchaseInvoices), [orders, expenses, purchaseInvoices]);
   // كشف الخزنة الرئيسية (حساب مستقل) من جدول savings_transactions.
-  const mainLedger = useMemo<LedgerEntry[]>(() => (savRows || []).map((t) => {
+  const mainLedger = useMemo<LedgerEntry[]>(() => (savRows || []).filter((t) => !isPartnerCapitalOpening(t.source)).map((t) => {
     const amt = Number(t.amount) || 0;
     return {
       id: `sav:${t.id}`,

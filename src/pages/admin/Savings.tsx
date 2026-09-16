@@ -2,7 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { PiggyBank, ArrowLeftRight, Banknote, Save, Trash2 } from 'lucide-react';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
-import { computeShopAvailable, markMainTreasuryNote, markSavingsGroupNote } from '../../utils/treasury';
+import { computeShopAvailable, isPartnerCapitalOpening, markMainTreasuryNote, markSavingsGroupNote } from '../../utils/treasury';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 import { businessDateStr } from '../../utils/businessDay';
 
@@ -96,7 +96,7 @@ export default function Savings() {
       const sav = zero();
       ALL_PAYMENT_KEYS.forEach((k) => { sav[k] += savingsOpeningBalanceOf(storeSettings as any, k); });
       const list = (savRes.data as any[]) || [];
-      list.forEach((t) => { const m = t.method || 'cash'; if (sav[m] === undefined) return; sav[m] += (t.direction === 'in' ? 1 : -1) * (Number(t.amount) || 0); });
+      list.filter((t) => !isPartnerCapitalOpening(t.source)).forEach((t) => { const m = t.method || 'cash'; if (sav[m] === undefined) return; sav[m] += (t.direction === 'in' ? 1 : -1) * (Number(t.amount) || 0); });
       setSavingsBal(sav);
       setTxs(list);
     } catch (e) { console.error(e); }

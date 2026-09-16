@@ -1,7 +1,7 @@
 import { ALL_PAYMENT_KEYS, openingBalanceOf, savingsOpeningBalanceOf } from '../paymentMethods';
 import {
   applySplit, isInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder,
-  isMainTreasuryPurchase, refundRecordOf,
+  isMainTreasuryPurchase, isPartnerCapitalOpening, refundRecordOf,
 } from '../treasury';
 import type { AccountType } from './accounts';
 import { calculateCustomerDebt } from '../customerDebt';
@@ -136,7 +136,7 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
   // ── 112 الخزنة الرئيسية ──────────────────────────────────────────────────
   const main = zero();
   ALL_PAYMENT_KEYS.forEach((k) => { main[k] += savingsOpeningBalanceOf(settings, k); });
-  (savingsTransactions || []).forEach((s) => {
+  (savingsTransactions || []).filter((s) => !isPartnerCapitalOpening(s.source)).forEach((s) => {
     const m = ALL_PAYMENT_KEYS.includes(s.method) ? s.method : 'cash';
     const amt = Number(s.amount) || 0;
     main[m] += s.direction === 'in' ? amt : -amt;
