@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { supabase, fetchAllRows } from '../../lib/supabase';
-import { activePaymentKeys, payLabelOf, savingsOpeningBalanceOf } from '../../utils/paymentMethods';
+import { activePaymentKeys, payLabelOf, operationalSavingsOpeningBalanceOf } from '../../utils/paymentMethods';
 import { newSavingsGroupId } from '../../utils/treasury';
 import { PiggyBank, Plus, Trash2, Wallet, ArrowDownToLine, ArrowUpFromLine, Landmark, User } from 'lucide-react';
 
@@ -63,7 +63,7 @@ export default function PersonalSavings() {
   // رصيد الخزنة الرئيسية لكل وسيلة = افتتاحي + (داخل − خارج) من دفتر الرئيسية.
   const mainBal = useMemo(() => {
     const b: Split = {};
-    keys.forEach((k) => { b[k] = savingsOpeningBalanceOf(storeSettings as any, k); });
+    keys.forEach((k) => { b[k] = operationalSavingsOpeningBalanceOf(storeSettings as any, k); });
     savingsTxs.forEach((t) => { const m = t.method || 'cash'; if (b[m] === undefined) return; b[m] += (t.direction === 'in' ? 1 : -1) * (Number(t.amount) || 0); });
     return b;
     // eslint-disable-next-line react-hooks/exhaustive-deps

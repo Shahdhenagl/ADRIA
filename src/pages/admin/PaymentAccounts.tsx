@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { Landmark, Save, Download, Search, Banknote, CreditCard, Wallet as WalletIcon, Smartphone, Zap, ArrowDownLeft, ArrowUpRight, FileText } from 'lucide-react';
-import { activePaymentKeys, payLabelOf, openingBalanceOf, savingsOpeningBalanceOf, ALL_PAYMENT_KEYS, type PaymentKey } from '../../utils/paymentMethods';
+import { activePaymentKeys, payLabelOf, openingBalanceOf, operationalSavingsOpeningBalanceOf, ALL_PAYMENT_KEYS, type PaymentKey } from '../../utils/paymentMethods';
 import { addTreasuryCounterpartsForAll, buildPaymentLedger, type LedgerEntry, type LedgerKind } from '../../utils/paymentLedger';
 import { computeShopAvailable, isPartnerCapitalOpening, stripTreasuryMarkers } from '../../utils/treasury';
 import { businessDayRange } from '../../utils/businessDay';
@@ -45,8 +45,8 @@ export default function PaymentAccounts() {
   // الرصيد الافتتاحي للوسيلة حسب النطاق: المحل (paymentOpeningBalances)،
   // الرئيسية (savingsOpeningBalances)، أو مجموعهما في «الكل».
   const openingOf = (k: string): number => {
-    if (scope === 'main') return savingsOpeningBalanceOf(storeSettings as any, k);
-    if (scope === 'all') return openingBalanceOf(storeSettings as any, k) + savingsOpeningBalanceOf(storeSettings as any, k);
+    if (scope === 'main') return operationalSavingsOpeningBalanceOf(storeSettings as any, k);
+    if (scope === 'all') return openingBalanceOf(storeSettings as any, k) + operationalSavingsOpeningBalanceOf(storeSettings as any, k);
     return openingBalanceOf(storeSettings as any, k);
   };
 
@@ -134,12 +134,12 @@ export default function PaymentAccounts() {
   // الافتتاحي + الوارد - الصادر. فلتر «الكل» يجب أن يساوي المحل + الرئيسية.
   const currentMainBalance = useMemo(() => {
     const result: Record<string, number> = {};
-    ALL_PAYMENT_KEYS.forEach((k) => { result[k] = savingsOpeningBalanceOf(storeSettings as any, k); });
+    ALL_PAYMENT_KEYS.forEach((k) => { result[k] = operationalSavingsOpeningBalanceOf(storeSettings as any, k); });
     for (const e of mainLedger) {
       result[e.method] = (result[e.method] || 0) + e.inAmount - e.outAmount;
     }
     return result;
-  }, [mainLedger, storeSettings.savingsOpeningBalances]);
+  }, [mainLedger]);
 
   const currentAllBalance = useMemo(() => {
     const result: Record<string, number> = {};

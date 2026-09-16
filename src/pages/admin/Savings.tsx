@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { PiggyBank, ArrowLeftRight, Banknote, Save, Trash2 } from 'lucide-react';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, operationalSavingsOpeningBalanceOf, primaryMethod } from '../../utils/paymentMethods';
 import { computeShopAvailable, isPartnerCapitalOpening, markMainTreasuryNote, markSavingsGroupNote } from '../../utils/treasury';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 import { businessDateStr } from '../../utils/businessDay';
@@ -50,7 +50,7 @@ export default function Savings() {
   const [savingOpen, setSavingOpen] = useState(false);
   useEffect(() => {
     const d: Record<string, string> = {};
-    METHODS.forEach((m) => { d[m.key] = String(savingsOpeningBalanceOf(storeSettings as any, m.key)); });
+    METHODS.forEach((m) => { d[m.key] = String(operationalSavingsOpeningBalanceOf(storeSettings as any, m.key)); });
     setOpenDraft(d);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeSettings.savingsOpeningBalances, METHODS.map((m) => m.key).join(',')]);
@@ -94,7 +94,7 @@ export default function Savings() {
 
       // رصيد الخزنة الرئيسية لكل وسيلة = رصيد افتتاحي + (داخل − خارج)
       const sav = zero();
-      ALL_PAYMENT_KEYS.forEach((k) => { sav[k] += savingsOpeningBalanceOf(storeSettings as any, k); });
+    ALL_PAYMENT_KEYS.forEach((k) => { sav[k] += operationalSavingsOpeningBalanceOf(storeSettings as any, k); });
       const list = (savRes.data as any[]) || [];
       list.filter((t) => !isPartnerCapitalOpening(t.source)).forEach((t) => { const m = t.method || 'cash'; if (sav[m] === undefined) return; sav[m] += (t.direction === 'in' ? 1 : -1) * (Number(t.amount) || 0); });
       setSavingsBal(sav);

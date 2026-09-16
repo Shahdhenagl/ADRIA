@@ -8,7 +8,7 @@ import {
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, operationalSavingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
 import { calculateCashRefunded } from '../../utils/returns';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 import { computeShopAvailable, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundPartsOf } from '../../utils/treasury';
@@ -465,8 +465,8 @@ export default function Budget() {
       ? activePayKeys.reduce((sum, key) => sum + (currentShopBalance[key] || 0), 0)
       : (currentShopBalance[methodFilter] || 0);
     const mainOpeningForFilter = methodFilter === 'all'
-      ? activePayKeys.reduce((sum, key) => sum + savingsOpeningBalanceOf(storeSettings as any, key), 0)
-      : savingsOpeningBalanceOf(storeSettings as any, methodFilter);
+      ? activePayKeys.reduce((sum, key) => sum + operationalSavingsOpeningBalanceOf(storeSettings as any, key), 0)
+      : operationalSavingsOpeningBalanceOf(storeSettings as any, methodFilter);
     const mainTreasuryBalance = mainOpeningForFilter + savingsTransactions
       .filter((tx) => new Date(tx.created_at || tx.date || 0) <= endOfPeriod)
       .filter((tx) => methodFilter === 'all' || tx.method === methodFilter || tx.payment_method === methodFilter)

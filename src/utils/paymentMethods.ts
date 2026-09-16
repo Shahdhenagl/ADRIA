@@ -98,6 +98,14 @@ export function savingsOpeningBalanceOf(settings: any, k: string): number {
   return 0;
 }
 
+/**
+ * الأرصدة المسجلة عند بداية النشاط تُعامل كرأس مال تاريخي فقط، وليست نقدية
+ * متاحة حاليًا. تُستخدم هذه القيمة في حقوق الملكية، لا في أرصدة الخزائن.
+ */
+export function operationalSavingsOpeningBalanceOf(_settings: any, _k: string): number {
+  return 0;
+}
+
 /** The dominant method in a split (largest amount), defaulting to cash. */
 export function primaryMethod(split: PaymentSplit | undefined): PaymentKey {
   let best: PaymentKey = 'cash';

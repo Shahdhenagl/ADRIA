@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { Briefcase, Plus, Banknote, Trash2 } from 'lucide-react';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, savingsOpeningBalanceOf } from '../../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, operationalSavingsOpeningBalanceOf } from '../../utils/paymentMethods';
 import { computeShopAvailable, isMainTreasuryExpense, stripTreasuryMarkers, savingsGroupIdOf } from '../../utils/treasury';
 
 export default function Managers() {
@@ -60,7 +60,7 @@ export default function Managers() {
       // رصيد الخزنة الرئيسية لكل وسيلة = افتتاحي + (داخل − خارج) — نفس معادلة
       // صفحة الخزنة الرئيسية بالحرف عشان الصفحتين يدّوا نفس الرقم.
       const main: Record<string, number> = {};
-      ALL_PAYMENT_KEYS.forEach((k) => { main[k] = savingsOpeningBalanceOf(storeSettings as any, k); });
+      ALL_PAYMENT_KEYS.forEach((k) => { main[k] = operationalSavingsOpeningBalanceOf(storeSettings as any, k); });
       ((savRows as any[]) || []).forEach((t) => {
         const m = t.method || 'cash';
         if (main[m] === undefined) return;
