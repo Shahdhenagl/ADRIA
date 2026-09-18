@@ -134,9 +134,8 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
   ALL_PAYMENT_KEYS.forEach((k, i) => { byCode[`111${i + 1}`] = shop[k] || 0; });
 
   // ── 112 الخزنة الرئيسية ──────────────────────────────────────────────────
-  // الأرصدة الافتتاحية القديمة تمثل رأس مال تاريخيًا، وليست نقدية متاحة حاليًا.
-  // لذلك لا تدخل في أصل الخزنة الرئيسية، لكنها تبقى في حساب حقوق الملكية أدناه.
   const main = zero();
+  ALL_PAYMENT_KEYS.forEach((k) => { main[k] += savingsOpeningBalanceOf(settings, k); });
   (savingsTransactions || []).filter((s) => !isPartnerCapitalOpening(s.source)).forEach((s) => {
     const m = ALL_PAYMENT_KEYS.includes(s.method) ? s.method : 'cash';
     const amt = Number(s.amount) || 0;
