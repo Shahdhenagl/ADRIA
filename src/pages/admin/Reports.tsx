@@ -7,7 +7,7 @@ import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, totalOpeningBalance } 
 import { calculateCashRefunded, calculateOrderReturnValue } from '../../utils/returns';
 import { buildPaymentLedger } from '../../utils/paymentLedger';
 import { calculateInvoiceProfit } from '../../utils/invoiceProfit';
-import { applySplit, isInternalTransfer, isMainTreasuryExpense } from '../../utils/treasury';
+import { applySplit, isInternalTransfer, isMainTreasuryExpense, isSavingsTransfer } from '../../utils/treasury';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
 import { intakeSourceLabel } from '../../utils/stockIntake';
 import { normalizeArabic } from '../../utils/textUtils';
@@ -118,10 +118,10 @@ export default function Reports() {
       return ['مورد', 'المورد', 'supplier'].some(w => text.includes(w)) && ['سداد', 'دفع', 'مديونية', 'حسابات', 'pay', 'payment', 'debt'].some(w => text.includes(w));
     };
     const operatingExpenses = extra.expenses
-      .filter((e: any) => inRange(dateOf(e)) && !isMainTreasuryExpense(e) && !isInternalTransfer(e.category) && e.category !== 'حجز' && e.category !== 'تحويل حجز' && e.category !== 'رواتب' && !isSupplierMovement(e) && Number(e.amount) > 0)
+      .filter((e: any) => inRange(dateOf(e)) && !isMainTreasuryExpense(e) && !isSavingsTransfer(e.category) && !isInternalTransfer(e.category) && e.category !== 'حجز' && e.category !== 'تحويل حجز' && e.category !== 'رواتب' && !isSupplierMovement(e) && Number(e.amount) > 0)
       .reduce((s: number, e: any) => s + Number(e.amount || 0), 0);
     const salaries = extra.salaries
-      .filter((s: any) => inRange(dateOf(s)) && !isMainTreasuryExpense(s))
+      .filter((s: any) => inRange(dateOf(s)))
       .reduce((sum: number, s: any) => sum + Number(s.amount || 0), 0);
     const costOfGoodsSold = Math.max(0, salesTotals.total - salesTotals.profit);
     const totalExpenses = costOfGoodsSold + operatingExpenses + salaries;
