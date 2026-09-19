@@ -96,8 +96,15 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       return { ...item, quantity, returned_quantity: Math.min((item as any).returned_quantity || 0, quantity) };
     })
     .filter((item) => item.quantity > 0) : [];
-  const selectedOldTotal = selectedOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
-  const keptOldTotal = keptOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
+  // الفاتورة 1100 مثال مهم: مجموع أسعار الأصناف 900، لكن إجمالي الفاتورة
+  // بعد خصم 100 هو 800. في الاستبدال يجب رد/تحصيل قيمة الفاتورة الفعلية،
+  // لا مجموع الأسعار قبل الخصم.
+  const originalItemsGross = originalItems.reduce((sum, item) => sum + ((Number(item.quantity) || 0) * (Number(item.sale_price) || 0)), 0);
+  const originalDiscountRatio = originalItemsGross > 0
+    ? Math.max(0, Number(invoice.total) || 0) / originalItemsGross
+    : 1;
+  const selectedOldTotal = selectedOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0) * originalDiscountRatio;
+  const keptOldTotal = keptOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0) * originalDiscountRatio;
   const finalExchangeItems = [...keptOldItems.map((item) => ({ ...item })), ...cart.map((item) => ({ ...item }))];
   const finalExchangeTotal = keptOldTotal + total;
   const paidAmount = payKeys.reduce((s, k) => s + (pay[k] || 0), 0);

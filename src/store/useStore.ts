@@ -1653,22 +1653,18 @@ export const useStore = create<CashierStore>((set, get) => ({
     set({ isRefreshing: true });
 
     try {
-      const [settingsRes, categoriesRes, productsRes, discountsRes, customersRes, ordersRes, counterRes, cashiersRes, employeesRes, employeeTransactionsRes, employeeLeavesRes, employeeAttendanceRes] =
+      const [settingsRes, categoriesRes, productsRes, discountsRes, customersRes, ordersRows, counterRes, cashiersRes, employeesRes, employeeTransactionRows, employeeLeavesRes, employeeAttendanceRes] =
         await withTimeout(Promise.all([
           supabase.from('store_settings').select('*').limit(1).maybeSingle(),
           supabase.from('categories').select('*').order('name'),
           supabase.from('products').select('*').order('name'),
           loadActiveProductDiscounts(),
           supabase.from('customers').select('*').order('created_at', { ascending: false }),
-          supabase
-            .from('orders')
-            .select('*, customers(*), order_items(*, products(*))')
-            .order('created_at', { ascending: false })
-            .limit(1000),
+          fetchAllRows<Record<string, unknown>>('orders', '*, customers(*), order_items(*, products(*))'),
           supabase.from('invoice_counter').select('current_value').limit(1).maybeSingle(),
           supabase.from('cashiers').select('*').order('created_at', { ascending: false }),
           supabase.from('employees').select('*').order('created_at', { ascending: false }),
-          supabase.from('employee_transactions').select('*').order('created_at', { ascending: false }),
+          fetchAllRows<Record<string, unknown>>('employee_transactions'),
           supabase.from('employee_leaves').select('*').order('created_at', { ascending: false }),
           supabase.from('employee_attendance').select('*').order('created_at', { ascending: false }),
         ]), NET_TIMEOUT.fullLoad, 'تحميل البيانات');
@@ -1684,7 +1680,7 @@ export const useStore = create<CashierStore>((set, get) => ({
         timestamp: c.created_at as string,
       }));
 
-      const orders: Order[] = ((ordersRes.data ?? []) as Record<string, unknown>[]).map((o) => {
+      const orders: Order[] = (ordersRows as Record<string, unknown>[]).map((o) => {
         const custRow = o.customers as Record<string, unknown> | null;
         const itemRows = (o.order_items as Record<string, unknown>[]) ?? [];
         const items: OrderItem[] = itemRows.map((i) => {
@@ -1778,7 +1774,7 @@ export const useStore = create<CashierStore>((set, get) => ({
           ? ((cashiersRes.data ?? []) as Cashier[]).find(c => c.name === sessionStorage.getItem('active_cashier_name')) || null
           : (sessionStorage.getItem('cashier_pos_auth') === 'true' ? { id: 'master', name: 'المدير', pin: '123456', phone: '', photo_url: '', created_at: '' } : null),
         employees: (employeesRes.data ?? []) as Employee[],
-        employeeTransactions: (employeeTransactionsRes.data ?? []) as EmployeeTransaction[],
+        employeeTransactions: (employeeTransactionRows ?? []) as unknown as EmployeeTransaction[],
         employeeLeaves: (employeeLeavesRes.data ?? []) as EmployeeLeave[],
         employeeAttendance: (employeeAttendanceRes.data ?? []) as EmployeeAttendance[],
       });
@@ -1802,7 +1798,7 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       // Fetch expenses separately to avoid breaking the whole loadAll if the table is missing
       try {
-        const { data: expData } = await supabase.from('expenses').select('*').order('created_at', { ascending: false });
+        const expData = await fetchAllRows<Record<string, unknown>>('expenses');
         if (expData) {
           const deletedExchangeOrders = orders.filter((order) => order.is_deleted && order.exchange_data);
           const expenses = (expData as any[]).map(e => ({
@@ -1855,7 +1851,7 @@ export const useStore = create<CashierStore>((set, get) => ({
       }
 
       // Fetch purchase invoices
-      get().loadPurchaseInvoices();
+      await get().loadPurchaseInvoices();
       get().loadFinancing();
       get().loadCarSubscriptions();
       get().loadProductSuggestions();
@@ -6356,7 +6352,7 @@ setupRealtime: () => {
   // ── Purchases ─────────────────────────────────────────────
   loadPurchaseInvoices: async () => {
     try {
-      const { data } = await supabase.from('purchase_invoices').select('*, purchase_items(*)').order('created_at', { ascending: false });
+      const data = await fetchAllRows<Record<string, unknown>>('purchase_invoices', '*, purchase_items(*)');
       if (data) {
         const mapped = (data as any[]).map(inv => ({
           ...inv,
