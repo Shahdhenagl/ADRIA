@@ -917,7 +917,7 @@ interface CashierStore {
       items: PurchaseItem[],
     splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }
   ) => Promise<boolean>;
-  deletePurchaseInvoice: (id: string) => Promise<void>;
+  deletePurchaseInvoice: (id: string, reason?: string) => Promise<boolean>;
   paySupplierDebt: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string, fromMainTreasury?: boolean) => Promise<void>;
   collectSupplierCredit: (supplierId: string, amount: number, splitPayments?: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, dateISO?: string, toMainTreasury?: boolean) => Promise<void>;
 
@@ -6669,11 +6669,15 @@ setupRealtime: () => {
    return true;
   },
 
-  deletePurchaseInvoice: async (id) => {
+  deletePurchaseInvoice: async (id, reason = '') => {
     try {
       const state = get();
       const invoice = state.purchaseInvoices.find(inv => inv.id === id);
-      if (invoice && !(await ensureAccountingDayOpen(state, invoice.created_at))) return;
+      if (!invoice) {
+        alert('الفاتورة غير موجودة في البيانات الحالية. حدّث الصفحة ثم حاول مرة أخرى.');
+        return false;
+      }
+      if (!(await ensureAccountingDayOpen(state, invoice.created_at))) return false;
       const supplierName = invoice ? state.suppliers.find(s => s.id === invoice.supplier_id)?.name : 'مورد';
 
       // مفيش حذف لفاتورة اتعمل عليها مرتجع — الحذف هيسيب صف المرتجع معلّق
@@ -6681,13 +6685,22 @@ setupRealtime: () => {
       const linkedReturns = state.purchaseInvoices.filter((inv: any) => inv.source_invoice_id === id);
       if (linkedReturns.length > 0) {
         alert(`لا يمكن حذف الفاتورة: عليها ${linkedReturns.length} مرتجع مورد. احذف المرتجع أولاً.`);
-        return;
+        return false;
       }
 
       // إرجاع أثر الفاتورة على المخزون قبل الحذف: نشيل الكمية ونشيل قيمتها من
       // متوسط التكلفة. من غير ده الكمية بتفضل زايدة في المخزن بعد الحذف.
       // ملاحظة: صفوف السداد/التحصيل/الرصيد الافتتاحي مالهاش items فبتعدّي من غير أثر،
       // وصفوف المرتجع كمياتها سالبة فالطرح بيرجّعها زيادة — وده الصح.
+      for (const item of (invoice.items || [])) {
+        if (item.quantity <= 0) continue;
+        const product = state.products.find(p => p.id === item.product_id);
+        const currentStock = Number(product?.stock_quantity) || 0;
+        if (product && currentStock + 0.000001 < item.quantity) {
+          alert(`لا يمكن حذف الفاتورة بأمان: الصنف «${product.name}» المتاح منه ${currentStock} بينما الفاتورة أضافت ${item.quantity}.\nتم بيع/صرف جزء من الكمية بالفعل.`);
+          return false;
+        }
+      }
       const updatedProducts = [...state.products];
       for (const item of (invoice?.items || [])) {
         const productIndex = updatedProducts.findIndex(p => p.id === item.product_id);
@@ -6696,16 +6709,24 @@ setupRealtime: () => {
         const currentStock = Number(product.stock_quantity) || 0;
         const currentAvg = product.average_purchase_price || product.purchase_price || 0;
 
+        // لا نحذف إذا خرج جزء من كمية الفاتورة من المخزون؛ طرح الكمية المتبقية
+        // فقط كان يترك تكلفة المخزون ودفتر المورد غير متسقين.
+        if (item.quantity > 0 && currentStock + 0.000001 < item.quantity) {
+          alert(`لا يمكن حذف الفاتورة بأمان: الصنف «${product.name}» المتاح منه ${currentStock} بينما الفاتورة أضافت ${item.quantity}.\nتم بيع/صرف جزء من الكمية بالفعل.`);
+          return false;
+        }
+
         const newStock = Math.max(0, currentStock - item.quantity);
         const remainingValue = Math.max(0, (currentStock * currentAvg) - (item.quantity * item.purchase_price));
         const newAvgPrice = newStock > 0 ? remainingValue / newStock : 0;
         const newDisplay = Math.min(Number(product.display_quantity) || 0, newStock);
 
-        await supabase.from('products').update({
+        const { error: productError } = await supabase.from('products').update({
           stock_quantity: newStock,
           display_quantity: newDisplay,
           average_purchase_price: newAvgPrice
         }).eq('id', product.id);
+        if (productError) throw new Error(`تعذّر تحديث مخزون ${product.name}: ${productError.message}`);
 
         updatedProducts[productIndex] = {
           ...product,
@@ -6716,7 +6737,8 @@ setupRealtime: () => {
       }
 
       // Delete purchase items first
-      await supabase.from('purchase_items').delete().eq('invoice_id', id);
+      const { error: itemsError } = await supabase.from('purchase_items').delete().eq('invoice_id', id);
+      if (itemsError) throw new Error(`تعذّر حذف بنود الفاتورة: ${itemsError.message}`);
       // Delete the invoice
       const { error } = await supabase.from('purchase_invoices').delete().eq('id', id);
       if (error) throw error;
@@ -6728,7 +6750,7 @@ setupRealtime: () => {
         const { error: savErr } = await supabase.from('savings_transactions').delete().eq('group_id', groupId);
         if (savErr) {
           console.error('Delete linked main-treasury row error:', savErr);
-          alert('⚠️ تم حذف الصف، لكن تعذّر عكس حركة الخزنة الرئيسية المرتبطة به. راجعها يدوياً من صفحة الخزنة الرئيسية.');
+          throw new Error('تعذّر حذف حركة الخزنة الرئيسية المرتبطة بالفاتورة. لم يكتمل حذف الفاتورة.');
         }
       }
       set((state) => ({
@@ -6745,11 +6767,14 @@ setupRealtime: () => {
         supplier: supplierName || 'مورد',
         date: new Date().toISOString(),
         total: invoice?.total || 0,
-        paid: invoice?.paid_amount || 0
+        paid: invoice?.paid_amount || 0,
+        reason: reason || 'غير مذكور'
       });
+      return true;
     } catch (e) {
       console.error('Delete Purchase Invoice Error:', e);
-      alert('حدث خطأ أثناء حذف الفاتورة');
+      alert((e as Error)?.message || 'حدث خطأ أثناء حذف الفاتورة');
+      return false;
     }
   },
 

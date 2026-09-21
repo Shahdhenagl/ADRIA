@@ -939,12 +939,17 @@ export default function Finance() {
   };
 
   const handleDeletePurchase = async (id: string) => {
-    if (confirm('هل أنت متأكد من حذف هذه الفاتورة؟')) {
-      prompt('الرجاء إدخال سبب الحذف:');
+    const invoice = purchaseInvoices.find((p) => p.id === id);
+    if (confirm(`حذف فاتورة المورد #${invoice?.invoice_number || ''}؟\n\nسيتم حذف بنودها، عكس أثرها من المخزون، وإزالة حركة الخزنة المرتبطة إن وُجدت. لا يمكن التراجع عن الحذف.`)) {
+      const reason = prompt('الرجاء إدخال سبب الحذف:')?.trim();
+      if (!reason) {
+        alert('لم يتم الحذف: يجب إدخال سبب واضح للحذف.');
+        return;
+      }
       try {
         setLoading(true);
-        await deletePurchaseInvoice(id);
-        alert('تم حذف الفاتورة بنجاح');
+        const success = await deletePurchaseInvoice(id, reason);
+        if (success) alert('تم حذف الفاتورة وعكس آثارها بنجاح');
       } catch (err: any) {
         console.error(err);
         alert('حدث خطأ أثناء حذف الفاتورة');
