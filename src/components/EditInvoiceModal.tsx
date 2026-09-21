@@ -96,17 +96,16 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       return { ...item, quantity, returned_quantity: Math.min((item as any).returned_quantity || 0, quantity) };
     })
     .filter((item) => item.quantity > 0) : [];
-  // الفاتورة 1100 مثال مهم: مجموع أسعار الأصناف 900، لكن إجمالي الفاتورة
-  // بعد خصم 100 هو 800. في الاستبدال يجب رد/تحصيل قيمة الفاتورة الفعلية،
-  // لا مجموع الأسعار قبل الخصم.
+  // الخصم في الفاتورة خصم إجمالي (وليس خصمًا محفوظًا على صنف بعينه).
+  // لذلك لا نوزّعه على الصنف المستبدل: استبدال صنف بـصنف بنفس السعر يجب أن
+  // يكون فرقُه صفرًا. يُعاد تطبيق نفس الخصم على إجمالي الفاتورة الجديدة فقط.
   const originalItemsGross = originalItems.reduce((sum, item) => sum + ((Number(item.quantity) || 0) * (Number(item.sale_price) || 0)), 0);
-  const originalDiscountRatio = originalItemsGross > 0
-    ? Math.max(0, Number(invoice.total) || 0) / originalItemsGross
-    : 1;
-  const selectedOldTotal = selectedOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0) * originalDiscountRatio;
-  const keptOldTotal = keptOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0) * originalDiscountRatio;
+  const originalDiscount = Math.max(0, originalItemsGross - (Number(invoice.total) || 0));
+  const selectedOldTotal = selectedOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
+  const keptOldGross = keptOldItems.reduce((sum, item) => sum + (item.quantity * (item.sale_price || 0)), 0);
+  const keptOldTotal = keptOldGross;
   const finalExchangeItems = [...keptOldItems.map((item) => ({ ...item })), ...cart.map((item) => ({ ...item }))];
-  const finalExchangeTotal = keptOldTotal + total;
+  const finalExchangeTotal = Math.max(0, keptOldGross + total - originalDiscount);
   const paidAmount = payKeys.reduce((s, k) => s + (pay[k] || 0), 0);
   const debt = Math.max(0, total - paidAmount);
 
