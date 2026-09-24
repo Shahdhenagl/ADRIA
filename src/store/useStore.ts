@@ -203,6 +203,18 @@ export interface PurchaseInvoice {
   items?: PurchaseItem[];
 }
 
+export interface DeletedSupplierPurchaseInvoice {
+  id: string;
+  original_invoice_id: string;
+  invoice_number: string;
+  supplier_id: string | null;
+  supplier_name: string;
+  invoice_snapshot: PurchaseInvoice;
+  deleted_at: string;
+  deleted_by?: string | null;
+  deletion_reason?: string | null;
+}
+
 /**
  * قيد «مخزون دخل بدون شراء» (db/59) — كمية دخلت المخزون من غير فاتورة مورد
  * (كمية ابتدائية عند إنشاء المنتج، تعديل يدوي، استيراد Excel، زيادة جرد).
@@ -644,6 +656,8 @@ interface CashierStore {
   financingPayments: FinancingPayment[];
   financingTransactions: FinancingTransaction[];
   purchaseInvoices: PurchaseInvoice[];
+  deletedSupplierPurchaseInvoices: DeletedSupplierPurchaseInvoice[];
+  deletedSupplierPurchaseInvoicesError: string | null;
   coupons: Coupon[];
   invoiceCounter: number;
   activeInvoiceId: string;
@@ -906,6 +920,7 @@ interface CashierStore {
 
   // Purchases
   loadPurchaseInvoices: () => Promise<void>;
+  loadDeletedSupplierPurchaseInvoices: () => Promise<void>;
   addPurchaseInvoice: (
     invoice: Omit<PurchaseInvoice, 'id' | 'created_at' | 'items' | 'paid_cash' | 'paid_visa' | 'paid_wallet' | 'paid_instapay'>, 
     items: PurchaseItem[],
@@ -1377,6 +1392,8 @@ export const useStore = create<CashierStore>((set, get) => ({
   financingPayments: [],
   financingTransactions: [],
   purchaseInvoices: [],
+  deletedSupplierPurchaseInvoices: [],
+  deletedSupplierPurchaseInvoicesError: null,
   employees: [],
   employeeTransactions: [],
   employeeLeaves: [],
@@ -1852,6 +1869,7 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       // Fetch purchase invoices
       await get().loadPurchaseInvoices();
+      await get().loadDeletedSupplierPurchaseInvoices();
       get().loadFinancing();
       get().loadCarSubscriptions();
       get().loadProductSuggestions();
@@ -6372,6 +6390,27 @@ setupRealtime: () => {
     }
   },
 
+  loadDeletedSupplierPurchaseInvoices: async () => {
+    try {
+      const records = await fetchAllRows<Record<string, unknown>>('deleted_supplier_purchase_invoices', '*');
+      const mapped = (records as any[]).map((record) => ({
+        ...record,
+        invoice_snapshot: typeof record.invoice_snapshot === 'string'
+          ? JSON.parse(record.invoice_snapshot)
+          : record.invoice_snapshot,
+      }));
+      set({
+        deletedSupplierPurchaseInvoices: mapped as DeletedSupplierPurchaseInvoice[],
+        deletedSupplierPurchaseInvoicesError: null,
+      });
+    } catch (e: any) {
+      console.error('Could not load deleted supplier purchase invoices:', e);
+      set({
+        deletedSupplierPurchaseInvoicesError: 'شغّل تحديث قاعدة البيانات db/80_supplier_purchase_invoice_trash.sql لعرض الفواتير المحذوفة.',
+      });
+    }
+  },
+
   addPurchaseInvoice: async (invoice, items, splitPayments) => {
     const state = get();
     const createdAt = accountingTimestampForNow(state.storeSettings);
@@ -6670,6 +6709,8 @@ setupRealtime: () => {
   },
 
   deletePurchaseInvoice: async (id, reason = '') => {
+    let archiveRecordId: string | null = null;
+    let purchaseRowDeleted = false;
     try {
       const state = get();
       const invoice = state.purchaseInvoices.find(inv => inv.id === id);
@@ -6679,6 +6720,7 @@ setupRealtime: () => {
       }
       if (!(await ensureAccountingDayOpen(state, invoice.created_at))) return false;
       const supplierName = invoice ? state.suppliers.find(s => s.id === invoice.supplier_id)?.name : 'مورد';
+      const deletedAt = new Date().toISOString();
 
       // مفيش حذف لفاتورة اتعمل عليها مرتجع — الحذف هيسيب صف المرتجع معلّق
       // وبيرجّع مخزون مرتين. لازم يتحذف المرتجع الأول.
@@ -6701,6 +6743,36 @@ setupRealtime: () => {
           return false;
         }
       }
+
+      // احتفظ بنسخة مستقلة من الفاتورة وبنودها قبل حذفها من سجل المشتريات؛
+      // السجل المؤرشف لا يدخل في الحسابات أو تقارير الفواتير النشطة.
+      const invoiceSnapshot = {
+        ...invoice,
+        supplier_name: supplierName || 'مورد محذوف',
+        items: (invoice.items || []).map((item) => ({
+          ...item,
+          product_name: state.products.find((product) => product.id === item.product_id)?.name || 'منتج محذوف',
+        })),
+      };
+      const { data: archivedInvoice, error: archiveError } = await supabase
+        .from('deleted_supplier_purchase_invoices')
+        .upsert({
+          original_invoice_id: id,
+          invoice_number: invoice.invoice_number,
+          supplier_id: invoice.supplier_id || null,
+          supplier_name: supplierName || 'مورد محذوف',
+          invoice_snapshot: invoiceSnapshot,
+          deleted_at: deletedAt,
+          deleted_by: getActorName(state),
+          deletion_reason: reason || 'حذف يدوي من شاشة الموردين',
+        }, { onConflict: 'original_invoice_id' })
+        .select('*')
+        .single();
+      if (archiveError || !archivedInvoice) {
+        throw new Error(`تعذّر حفظ الفاتورة في سلة الموردين المحذوفة. شغّل db/80_supplier_purchase_invoice_trash.sql أولاً. ${archiveError?.message || ''}`);
+      }
+      archiveRecordId = archivedInvoice.id;
+
       const updatedProducts = [...state.products];
       for (const item of (invoice?.items || [])) {
         const productIndex = updatedProducts.findIndex(p => p.id === item.product_id);
@@ -6712,6 +6784,14 @@ setupRealtime: () => {
         // لا نحذف إذا خرج جزء من كمية الفاتورة من المخزون؛ طرح الكمية المتبقية
         // فقط كان يترك تكلفة المخزون ودفتر المورد غير متسقين.
         if (item.quantity > 0 && currentStock + 0.000001 < item.quantity) {
+          if (archiveRecordId) {
+            const { error: cleanupError } = await supabase
+              .from('deleted_supplier_purchase_invoices')
+              .delete()
+              .eq('id', archiveRecordId);
+            if (cleanupError) console.error('Could not remove blocked supplier invoice archive:', cleanupError);
+            archiveRecordId = null;
+          }
           alert(`لا يمكن حذف الفاتورة بأمان: الصنف «${product.name}» المتاح منه ${currentStock} بينما الفاتورة أضافت ${item.quantity}.\nتم بيع/صرف جزء من الكمية بالفعل.`);
           return false;
         }
@@ -6742,6 +6822,7 @@ setupRealtime: () => {
       // Delete the invoice
       const { error } = await supabase.from('purchase_invoices').delete().eq('id', id);
       if (error) throw error;
+      purchaseRowDeleted = true;
 
       // لو الصف كان على الخزنة الرئيسية، نمسح حركة الدفتر المرتبطة بيه بالـ group_id
       // كمان — وإلا الفلوس تفضل معلّقة في الرئيسية بعد حذف الصف.
@@ -6755,6 +6836,9 @@ setupRealtime: () => {
       }
       set((state) => ({
         purchaseInvoices: state.purchaseInvoices.filter(inv => inv.id !== id),
+        deletedSupplierPurchaseInvoices: archivedInvoice
+          ? [archivedInvoice as DeletedSupplierPurchaseInvoice, ...state.deletedSupplierPurchaseInvoices.filter((entry) => entry.original_invoice_id !== id)]
+          : state.deletedSupplierPurchaseInvoices,
         products: updatedProducts
       }));
       new BroadcastChannel('cashier-sync').postMessage('sync_products');
@@ -6773,6 +6857,13 @@ setupRealtime: () => {
       return true;
     } catch (e) {
       console.error('Delete Purchase Invoice Error:', e);
+      if (archiveRecordId && !purchaseRowDeleted) {
+        const { error: archiveCleanupError } = await supabase
+          .from('deleted_supplier_purchase_invoices')
+          .delete()
+          .eq('id', archiveRecordId);
+        if (archiveCleanupError) console.error('Could not remove incomplete supplier invoice archive:', archiveCleanupError);
+      }
       alert((e as Error)?.message || 'حدث خطأ أثناء حذف الفاتورة');
       return false;
     }

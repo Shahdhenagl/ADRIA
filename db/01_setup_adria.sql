@@ -107,6 +107,18 @@ create table if not exists purchase_invoices (
   created_at timestamptz default now()
 );
 
+create table if not exists deleted_supplier_purchase_invoices (
+  id uuid default gen_random_uuid() primary key,
+  original_invoice_id uuid not null unique,
+  invoice_number text not null,
+  supplier_id uuid,
+  supplier_name text not null default 'مورد محذوف',
+  invoice_snapshot jsonb not null,
+  deleted_at timestamptz not null default now(),
+  deleted_by text,
+  deletion_reason text
+);
+
 create table if not exists purchase_items (
   id uuid default gen_random_uuid() primary key,
   invoice_id uuid references purchase_invoices(id) on delete cascade,
@@ -314,7 +326,7 @@ declare t text;
 begin
   foreach t in array array[
     'store_settings','categories','products','customers','suppliers',
-    'car_subscriptions','maintenance_appointments','purchase_invoices','purchase_items',
+    'car_subscriptions','maintenance_appointments','purchase_invoices','purchase_items','deleted_supplier_purchase_invoices',
     'orders','invoice_counter','order_items','expenses',
     'financing_accounts','financing_payments','financing_transactions',
     'cashiers','employees','employee_transactions','employee_leaves',

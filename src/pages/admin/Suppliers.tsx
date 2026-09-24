@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
 import type { PurchaseItem, Product } from '../../store/useStore';
-import { Users, Search, Plus, Edit2, Trash2, Phone, MapPin, Calendar, ShoppingCart, FileText, X, ChevronDown, Printer, Eye, Download, Upload, FileSpreadsheet, RotateCcw } from 'lucide-react';
+import { Users, Search, Plus, Edit2, Trash2, Phone, MapPin, Calendar, ShoppingCart, FileText, X, ChevronDown, Printer, Eye, Download, Upload, FileSpreadsheet, RotateCcw, Archive } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { escapeHtml } from '../../utils/escapeHtml';
@@ -149,17 +149,18 @@ function ProductSearchSelect({
 }
 
 export default function Suppliers() {
-  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, deletePurchaseInvoice, createSupplierReturn } = useStore();
+  const { suppliers, addSupplier, updateSupplier, setSupplierOpeningBalance, deleteSupplier, storeSettings, purchaseInvoices, deletedSupplierPurchaseInvoices, deletedSupplierPurchaseInvoicesError, addPurchaseInvoice, updatePurchaseInvoice, products, orders, recordMainTreasuryOut, deletePurchaseInvoice, createSupplierReturn } = useStore();
   const OPENING_MARK = 'رصيد افتتاحي';
   // الرصيد الافتتاحي كصافي بإشارة: موجب = علينا للمورد، سالب = لينا عند المورد.
   const openingBalanceOf = (supplierId: string) => {
     const inv: any = purchaseInvoices.find((inv: any) => inv.supplier_id === supplierId && inv.invoice_number === OPENING_MARK);
     return inv ? (Number(inv.total) || 0) - (Number(inv.paid_amount) || 0) : 0;
   };
-  const [activeTab, setActiveTab] = useState<'suppliers' | 'invoices' | 'returns'>('suppliers');
+  const [activeTab, setActiveTab] = useState<'suppliers' | 'invoices' | 'returns' | 'deleted'>('suppliers');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchQueryInvoices, setSearchQueryInvoices] = useState('');
   const [searchQueryReturns, setSearchQueryReturns] = useState('');
+  const [searchQueryDeleted, setSearchQueryDeleted] = useState('');
   const [showSupplierModal, setShowSupplierModal] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<any>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -188,6 +189,7 @@ export default function Suppliers() {
   const [returnDate, setReturnDate] = useState<string>(() => businessDateStr(storeSettings));
   const [isSavingReturn, setIsSavingReturn] = useState(false);
   const [isDeletingReturn, setIsDeletingReturn] = useState(false);
+  const [deletingPurchaseInvoiceId, setDeletingPurchaseInvoiceId] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({ name: '', phone: '', address: '', openingBalance: '', openingDirection: 'owed_to_supplier' as 'owed_to_supplier' | 'owed_to_us' });
 
@@ -248,6 +250,12 @@ export default function Suppliers() {
     purchaseInvoices.filter(inv => !isReturnRow(inv)), searchQueryInvoices,
   );
   const filteredSupplierReturns = filterInvoicesByQuery(supplierReturnInvoices, searchQueryReturns);
+  const filteredDeletedSupplierInvoices = deletedSupplierPurchaseInvoices.filter((record) => {
+    const query = searchQueryDeleted.toLowerCase();
+    return String(record.invoice_number || '').toLowerCase().includes(query) ||
+      String(record.supplier_name || '').toLowerCase().includes(query) ||
+      String(record.deletion_reason || '').toLowerCase().includes(query);
+  });
   // الكمية المرتجعة سابقاً لكل منتج في فاتورة معيّنة.
   const returnedQtyOf = (sourceInvoiceId: string) => {
     const map: Record<string, number> = {};
@@ -285,9 +293,31 @@ export default function Suppliers() {
 
     try {
       setIsDeletingReturn(true);
-      await deletePurchaseInvoice(inv.id);
+      const deleted = await deletePurchaseInvoice(inv.id, 'حذف مرتجع مورد من شاشة الموردين');
+      if (deleted) setActiveTab('deleted');
     } finally {
       setIsDeletingReturn(false);
+    }
+  };
+
+  const handleDeletePurchaseInvoice = async (inv: any) => {
+    const supplier = suppliers.find(s => s.id === inv.supplier_id);
+    const itemLines = (inv.items || []).map((item: any) => {
+      const product = products.find(p => p.id === item.product_id);
+      return `• ${product?.name || 'منتج'}: ${Number(item.quantity) || 0}`;
+    }).join('\n');
+    if (!confirm(
+      `حذف فاتورة المشتريات ${inv.invoice_number} للمورد «${supplier?.name || 'مورد محذوف'}»؟\n\n` +
+      `سيتم عكس أثرها من المخزون ورصيد المورد، وحفظ نسخة منها في تبويب «فواتير الموردين المحذوفة».\n\n` +
+      `الأصناف:\n${itemLines || '—'}`
+    )) return;
+
+    try {
+      setDeletingPurchaseInvoiceId(inv.id);
+      const deleted = await deletePurchaseInvoice(inv.id, 'حذف يدوي من شاشة فواتير الموردين');
+      if (deleted) setActiveTab('deleted');
+    } finally {
+      setDeletingPurchaseInvoiceId(null);
     }
   };
 
@@ -932,7 +962,7 @@ export default function Suppliers() {
           </h1>
           <p className="text-slate-500 mt-2 font-medium">إدارة الموردين وتسجيل فواتير الشراء</p>
         </div>
-        <button
+        {activeTab !== 'deleted' && <button
           onClick={() => {
             if (activeTab === 'suppliers') {
               setEditingSupplier(null);
@@ -957,11 +987,11 @@ export default function Suppliers() {
         >
           <Plus size={20} />
           {activeTab === 'suppliers' ? 'إضافة مورد جديد' : activeTab === 'returns' ? 'فاتورة مرتجع جديدة' : 'فاتورة مشتريات جديدة'}
-        </button>
+        </button>}
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-2 mb-6 bg-slate-100 rounded-2xl p-1.5 w-fit">
+      <div className="flex flex-wrap gap-2 mb-6 bg-slate-100 rounded-2xl p-1.5 w-fit">
         <button
           onClick={() => setActiveTab('suppliers')}
           style={activeTab === 'suppliers' ? { backgroundColor: tc, color: 'white' } : {}}
@@ -985,6 +1015,14 @@ export default function Suppliers() {
         >
           <RotateCcw size={18} />
           مرتجعات الموردين ({supplierReturnInvoices.length})
+        </button>
+        <button
+          onClick={() => setActiveTab('deleted')}
+          style={activeTab === 'deleted' ? { backgroundColor: tc, color: 'white' } : {}}
+          className={`px-6 py-2.5 rounded-xl font-bold transition flex items-center gap-2 ${activeTab === 'deleted' ? 'shadow-lg' : 'text-slate-500 hover:text-slate-800'}`}
+        >
+          <Archive size={18} />
+          فواتير الموردين المحذوفة ({deletedSupplierPurchaseInvoices.length})
         </button>
       </div>
 
@@ -1141,6 +1179,17 @@ export default function Suppliers() {
                         <Edit2 size={20} />
                       </button>
                       )}
+                      {!isReturnRow(inv) && inv.invoice_number !== OPENING_MARK && Number(inv.total) > 0 && (inv.items || []).length > 0 && (
+                        <button
+                          onClick={() => handleDeletePurchaseInvoice(inv)}
+                          disabled={deletingPurchaseInvoiceId === inv.id}
+                          className="p-3 bg-red-50 text-red-600 rounded-2xl hover:bg-red-100 transition shadow-sm opacity-100 disabled:opacity-40"
+                          title="حذف فاتورة المشتريات وحفظها في المحذوفة"
+                          aria-label="حذف فاتورة المشتريات"
+                        >
+                          <Trash2 size={20} />
+                        </button>
+                      )}
                       {isReturnRow(inv) && (
                         <button
                           onClick={() => handleDeleteReturn(inv)}
@@ -1173,6 +1222,75 @@ export default function Suppliers() {
               );
             })
           )}
+        </div>
+      )}
+
+      {activeTab === 'deleted' && (
+        <div className="space-y-4">
+          {deletedSupplierPurchaseInvoicesError && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl p-4 font-bold text-sm">
+              {deletedSupplierPurchaseInvoicesError}
+            </div>
+          )}
+          <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 mb-6">
+            <div className="relative">
+              <Search className="absolute right-4 top-3.5 text-slate-400" size={20} />
+              <input
+                type="text"
+                placeholder="ابحث برقم الفاتورة أو اسم المورد أو سبب الحذف..."
+                className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pr-12 pl-4 focus:outline-none focus:ring-2 transition text-slate-700"
+                value={searchQueryDeleted}
+                onChange={(e) => setSearchQueryDeleted(e.target.value)}
+              />
+            </div>
+          </div>
+          {filteredDeletedSupplierInvoices.length === 0 ? (
+            <div className="py-20 text-center text-slate-400 bg-white rounded-3xl border border-slate-100 shadow-sm">
+              <Archive size={48} className="mx-auto mb-4 opacity-50" />
+              <p className="text-xl font-bold mb-2">لا توجد فواتير موردين محذوفة</p>
+              <p className="text-sm">أي فاتورة مشتريات تحذفيها ستظهر هنا مع تفاصيلها.</p>
+            </div>
+          ) : filteredDeletedSupplierInvoices.map((record) => {
+            const snapshot = record.invoice_snapshot || ({} as any);
+            const items = snapshot.items || [];
+            return (
+              <div key={record.id} className="bg-white rounded-3xl p-6 shadow-sm border border-red-100">
+                <div className="flex flex-wrap justify-between gap-4 items-start">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-red-50 text-red-600">
+                      <Archive size={22} />
+                    </div>
+                    <div>
+                      <p className="font-black text-slate-800 text-lg flex items-center gap-2">
+                        {record.invoice_number}
+                        <span className="text-[11px] font-bold px-2 py-0.5 rounded-lg bg-red-100 text-red-700">فاتورة محذوفة</span>
+                      </p>
+                      <p className="text-slate-500 text-sm font-medium">{record.supplier_name || 'مورد محذوف'}</p>
+                      <p className="text-slate-400 text-xs mt-1">تاريخ الفاتورة: {snapshot.created_at ? new Date(snapshot.created_at).toLocaleDateString('ar-EG', { calendar: 'gregory', year: 'numeric', month: 'long', day: 'numeric' }) : '—'}</p>
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-black text-slate-800 text-xl">{Number(snapshot.total || 0).toLocaleString()} {storeSettings.currency}</p>
+                    <p className="text-xs text-red-600 font-bold mt-1">حُذفت: {new Date(record.deleted_at).toLocaleString('ar-EG', { calendar: 'gregory' })}</p>
+                  </div>
+                </div>
+                {items.length > 0 && (
+                  <div className="mt-4 border-t border-slate-100 pt-3 space-y-2">
+                    {items.map((item: any, index: number) => (
+                      <div key={item.id || `${item.product_id}-${index}`} className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-sm text-slate-600">
+                        <span className="font-bold">{item.product_name || products.find((product) => product.id === item.product_id)?.name || 'منتج محذوف'}</span>
+                        <span>الكمية: {Number(item.quantity) || 0} × {Number(item.purchase_price || 0).toLocaleString()} {storeSettings.currency}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-4 pt-3 border-t border-slate-100 text-xs text-slate-500 flex flex-wrap gap-x-6 gap-y-2">
+                  <span>سبب الحذف: {record.deletion_reason || 'غير مذكور'}</span>
+                  {record.deleted_by && <span>بواسطة: {record.deleted_by}</span>}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
 
