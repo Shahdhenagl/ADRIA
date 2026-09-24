@@ -156,9 +156,10 @@ export default function Suppliers() {
     const inv: any = purchaseInvoices.find((inv: any) => inv.supplier_id === supplierId && inv.invoice_number === OPENING_MARK);
     return inv ? (Number(inv.total) || 0) - (Number(inv.paid_amount) || 0) : 0;
   };
-  const [activeTab, setActiveTab] = useState<'suppliers' | 'invoices'>('suppliers');
+  const [activeTab, setActiveTab] = useState<'suppliers' | 'invoices' | 'returns'>('suppliers');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchQueryInvoices, setSearchQueryInvoices] = useState('');
+  const [searchQueryReturns, setSearchQueryReturns] = useState('');
   const [showSupplierModal, setShowSupplierModal] = useState(false);
   const [editingSupplier, setEditingSupplier] = useState<any>(null);
   const [showInvoiceModal, setShowInvoiceModal] = useState(false);
@@ -227,18 +228,26 @@ export default function Suppliers() {
     s.name.includes(searchQuery) || (s.phone && s.phone.includes(searchQuery))
   );
 
-  const filteredInvoices = purchaseInvoices.filter(inv => {
+  // المرتجعات المرتبطة بفاتورة شراء تحمل source_invoice_id، والمرتجعات الحرة
+  // تحمل رقم RET ومبلغاً سالباً؛ اجمع النوعين في تبويب واحد.
+  const isReturnRow = (inv: any) =>
+    Boolean(inv.source_invoice_id) || Number(inv.total) < 0 ||
+    String(inv.invoice_number || '').startsWith('RET-') ||
+    String(inv.notes || '').includes('مرتجع مورد');
+  const filterInvoicesByQuery = (invoices: typeof purchaseInvoices, query: string) => invoices.filter(inv => {
     const supplier = suppliers.find(s => s.id === inv.supplier_id);
-    const query = searchQueryInvoices.toLowerCase();
+    const normalizedQuery = query.toLowerCase();
     return (
-      inv.invoice_number.toLowerCase().includes(query) ||
-      (supplier?.name.toLowerCase().includes(query)) ||
-      (supplier?.phone && supplier.phone.includes(query))
+      String(inv.invoice_number || '').toLowerCase().includes(normalizedQuery) ||
+      Boolean(supplier?.name.toLowerCase().includes(normalizedQuery)) ||
+      Boolean(supplier?.phone && supplier.phone.includes(normalizedQuery))
     );
   });
-
-  // صف المرتجع بيتعرف من source_invoice_id (db/46)؛ كمياته وإجماليه سالبين.
-  const isReturnRow = (inv: any) => Boolean(inv.source_invoice_id);
+  const supplierReturnInvoices = purchaseInvoices.filter(isReturnRow);
+  const filteredInvoices = filterInvoicesByQuery(
+    purchaseInvoices.filter(inv => !isReturnRow(inv)), searchQueryInvoices,
+  );
+  const filteredSupplierReturns = filterInvoicesByQuery(supplierReturnInvoices, searchQueryReturns);
   // الكمية المرتجعة سابقاً لكل منتج في فاتورة معيّنة.
   const returnedQtyOf = (sourceInvoiceId: string) => {
     const map: Record<string, number> = {};
@@ -407,7 +416,7 @@ export default function Suppliers() {
           setInvSupplierId('');
           setInvPay({});
           setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
-          setActiveTab('invoices');
+          setActiveTab('returns');
         }
       } catch (error: any) {
         alert(error.message || 'حدث خطأ أثناء حفظ المرتجع');
@@ -927,7 +936,8 @@ export default function Suppliers() {
               setShowSupplierModal(true);
             } else {
               setEditingPurchaseInvoice(null);
-              setInvMode('purchase');
+              setInvMode(activeTab === 'returns' ? 'return' : 'purchase');
+              if (activeTab === 'returns') setRetSettlement('cash');
               setInvSupplierId('');
               setInvPay({});
               setInvTreasurySource('shop');
@@ -942,26 +952,8 @@ export default function Suppliers() {
           className="text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-2 hover:opacity-90 transition shadow-lg"
         >
           <Plus size={20} />
-          {activeTab === 'suppliers' ? 'إضافة مورد جديد' : 'فاتورة مشتريات جديدة'}
+          {activeTab === 'suppliers' ? 'إضافة مورد جديد' : activeTab === 'returns' ? 'فاتورة مرتجع جديدة' : 'فاتورة مشتريات جديدة'}
         </button>
-        {activeTab === 'invoices' && (
-          <button
-            onClick={() => {
-              setEditingPurchaseInvoice(null);
-              setInvMode('return');
-              setRetSettlement('cash');
-              setInvSupplierId('');
-              setInvPay({});
-              setInvTreasurySource('shop');
-              setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
-              setAutoOpenRow(null);
-              setShowInvoiceModal(true);
-            }}
-            className="bg-amber-500 text-white px-5 py-3 rounded-2xl font-bold flex items-center gap-2 hover:opacity-90 transition shadow-lg"
-          >
-            <RotateCcw size={18} /> فاتورة مرتجع
-          </button>
-        )}
       </div>
 
       {/* Tabs */}
@@ -980,7 +972,15 @@ export default function Suppliers() {
           className={`px-6 py-2.5 rounded-xl font-bold transition flex items-center gap-2 ${activeTab === 'invoices' ? 'shadow-lg' : 'text-slate-500 hover:text-slate-800'}`}
         >
           <ShoppingCart size={18} />
-          فواتير المشتريات ({purchaseInvoices.length})
+          فواتير المشتريات ({purchaseInvoices.filter(inv => !isReturnRow(inv)).length})
+        </button>
+        <button
+          onClick={() => setActiveTab('returns')}
+          style={activeTab === 'returns' ? { backgroundColor: tc, color: 'white' } : {}}
+          className={`px-6 py-2.5 rounded-xl font-bold transition flex items-center gap-2 ${activeTab === 'returns' ? 'shadow-lg' : 'text-slate-500 hover:text-slate-800'}`}
+        >
+          <RotateCcw size={18} />
+          مرتجعات الموردين ({supplierReturnInvoices.length})
         </button>
       </div>
 
@@ -1061,29 +1061,29 @@ export default function Suppliers() {
       )}
 
       {/* ── Invoices Tab ── */}
-      {activeTab === 'invoices' && (
+      {(activeTab === 'invoices' || activeTab === 'returns') && (
         <div className="space-y-4">
           <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6 mb-6">
             <div className="relative">
               <Search className="absolute right-4 top-3.5 text-slate-400" size={20} />
               <input
                 type="text"
-                placeholder="ابحث برقم الفاتورة أو اسم المورد أو هاتفه..."
+                placeholder={activeTab === 'returns' ? 'ابحث برقم المرتجع أو اسم المورد أو هاتفه...' : 'ابحث برقم الفاتورة أو اسم المورد أو هاتفه...'}
                 className="w-full bg-slate-50 border border-slate-200 rounded-2xl py-3 pr-12 pl-4 focus:outline-none focus:ring-2 transition text-slate-700"
-                value={searchQueryInvoices}
-                onChange={(e) => setSearchQueryInvoices(e.target.value)}
+                value={activeTab === 'returns' ? searchQueryReturns : searchQueryInvoices}
+                onChange={(e) => activeTab === 'returns' ? setSearchQueryReturns(e.target.value) : setSearchQueryInvoices(e.target.value)}
               />
             </div>
           </div>
 
-          {filteredInvoices.length === 0 ? (
+          {(activeTab === 'returns' ? filteredSupplierReturns : filteredInvoices).length === 0 ? (
             <div className="py-20 text-center text-slate-400 bg-white rounded-3xl border border-slate-100 shadow-sm">
-              <ShoppingCart size={48} className="mx-auto mb-4 opacity-50" />
-              <p className="text-xl font-bold mb-2">لا توجد فواتير مشتريات</p>
-              <p className="text-sm">اضغط على "فاتورة مشتريات جديدة" لإنشاء أول فاتورة.</p>
+              {activeTab === 'returns' ? <RotateCcw size={48} className="mx-auto mb-4 opacity-50" /> : <ShoppingCart size={48} className="mx-auto mb-4 opacity-50" />}
+              <p className="text-xl font-bold mb-2">{activeTab === 'returns' ? 'لا توجد مرتجعات موردين' : 'لا توجد فواتير مشتريات'}</p>
+              <p className="text-sm">{activeTab === 'returns' ? 'سجّلي أول مرتجع من زر «فاتورة مرتجع جديدة».' : 'اضغط على «فاتورة مشتريات جديدة» لإنشاء أول فاتورة.'}</p>
             </div>
           ) : (
-            filteredInvoices.map((inv) => {
+            (activeTab === 'returns' ? filteredSupplierReturns : filteredInvoices).map((inv) => {
               const supplier = suppliers.find(s => s.id === inv.supplier_id);
               const remaining = inv.total - inv.paid_amount;
               return (
@@ -1218,6 +1218,7 @@ export default function Suppliers() {
               alert('تم تسجيل مرتجع المورد بنجاح');
               setShowReturnModal(false);
               setReturnInvoice(null);
+              setActiveTab('returns');
             }
           } finally {
             setIsSavingReturn(false);
