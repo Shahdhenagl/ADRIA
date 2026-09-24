@@ -751,6 +751,10 @@ export default function Suppliers() {
     const supplier = suppliers.find(s => s.id === inv.supplier_id);
     const isPaymentReceipt = inv.total === 0;
     const isSupplierCollection = isPaymentReceipt && (Number(inv.paid_amount) || 0) < 0;
+    const isSupplierReturn = isReturnRow(inv);
+    const printDocumentTitle = isPaymentReceipt
+      ? (isSupplierCollection ? 'إيصال تحصيل' : 'إيصال سداد')
+      : (isSupplierReturn ? 'فاتورة مرتجعات لمورد' : 'فاتورة مشتريات');
     const receiptAmount = Math.abs(Number(inv.paid_amount) || 0);
     
     // Calculate historical debt at the time of this invoice/payment
@@ -791,7 +795,7 @@ export default function Suppliers() {
 <html dir="rtl" lang="ar">
 <head>
 <meta charset="UTF-8"/>
-<title>${isPaymentReceipt ? (isSupplierCollection ? 'إيصال تحصيل' : 'إيصال سداد') : 'فاتورة مشتريات'} #${inv.invoice_number}</title>
+<title>${printDocumentTitle} #${inv.invoice_number}</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;700;900&display=swap');
   *{margin:0;padding:0;box-sizing:border-box;font-family:'Cairo', sans-serif;}
@@ -842,7 +846,7 @@ export default function Suppliers() {
     <img class="logo" src="${escapeHtml(storeSettings.logo)}" onerror="this.style.display='none'" />
     <div class="store-name">${escapeHtml(storeSettings.name)}</div>
     <div class="store-details">${escapeHtml(storeSettings.address)} | ${escapeHtml(storeSettings.phone)}</div>
-    <div class="invoice-title-badge">${isPaymentReceipt ? (isSupplierCollection ? 'إيصال تحصيل من مورد' : 'إيصال سداد مورد') : 'فاتورة مشتريات'}</div>
+    <div class="invoice-title-badge">${isPaymentReceipt ? (isSupplierCollection ? 'إيصال تحصيل من مورد' : 'إيصال سداد مورد') : printDocumentTitle}</div>
   </div>
 
   <div class="info-grid">
