@@ -7,7 +7,7 @@ import { ShoppingCart, Search, Plus, Minus, Trash2, Banknote, RefreshCcw, Moon, 
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from 'html5-qrcode';
 import { normalizeArabic } from '../utils/textUtils';
 import { printBarcodeLabels, printBarcodeLabelsBatch, generateBarcode } from '../utils/printBarcodeLabels';
-import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, totalOpeningBalance } from '../utils/paymentMethods';
+import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, openingBalanceOf, totalOpeningBalance, type PaymentKey } from '../utils/paymentMethods';
 import { getUnitConfig, isFractionalUnit, formatQty } from '../utils/units';
 import { escapeHtml } from '../utils/escapeHtml';
 import { printDocument } from '../utils/printWindow';
@@ -871,7 +871,7 @@ export default function POS() {
   // (settle as much debt as possible first); a number = cashier override (0 = don't deduct).
   const [returnDebtDeduction, setReturnDebtDeduction] = useState<number | null>(null);
   // Method used to refund cash to the customer on a return.
-  const [refundMethod, setRefundMethod] = useState<'cash' | 'visa' | 'wallet' | 'instapay'>('cash');
+  const [refundMethod, setRefundMethod] = useState<PaymentKey>('cash');
   // رد المرتجع على أكتر من وسيلة (db/67): الوضع الافتراضي وسيلة واحدة زي الأول،
   // و«تقسيم» بيفتح خانة مبلغ لكل وسيلة — العميل ممكن يكون دفع بأكتر من وسيلة،
   // أو الدرج مافيهوش كاش كفاية فيترد جزء كاش وجزء انستا.
