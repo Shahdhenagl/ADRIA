@@ -2,7 +2,7 @@ import { useState, useMemo, useRef } from 'react';
 import { useStore, type Product } from '../../store/useStore';
 import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight, Layers, Trash2, History, Users } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
-import { splitStockValueBySource, totalIntakeValue, intakeSourceLabel } from '../../utils/stockIntake';
+import { splitStockValueBySource, totalIntakeValue, intakeSourceLabel, canDeleteStockIntake } from '../../utils/stockIntake';
 import { UNIT_OPTIONS, getUnitConfig, isFractionalUnit, formatQty } from '../../utils/units';
 import { generateBarcode, printBarcodeLabels, printBarcodeLabelsBatch } from '../../utils/printBarcodeLabels';
 import * as XLSX from 'xlsx';
@@ -1412,8 +1412,10 @@ export default function Inventory() {
                         <td className="p-3"><span className="text-[11px] font-bold bg-slate-100 text-slate-600 rounded-lg px-2 py-1">{intakeSourceLabel(i.source)}</span></td>
                         <td className="p-3">
                           <button
-                            onClick={() => { if (confirm('حذف القيد؟ ده بيشيل قيمته من رأس مال البضاعة فقط — المخزون مش هيتأثر.')) deleteStockIntake(i.id); }}
-                            className="text-red-500 hover:bg-red-50 p-2 rounded-lg"><Trash2 size={16} /></button>
+                            disabled={!canDeleteStockIntake(i)}
+                            title={canDeleteStockIntake(i) ? 'حذف القيد المالي فقط — لن يتغير المخزون' : 'لا يمكن حذف حركة نقص المخزون لأنها تفسّر كمية خرجت بالفعل'}
+                            onClick={() => { if (canDeleteStockIntake(i) && confirm('حذف القيد المالي فقط؟ المخزون لن يتغير.')) deleteStockIntake(i.id); }}
+                            className={`p-2 rounded-lg ${canDeleteStockIntake(i) ? 'text-red-500 hover:bg-red-50' : 'text-slate-300 cursor-not-allowed'}`}><Trash2 size={16} /></button>
                         </td>
                       </tr>
                     ))}

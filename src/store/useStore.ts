@@ -11,6 +11,7 @@ import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassw
 import { withTimeout, isNetworkError, NET_TIMEOUT } from '../utils/net';
 import { isFullyPrepaidOnlineHeld } from '../utils/heldInvoiceLifecycle';
 import { loadActiveProductDiscounts, applyActiveDiscountPrices } from '../utils/productDiscounts';
+import { closingExpensesForDay, closingSavingsForDay } from '../utils/dayReopen';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -201,6 +202,18 @@ export interface PurchaseInvoice {
   /** لصفوف مرتجع المورد: id فاتورة الشراء الأصلية (db/46). */
   source_invoice_id?: string | null;
   items?: PurchaseItem[];
+}
+
+export interface DeletedSupplierPurchaseInvoice {
+  id: string;
+  original_invoice_id: string;
+  invoice_number: string;
+  supplier_id: string | null;
+  supplier_name: string;
+  invoice_snapshot: PurchaseInvoice;
+  deleted_at: string;
+  deleted_by?: string | null;
+  deletion_reason?: string | null;
 }
 
 /**
@@ -644,6 +657,8 @@ interface CashierStore {
   financingPayments: FinancingPayment[];
   financingTransactions: FinancingTransaction[];
   purchaseInvoices: PurchaseInvoice[];
+  deletedSupplierPurchaseInvoices: DeletedSupplierPurchaseInvoice[];
+  deletedSupplierPurchaseInvoicesError: string | null;
   coupons: Coupon[];
   invoiceCounter: number;
   activeInvoiceId: string;
@@ -906,6 +921,7 @@ interface CashierStore {
 
   // Purchases
   loadPurchaseInvoices: () => Promise<void>;
+  loadDeletedSupplierPurchaseInvoices: () => Promise<void>;
   addPurchaseInvoice: (
     invoice: Omit<PurchaseInvoice, 'id' | 'created_at' | 'items' | 'paid_cash' | 'paid_visa' | 'paid_wallet' | 'paid_instapay'>, 
     items: PurchaseItem[],
@@ -1377,6 +1393,8 @@ export const useStore = create<CashierStore>((set, get) => ({
   financingPayments: [],
   financingTransactions: [],
   purchaseInvoices: [],
+  deletedSupplierPurchaseInvoices: [],
+  deletedSupplierPurchaseInvoicesError: null,
   employees: [],
   employeeTransactions: [],
   employeeLeaves: [],
@@ -1852,6 +1870,7 @@ export const useStore = create<CashierStore>((set, get) => ({
 
       // Fetch purchase invoices
       await get().loadPurchaseInvoices();
+      await get().loadDeletedSupplierPurchaseInvoices();
       get().loadFinancing();
       get().loadCarSubscriptions();
       get().loadProductSuggestions();
@@ -5166,6 +5185,11 @@ setupRealtime: () => {
   },
 
   deleteStockIntake: async (id) => {
+    const intake = get().stockIntakes.find((row) => row.id === id);
+    if (intake && (Number(intake.quantity) < 0 || intake.source === 'manual_decrease')) {
+      alert('لا يمكن حذف حركة نقص المخزون؛ حذفها وحده يخفي أثر النقص من كشف الحركة ولا يعيد القطعة للمخزون. استخدمي تسوية جرد موثّقة إذا كان المطلوب عكس النقص.');
+      return;
+    }
     const { error } = await supabase.from('stock_intakes').delete().eq('id', id);
     if (error) { console.error('deleteStockIntake error:', error); alert('تعذّر حذف القيد'); return; }
     set((s) => ({ stockIntakes: s.stockIntakes.filter((i) => i.id !== id) }));
@@ -5579,17 +5603,17 @@ setupRealtime: () => {
     const state = get();
     if (!dayStr) return false;
 
-    // Parse target day string [YYYY-MM-DD] and set search window bounded strictly to target day (+/- 12h buffer)
+    // Scope the query to exactly one accounting day; do not reopen adjacent days.
     const parts = dayStr.split('-').map(Number);
     if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return false;
-    const [y, m, d] = parts;
-    const searchStart = new Date(y, m - 1, d - 1, 12, 0, 0, 0);
-    const searchEnd = new Date(y, m - 1, d + 1, 12, 0, 0, 0);
+    const { start: dayStart, end: dayEnd } = businessDayRange(dayStr, state.storeSettings);
 
-    // 1. Fetch all expenses to ensure no category mismatch or date boundary omission
+    // 1. Fetch expenses and filter them by the exact business-day interval.
     const { data: allExpenses, error: expErr } = await supabase
       .from('expenses')
-      .select('*');
+      .select('id, category, note, created_at')
+      .gte('created_at', dayStart.toISOString())
+      .lt('created_at', dayEnd.toISOString());
 
     if (expErr) {
       console.error('reopenDay: failed to fetch expenses:', expErr);
@@ -5597,25 +5621,7 @@ setupRealtime: () => {
       return false;
     }
 
-    // Filter closing expenses created strictly within target day search window
-    const closingExpenses = (allExpenses || []).filter((e: any) => {
-      const created = new Date(e.created_at);
-      if (isNaN(created.getTime()) || created < searchStart || created > searchEnd) return false;
-      const cat = String(e.category || '').trim();
-      const note = String(e.note || '').trim();
-      const isClosing = (
-        cat === DAY_CLOSING_CATEGORY ||
-        cat === 'تقفيل يومية' ||
-        cat === 'تحويل للخزنة' ||
-        cat.includes('تحويل للخزنة') ||
-        cat.includes('تقفيل') ||
-        note.includes('[SVG:') ||
-        note.includes('تحويل من المحل للخزنة الرئيسية')
-      );
-      if (!isClosing) return false;
-      if (note.includes(dayStr) || String(e.created_at || '').startsWith(dayStr)) return true;
-      return true;
-    });
+    const closingExpenses = closingExpensesForDay(allExpenses || [], dayStr, state.storeSettings);
 
     const expenseIds = closingExpenses.map((e: any) => e.id);
     const groupIds: string[] = [];
@@ -5624,22 +5630,18 @@ setupRealtime: () => {
       if (gid) groupIds.push(gid);
     });
 
-    // 2. Fetch all savings_transactions to ensure no closing entries are missed
-    const { data: allSavings } = await supabase.from('savings_transactions').select('*');
-    const closingSavings = (allSavings || []).filter((s: any) => {
-      const created = new Date(s.created_at);
-      if (isNaN(created.getTime()) || created < searchStart || created > searchEnd) return false;
-      const note = String(s.note || '').trim();
-      const isClosing = (
-        s.source === 'day_closing' ||
-        s.source === 'shop_transfer' ||
-        note.includes('[SVG:') ||
-        note.includes('تحويل من المحل للخزنة الرئيسية')
-      );
-      if (!isClosing) return false;
-      if (note.includes(dayStr) || String(s.created_at || '').startsWith(dayStr)) return true;
-      return true;
-    });
+    // 2. Fetch treasury entries from the same day only.
+    const { data: allSavings, error: savingsErr } = await supabase
+      .from('savings_transactions')
+      .select('*')
+      .gte('created_at', dayStart.toISOString())
+      .lt('created_at', dayEnd.toISOString());
+    if (savingsErr) {
+      console.error('reopenDay: failed to fetch savings transactions:', savingsErr);
+      alert('تعذّر جلب حركات الخزنة الرئيسية: ' + savingsErr.message);
+      return false;
+    }
+    const closingSavings = closingSavingsForDay(allSavings || [], dayStr, state.storeSettings);
 
     const savingsIds = closingSavings.map((s: any) => s.id);
     closingSavings.forEach((s: any) => {
@@ -6372,6 +6374,27 @@ setupRealtime: () => {
     }
   },
 
+  loadDeletedSupplierPurchaseInvoices: async () => {
+    try {
+      const records = await fetchAllRows<Record<string, unknown>>('deleted_supplier_purchase_invoices', '*');
+      const mapped = (records as any[]).map((record) => ({
+        ...record,
+        invoice_snapshot: typeof record.invoice_snapshot === 'string'
+          ? JSON.parse(record.invoice_snapshot)
+          : record.invoice_snapshot,
+      }));
+      set({
+        deletedSupplierPurchaseInvoices: mapped as DeletedSupplierPurchaseInvoice[],
+        deletedSupplierPurchaseInvoicesError: null,
+      });
+    } catch (e: any) {
+      console.error('Could not load deleted supplier purchase invoices:', e);
+      set({
+        deletedSupplierPurchaseInvoicesError: 'شغّل تحديث قاعدة البيانات db/80_supplier_purchase_invoice_trash.sql لعرض الفواتير المحذوفة.',
+      });
+    }
+  },
+
   addPurchaseInvoice: async (invoice, items, splitPayments) => {
     const state = get();
     const createdAt = accountingTimestampForNow(state.storeSettings);
@@ -6426,40 +6449,100 @@ setupRealtime: () => {
       }
     }
 
-    // 3. Update stock and average price for each product
+    // 3. Update stock and average price for each product. Group duplicate lines
+    // and base the calculation on the live DB values, not a possibly stale tab.
     const updatedProducts = [...state.products];
+    const stockByProduct = new Map<string, { quantity: number; value: number; toDisplay: number; lastPrice: number }>();
     for (const item of items) {
-      const productIndex = updatedProducts.findIndex(p => p.id === item.product_id);
-      if (productIndex !== -1) {
+      const quantity = Number(item.quantity) || 0;
+      const purchasePrice = Number(item.purchase_price) || 0;
+      const toDisplay = Math.max(0, Math.min(Number(item.to_display) || 0, quantity));
+      const aggregate = stockByProduct.get(item.product_id) || { quantity: 0, value: 0, toDisplay: 0, lastPrice: purchasePrice };
+      aggregate.quantity += quantity;
+      aggregate.value += quantity * purchasePrice;
+      aggregate.toDisplay += toDisplay;
+      aggregate.lastPrice = purchasePrice;
+      stockByProduct.set(item.product_id, aggregate);
+    }
+
+    const stockSnapshots: Array<{ id: string; stock_quantity: number; display_quantity: number; average_purchase_price: number | null; purchase_price: number | null }> = [];
+    try {
+      for (const [productId, purchase] of stockByProduct) {
+        const productIndex = updatedProducts.findIndex((product) => product.id === productId);
+        if (productIndex < 0) throw new Error(`الصنف المرتبط بكود/معرّف ${productId} غير موجود في قائمة المخزون؛ لم يكتمل تحديث الفاتورة.`);
+
         const product = updatedProducts[productIndex];
-        const oldQty = product.stock_quantity;
-        const oldAvgPrice = product.average_purchase_price || product.purchase_price || 0;
-        
-        const newQty = oldQty + item.quantity;
-        const newTotalValue = (oldQty * oldAvgPrice) + (item.quantity * item.purchase_price);
-        const newAvgPrice = newQty > 0 ? newTotalValue / newQty : 0;
+        const { data: liveProduct, error: readError } = await supabase
+          .from('products')
+          .select('id, name, stock_quantity, display_quantity, average_purchase_price, purchase_price')
+          .eq('id', productId)
+          .maybeSingle();
+        if (readError || !liveProduct) {
+          throw new Error(`تعذّر قراءة رصيد الصنف «${product.name}» من قاعدة البيانات: ${readError?.message || 'الصنف غير موجود'}`);
+        }
 
-        // توزيع الكمية المشتراة: جزء يدخل المحل (المعروض) والباقي يدخل المستودع.
-        const toDisplay = Math.max(0, Math.min(Number(item.to_display) || 0, item.quantity));
-        const newDisplay = Math.min((Number(product.display_quantity) || 0) + toDisplay, newQty);
+        const oldQty = Number(liveProduct.stock_quantity) || 0;
+        const oldAvgPrice = Number(liveProduct.average_purchase_price) || Number(liveProduct.purchase_price) || 0;
+        const newQty = oldQty + purchase.quantity;
+        const newAvgPrice = newQty > 0
+          ? ((oldQty * oldAvgPrice) + purchase.value) / newQty
+          : 0;
+        // كمية المحل اختيارية؛ الباقي يضاف للمستودع ضمن إجمالي المخزون.
+        const newDisplay = Math.min((Number(liveProduct.display_quantity) || 0) + purchase.toDisplay, newQty);
+        const snapshot = {
+          id: productId,
+          stock_quantity: oldQty,
+          display_quantity: Number(liveProduct.display_quantity) || 0,
+          average_purchase_price: liveProduct.average_purchase_price ?? null,
+          purchase_price: liveProduct.purchase_price ?? null,
+        };
+        // خزن الحالة السابقة قبل الطلب؛ حتى فشل الشبكة بعد تنفيذ UPDATE يمكن
+        // محاولة إرجاع الرصيد إذا كان الخادم قد طبّق العملية بالفعل.
+        stockSnapshots.push(snapshot);
+        const { data: updatedRow, error: stockError } = await supabase
+          .from('products')
+          .update({
+            stock_quantity: newQty,
+            display_quantity: newDisplay,
+            average_purchase_price: newAvgPrice,
+            purchase_price: purchase.lastPrice,
+          })
+          .eq('id', productId)
+          .select('id')
+          .maybeSingle();
+        if (stockError || !updatedRow) {
+          throw new Error(`تعذّر تحديث مخزون الصنف «${liveProduct.name || product.name}»: ${stockError?.message || 'لم يتم العثور على سجل المنتج'}`);
+        }
 
-        // Update DB
-        await supabase.from('products').update({
-          stock_quantity: newQty,
-          display_quantity: newDisplay,
-          average_purchase_price: newAvgPrice,
-          purchase_price: item.purchase_price
-        }).eq('id', product.id);
-
-        // Update local state copy
         updatedProducts[productIndex] = {
           ...product,
           stock_quantity: newQty,
           display_quantity: newDisplay,
           average_purchase_price: newAvgPrice,
-          purchase_price: item.purchase_price
+          purchase_price: purchase.lastPrice,
         };
       }
+    } catch (stockError: any) {
+      const rollbackProblems: string[] = [];
+      for (const snapshot of [...stockSnapshots].reverse()) {
+        const { error } = await supabase.from('products').update({
+          stock_quantity: snapshot.stock_quantity,
+          display_quantity: snapshot.display_quantity,
+          average_purchase_price: snapshot.average_purchase_price,
+          purchase_price: snapshot.purchase_price,
+        }).eq('id', snapshot.id);
+        if (error) rollbackProblems.push(`تعذّر إرجاع مخزون المنتج ${snapshot.id}: ${error.message}`);
+      }
+      const { error: rollbackItemsError } = await supabase.from('purchase_items').delete().eq('invoice_id', newInvoiceId);
+      if (rollbackItemsError) rollbackProblems.push(`تعذّر حذف بنود الفاتورة: ${rollbackItemsError.message}`);
+      const { error: rollbackInvoiceError } = await supabase.from('purchase_invoices').delete().eq('id', newInvoiceId);
+      if (rollbackInvoiceError) rollbackProblems.push(`تعذّر حذف سجل الفاتورة: ${rollbackInvoiceError.message}`);
+
+      const detail = stockError?.message || 'خطأ غير معروف';
+      if (rollbackProblems.length) {
+        throw new Error(`تعذّر تحديث المخزون (${detail}). فشلت محاولة التراجع بالكامل، ورقم الفاتورة ${invoice.invoice_number}. لا تعيدي إدخالها قبل مراجعة المخزون والفاتورة. ${rollbackProblems.join(' | ')}`);
+      }
+      throw new Error(`تعذّر تحديث المخزون (${detail})، لذلك تم التراجع عن تسجيل الفاتورة وبنودها. أعيدي المحاولة بعد التأكد من اتصال الصنف بالمخزون.`);
     }
 
     // 4. Update local state
@@ -6670,6 +6753,8 @@ setupRealtime: () => {
   },
 
   deletePurchaseInvoice: async (id, reason = '') => {
+    let archiveRecordId: string | null = null;
+    let purchaseRowDeleted = false;
     try {
       const state = get();
       const invoice = state.purchaseInvoices.find(inv => inv.id === id);
@@ -6679,6 +6764,7 @@ setupRealtime: () => {
       }
       if (!(await ensureAccountingDayOpen(state, invoice.created_at))) return false;
       const supplierName = invoice ? state.suppliers.find(s => s.id === invoice.supplier_id)?.name : 'مورد';
+      const deletedAt = new Date().toISOString();
 
       // مفيش حذف لفاتورة اتعمل عليها مرتجع — الحذف هيسيب صف المرتجع معلّق
       // وبيرجّع مخزون مرتين. لازم يتحذف المرتجع الأول.
@@ -6701,6 +6787,36 @@ setupRealtime: () => {
           return false;
         }
       }
+
+      // احتفظ بنسخة مستقلة من الفاتورة وبنودها قبل حذفها من سجل المشتريات؛
+      // السجل المؤرشف لا يدخل في الحسابات أو تقارير الفواتير النشطة.
+      const invoiceSnapshot = {
+        ...invoice,
+        supplier_name: supplierName || 'مورد محذوف',
+        items: (invoice.items || []).map((item) => ({
+          ...item,
+          product_name: state.products.find((product) => product.id === item.product_id)?.name || 'منتج محذوف',
+        })),
+      };
+      const { data: archivedInvoice, error: archiveError } = await supabase
+        .from('deleted_supplier_purchase_invoices')
+        .upsert({
+          original_invoice_id: id,
+          invoice_number: invoice.invoice_number,
+          supplier_id: invoice.supplier_id || null,
+          supplier_name: supplierName || 'مورد محذوف',
+          invoice_snapshot: invoiceSnapshot,
+          deleted_at: deletedAt,
+          deleted_by: getActorName(state),
+          deletion_reason: reason || 'حذف يدوي من شاشة الموردين',
+        }, { onConflict: 'original_invoice_id' })
+        .select('*')
+        .single();
+      if (archiveError || !archivedInvoice) {
+        throw new Error(`تعذّر حفظ الفاتورة في سلة الموردين المحذوفة. شغّل db/80_supplier_purchase_invoice_trash.sql أولاً. ${archiveError?.message || ''}`);
+      }
+      archiveRecordId = archivedInvoice.id;
+
       const updatedProducts = [...state.products];
       for (const item of (invoice?.items || [])) {
         const productIndex = updatedProducts.findIndex(p => p.id === item.product_id);
@@ -6712,6 +6828,14 @@ setupRealtime: () => {
         // لا نحذف إذا خرج جزء من كمية الفاتورة من المخزون؛ طرح الكمية المتبقية
         // فقط كان يترك تكلفة المخزون ودفتر المورد غير متسقين.
         if (item.quantity > 0 && currentStock + 0.000001 < item.quantity) {
+          if (archiveRecordId) {
+            const { error: cleanupError } = await supabase
+              .from('deleted_supplier_purchase_invoices')
+              .delete()
+              .eq('id', archiveRecordId);
+            if (cleanupError) console.error('Could not remove blocked supplier invoice archive:', cleanupError);
+            archiveRecordId = null;
+          }
           alert(`لا يمكن حذف الفاتورة بأمان: الصنف «${product.name}» المتاح منه ${currentStock} بينما الفاتورة أضافت ${item.quantity}.\nتم بيع/صرف جزء من الكمية بالفعل.`);
           return false;
         }
@@ -6742,6 +6866,7 @@ setupRealtime: () => {
       // Delete the invoice
       const { error } = await supabase.from('purchase_invoices').delete().eq('id', id);
       if (error) throw error;
+      purchaseRowDeleted = true;
 
       // لو الصف كان على الخزنة الرئيسية، نمسح حركة الدفتر المرتبطة بيه بالـ group_id
       // كمان — وإلا الفلوس تفضل معلّقة في الرئيسية بعد حذف الصف.
@@ -6755,6 +6880,9 @@ setupRealtime: () => {
       }
       set((state) => ({
         purchaseInvoices: state.purchaseInvoices.filter(inv => inv.id !== id),
+        deletedSupplierPurchaseInvoices: archivedInvoice
+          ? [archivedInvoice as DeletedSupplierPurchaseInvoice, ...state.deletedSupplierPurchaseInvoices.filter((entry) => entry.original_invoice_id !== id)]
+          : state.deletedSupplierPurchaseInvoices,
         products: updatedProducts
       }));
       new BroadcastChannel('cashier-sync').postMessage('sync_products');
@@ -6773,6 +6901,13 @@ setupRealtime: () => {
       return true;
     } catch (e) {
       console.error('Delete Purchase Invoice Error:', e);
+      if (archiveRecordId && !purchaseRowDeleted) {
+        const { error: archiveCleanupError } = await supabase
+          .from('deleted_supplier_purchase_invoices')
+          .delete()
+          .eq('id', archiveRecordId);
+        if (archiveCleanupError) console.error('Could not remove incomplete supplier invoice archive:', archiveCleanupError);
+      }
       alert((e as Error)?.message || 'حدث خطأ أثناء حذف الفاتورة');
       return false;
     }

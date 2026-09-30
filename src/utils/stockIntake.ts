@@ -14,6 +14,12 @@ export const INTAKE_SOURCE_LABELS: Record<string, string> = {
 
 export const intakeSourceLabel = (s?: string) => INTAKE_SOURCE_LABELS[s || ''] || 'أخرى';
 
+/** Negative adjustments explain a decrease already applied to stock; deleting
+ * their ledger row alone would make the movement statement incorrect. */
+export function canDeleteStockIntake(entry: { quantity?: number; source?: string }): boolean {
+  return Number(entry.quantity) >= 0 && entry.source !== 'manual_decrease';
+}
+
 /** إجمالي قيمة ما دخل المخزون بدون فاتورة شراء (تراكمي). */
 export function prepareStockIntakePayload(rows: Array<{ product_id: string; product_name?: string | null; quantity: number; unit_cost: number; source: string; note?: string | null }>) {
   return rows

@@ -36,7 +36,7 @@ declare
   t text;
   tables text[] := array[
     'store_settings','categories','products','customers','suppliers',
-    'car_subscriptions','maintenance_appointments','purchase_invoices','purchase_items',
+    'car_subscriptions','maintenance_appointments','purchase_invoices','purchase_items','deleted_supplier_purchase_invoices',
     'orders','invoice_counter','order_items','expenses',
     'financing_accounts','financing_payments','financing_transactions',
     'cashiers','employees','employee_transactions','employee_leaves',
