@@ -6465,40 +6465,100 @@ setupRealtime: () => {
       }
     }
 
-    // 3. Update stock and average price for each product
+    // 3. Update stock and average price for each product. Group duplicate lines
+    // and base the calculation on the live DB values, not a possibly stale tab.
     const updatedProducts = [...state.products];
+    const stockByProduct = new Map<string, { quantity: number; value: number; toDisplay: number; lastPrice: number }>();
     for (const item of items) {
-      const productIndex = updatedProducts.findIndex(p => p.id === item.product_id);
-      if (productIndex !== -1) {
+      const quantity = Number(item.quantity) || 0;
+      const purchasePrice = Number(item.purchase_price) || 0;
+      const toDisplay = Math.max(0, Math.min(Number(item.to_display) || 0, quantity));
+      const aggregate = stockByProduct.get(item.product_id) || { quantity: 0, value: 0, toDisplay: 0, lastPrice: purchasePrice };
+      aggregate.quantity += quantity;
+      aggregate.value += quantity * purchasePrice;
+      aggregate.toDisplay += toDisplay;
+      aggregate.lastPrice = purchasePrice;
+      stockByProduct.set(item.product_id, aggregate);
+    }
+
+    const stockSnapshots: Array<{ id: string; stock_quantity: number; display_quantity: number; average_purchase_price: number | null; purchase_price: number | null }> = [];
+    try {
+      for (const [productId, purchase] of stockByProduct) {
+        const productIndex = updatedProducts.findIndex((product) => product.id === productId);
+        if (productIndex < 0) throw new Error(`الصنف المرتبط بكود/معرّف ${productId} غير موجود في قائمة المخزون؛ لم يكتمل تحديث الفاتورة.`);
+
         const product = updatedProducts[productIndex];
-        const oldQty = product.stock_quantity;
-        const oldAvgPrice = product.average_purchase_price || product.purchase_price || 0;
-        
-        const newQty = oldQty + item.quantity;
-        const newTotalValue = (oldQty * oldAvgPrice) + (item.quantity * item.purchase_price);
-        const newAvgPrice = newQty > 0 ? newTotalValue / newQty : 0;
+        const { data: liveProduct, error: readError } = await supabase
+          .from('products')
+          .select('id, name, stock_quantity, display_quantity, average_purchase_price, purchase_price')
+          .eq('id', productId)
+          .maybeSingle();
+        if (readError || !liveProduct) {
+          throw new Error(`تعذّر قراءة رصيد الصنف «${product.name}» من قاعدة البيانات: ${readError?.message || 'الصنف غير موجود'}`);
+        }
 
-        // توزيع الكمية المشتراة: جزء يدخل المحل (المعروض) والباقي يدخل المستودع.
-        const toDisplay = Math.max(0, Math.min(Number(item.to_display) || 0, item.quantity));
-        const newDisplay = Math.min((Number(product.display_quantity) || 0) + toDisplay, newQty);
+        const oldQty = Number(liveProduct.stock_quantity) || 0;
+        const oldAvgPrice = Number(liveProduct.average_purchase_price) || Number(liveProduct.purchase_price) || 0;
+        const newQty = oldQty + purchase.quantity;
+        const newAvgPrice = newQty > 0
+          ? ((oldQty * oldAvgPrice) + purchase.value) / newQty
+          : 0;
+        // كمية المحل اختيارية؛ الباقي يضاف للمستودع ضمن إجمالي المخزون.
+        const newDisplay = Math.min((Number(liveProduct.display_quantity) || 0) + purchase.toDisplay, newQty);
+        const snapshot = {
+          id: productId,
+          stock_quantity: oldQty,
+          display_quantity: Number(liveProduct.display_quantity) || 0,
+          average_purchase_price: liveProduct.average_purchase_price ?? null,
+          purchase_price: liveProduct.purchase_price ?? null,
+        };
+        // خزن الحالة السابقة قبل الطلب؛ حتى فشل الشبكة بعد تنفيذ UPDATE يمكن
+        // محاولة إرجاع الرصيد إذا كان الخادم قد طبّق العملية بالفعل.
+        stockSnapshots.push(snapshot);
+        const { data: updatedRow, error: stockError } = await supabase
+          .from('products')
+          .update({
+            stock_quantity: newQty,
+            display_quantity: newDisplay,
+            average_purchase_price: newAvgPrice,
+            purchase_price: purchase.lastPrice,
+          })
+          .eq('id', productId)
+          .select('id')
+          .maybeSingle();
+        if (stockError || !updatedRow) {
+          throw new Error(`تعذّر تحديث مخزون الصنف «${liveProduct.name || product.name}»: ${stockError?.message || 'لم يتم العثور على سجل المنتج'}`);
+        }
 
-        // Update DB
-        await supabase.from('products').update({
-          stock_quantity: newQty,
-          display_quantity: newDisplay,
-          average_purchase_price: newAvgPrice,
-          purchase_price: item.purchase_price
-        }).eq('id', product.id);
-
-        // Update local state copy
         updatedProducts[productIndex] = {
           ...product,
           stock_quantity: newQty,
           display_quantity: newDisplay,
           average_purchase_price: newAvgPrice,
-          purchase_price: item.purchase_price
+          purchase_price: purchase.lastPrice,
         };
       }
+    } catch (stockError: any) {
+      const rollbackProblems: string[] = [];
+      for (const snapshot of [...stockSnapshots].reverse()) {
+        const { error } = await supabase.from('products').update({
+          stock_quantity: snapshot.stock_quantity,
+          display_quantity: snapshot.display_quantity,
+          average_purchase_price: snapshot.average_purchase_price,
+          purchase_price: snapshot.purchase_price,
+        }).eq('id', snapshot.id);
+        if (error) rollbackProblems.push(`تعذّر إرجاع مخزون المنتج ${snapshot.id}: ${error.message}`);
+      }
+      const { error: rollbackItemsError } = await supabase.from('purchase_items').delete().eq('invoice_id', newInvoiceId);
+      if (rollbackItemsError) rollbackProblems.push(`تعذّر حذف بنود الفاتورة: ${rollbackItemsError.message}`);
+      const { error: rollbackInvoiceError } = await supabase.from('purchase_invoices').delete().eq('id', newInvoiceId);
+      if (rollbackInvoiceError) rollbackProblems.push(`تعذّر حذف سجل الفاتورة: ${rollbackInvoiceError.message}`);
+
+      const detail = stockError?.message || 'خطأ غير معروف';
+      if (rollbackProblems.length) {
+        throw new Error(`تعذّر تحديث المخزون (${detail}). فشلت محاولة التراجع بالكامل، ورقم الفاتورة ${invoice.invoice_number}. لا تعيدي إدخالها قبل مراجعة المخزون والفاتورة. ${rollbackProblems.join(' | ')}`);
+      }
+      throw new Error(`تعذّر تحديث المخزون (${detail})، لذلك تم التراجع عن تسجيل الفاتورة وبنودها. أعيدي المحاولة بعد التأكد من اتصال الصنف بالمخزون.`);
     }
 
     // 4. Update local state
