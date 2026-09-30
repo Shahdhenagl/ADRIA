@@ -5185,6 +5185,11 @@ setupRealtime: () => {
   },
 
   deleteStockIntake: async (id) => {
+    const intake = get().stockIntakes.find((row) => row.id === id);
+    if (intake && (Number(intake.quantity) < 0 || intake.source === 'manual_decrease')) {
+      alert('لا يمكن حذف حركة نقص المخزون؛ حذفها وحده يخفي أثر النقص من كشف الحركة ولا يعيد القطعة للمخزون. استخدمي تسوية جرد موثّقة إذا كان المطلوب عكس النقص.');
+      return;
+    }
     const { error } = await supabase.from('stock_intakes').delete().eq('id', id);
     if (error) { console.error('deleteStockIntake error:', error); alert('تعذّر حذف القيد'); return; }
     set((s) => ({ stockIntakes: s.stockIntakes.filter((i) => i.id !== id) }));
