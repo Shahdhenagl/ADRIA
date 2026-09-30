@@ -3163,16 +3163,16 @@ export default function POS() {
                           <span className="text-sm font-black text-amber-900 dark:text-amber-300 flex items-center gap-1.5"><Unlock size={18} /> إعادة فتح هذا اليوم للتعديل</span>
                         </div>
                         <p className="text-[11px] text-amber-700 dark:text-amber-400 font-bold leading-relaxed">
-                          اليوم ({dayBudgetDate}) والأيام التالية له مقفولة. عند فتح الأيام، <b>تظل جميع الفواتير والمبيعات والمصروفات والبيانات مسجلة كما هي 100% دون تصفير أو حذف</b>، ويتم فقط فتح الأيام لتتمكن من التعديل عليها وإعادة تقفيلها.
+                          سيتم فتح يوم ({dayBudgetDate}) فقط للتعديل. الأيام السابقة واللاحقة لن تتأثر، وتظل جميع الفواتير والمبيعات والمصروفات مسجلة كما هي.
                         </p>
                         <button
                           onClick={async () => {
-                            if (!confirm(`هل أنت متأكد من إعادة فتح يوم ${dayBudgetDate} والأيام التالية له؟\n\nتنويه: جميع المبيعات والفواتير والمصروفات محفوظة 100% ولن تتأثر أو تتصفّر، سيتم فقط تحويل الأيام لحالة "مفتوح للتعديل".`)) return;
+                            if (!confirm(`هل أنت متأكد من إعادة فتح يوم ${dayBudgetDate} فقط؟\n\nسيتم حذف قيد تقفيل هذا اليوم وإبقاؤه مفتوحاً للتعديل. الأيام السابقة واللاحقة لن تتأثر، ولن تُحذف أي مبيعات أو فواتير أو مصروفات أخرى.`)) return;
                             setReopenBusy(true);
                             const ok = await reopenDay(dayBudgetDate);
                             setReopenBusy(false);
                             if (ok) {
-                              alert('تم إعادة فتح الأيام بنجاح ✅ كافة البيانات والمبيعات محفوظة ويمكنك الآن التعديل عليها بحرية.');
+                              alert(`تم إعادة فتح يوم ${dayBudgetDate} فقط ✅ الأيام الأخرى لم تتأثر.`);
                               computeDayBudget(dayBudgetDate);
                             }
                           }}
@@ -3180,7 +3180,7 @@ export default function POS() {
                           className="w-full bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-black py-3 rounded-xl flex items-center justify-center gap-2 shadow-md transition"
                         >
                           <Unlock size={18} />
-                          {reopenBusy ? 'جاري إعادة فتح الأيام...' : '🔓 إعادة فتح هذا اليوم والأيام التالية'}
+                          {reopenBusy ? 'جاري إعادة فتح اليوم...' : '🔓 إعادة فتح هذا اليوم فقط'}
                         </button>
                       </div>
                     </div>

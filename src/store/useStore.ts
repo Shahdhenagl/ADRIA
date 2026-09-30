@@ -11,6 +11,7 @@ import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassw
 import { withTimeout, isNetworkError, NET_TIMEOUT } from '../utils/net';
 import { isFullyPrepaidOnlineHeld } from '../utils/heldInvoiceLifecycle';
 import { loadActiveProductDiscounts, applyActiveDiscountPrices } from '../utils/productDiscounts';
+import { closingExpensesForDay, closingSavingsForDay } from '../utils/dayReopen';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -5597,17 +5598,17 @@ setupRealtime: () => {
     const state = get();
     if (!dayStr) return false;
 
-    // Parse target day string [YYYY-MM-DD] and set search window bounded strictly to target day (+/- 12h buffer)
+    // Scope the query to exactly one accounting day; do not reopen adjacent days.
     const parts = dayStr.split('-').map(Number);
     if (parts.length < 3 || isNaN(parts[0]) || isNaN(parts[1]) || isNaN(parts[2])) return false;
-    const [y, m, d] = parts;
-    const searchStart = new Date(y, m - 1, d - 1, 12, 0, 0, 0);
-    const searchEnd = new Date(y, m - 1, d + 1, 12, 0, 0, 0);
+    const { start: dayStart, end: dayEnd } = businessDayRange(dayStr, state.storeSettings);
 
-    // 1. Fetch all expenses to ensure no category mismatch or date boundary omission
+    // 1. Fetch expenses and filter them by the exact business-day interval.
     const { data: allExpenses, error: expErr } = await supabase
       .from('expenses')
-      .select('*');
+      .select('id, category, note, created_at')
+      .gte('created_at', dayStart.toISOString())
+      .lt('created_at', dayEnd.toISOString());
 
     if (expErr) {
       console.error('reopenDay: failed to fetch expenses:', expErr);
@@ -5615,25 +5616,7 @@ setupRealtime: () => {
       return false;
     }
 
-    // Filter closing expenses created strictly within target day search window
-    const closingExpenses = (allExpenses || []).filter((e: any) => {
-      const created = new Date(e.created_at);
-      if (isNaN(created.getTime()) || created < searchStart || created > searchEnd) return false;
-      const cat = String(e.category || '').trim();
-      const note = String(e.note || '').trim();
-      const isClosing = (
-        cat === DAY_CLOSING_CATEGORY ||
-        cat === 'تقفيل يومية' ||
-        cat === 'تحويل للخزنة' ||
-        cat.includes('تحويل للخزنة') ||
-        cat.includes('تقفيل') ||
-        note.includes('[SVG:') ||
-        note.includes('تحويل من المحل للخزنة الرئيسية')
-      );
-      if (!isClosing) return false;
-      if (note.includes(dayStr) || String(e.created_at || '').startsWith(dayStr)) return true;
-      return true;
-    });
+    const closingExpenses = closingExpensesForDay(allExpenses || [], dayStr, state.storeSettings);
 
     const expenseIds = closingExpenses.map((e: any) => e.id);
     const groupIds: string[] = [];
@@ -5642,22 +5625,18 @@ setupRealtime: () => {
       if (gid) groupIds.push(gid);
     });
 
-    // 2. Fetch all savings_transactions to ensure no closing entries are missed
-    const { data: allSavings } = await supabase.from('savings_transactions').select('*');
-    const closingSavings = (allSavings || []).filter((s: any) => {
-      const created = new Date(s.created_at);
-      if (isNaN(created.getTime()) || created < searchStart || created > searchEnd) return false;
-      const note = String(s.note || '').trim();
-      const isClosing = (
-        s.source === 'day_closing' ||
-        s.source === 'shop_transfer' ||
-        note.includes('[SVG:') ||
-        note.includes('تحويل من المحل للخزنة الرئيسية')
-      );
-      if (!isClosing) return false;
-      if (note.includes(dayStr) || String(s.created_at || '').startsWith(dayStr)) return true;
-      return true;
-    });
+    // 2. Fetch treasury entries from the same day only.
+    const { data: allSavings, error: savingsErr } = await supabase
+      .from('savings_transactions')
+      .select('*')
+      .gte('created_at', dayStart.toISOString())
+      .lt('created_at', dayEnd.toISOString());
+    if (savingsErr) {
+      console.error('reopenDay: failed to fetch savings transactions:', savingsErr);
+      alert('تعذّر جلب حركات الخزنة الرئيسية: ' + savingsErr.message);
+      return false;
+    }
+    const closingSavings = closingSavingsForDay(allSavings || [], dayStr, state.storeSettings);
 
     const savingsIds = closingSavings.map((s: any) => s.id);
     closingSavings.forEach((s: any) => {
