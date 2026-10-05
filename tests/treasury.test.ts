@@ -69,7 +69,7 @@ describe('computeShopAvailable', () => {
 
   it('يوحّد date في صفحات الإدارة مع created_at في POS بعد آخر تقفيل', () => {
     const base = {
-      orders: [{ created_at: '2026-08-19T10:00:00Z', type: 'sale', paid_cash: 100, paid_amount: 100, is_deleted: false }],
+      orders: [{ created_at: '2026-08-20T04:00:00Z', type: 'sale', paid_cash: 100, paid_amount: 100, is_deleted: false }],
       expenses: [{ date: '2026-08-19T09:00:00Z', category: 'تحويل للخزنة الرئيسية', amount: 1000, paid_cash: 1000 }],
       purchases: [], salaries: [], savingsTransactions: [],
     };
@@ -77,10 +77,26 @@ describe('computeShopAvailable', () => {
     const posRows = computeShopAvailable({
       ...base,
       expenses: [{ ...base.expenses[0], date: undefined, created_at: '2026-08-19T09:00:00Z' }],
-      orders: [{ ...base.orders[0], created_at: '2026-08-19T10:00:00Z' }],
+      orders: [{ ...base.orders[0], created_at: '2026-08-20T04:00:00Z' }],
     }, { initial_balance: 0, payment_opening_balances: {} });
     expect(adminRows.cash).toBe(100);
     expect(posRows.cash).toBe(100);
+  });
+
+  it('يضم معاملات نفس اليوم المحاسبي حتى 3 صباحًا ولا يجعل وقت القيد نقطة الصفر', () => {
+    const balance = computeShopAvailable({
+      orders: [
+        // بعد وقت حفظ قيد التحويل، لكنه ما زال في يوم 19/08 المحاسبي.
+        { created_at: '2026-08-19T20:00:00Z', type: 'sale', paid_cash: 230, paid_amount: 230, is_deleted: false },
+        // يوم محاسبي جديد بعد 03:00، ويجب أن يظهر كرصد بعد التقفيل.
+        { created_at: '2026-08-20T04:00:00Z', type: 'sale', paid_cash: 70, paid_amount: 70, is_deleted: false },
+      ],
+      expenses: [],
+      purchases: [],
+      salaries: [],
+      savingsTransactions: [{ created_at: '2026-08-19T12:00:00Z', direction: 'in', source: 'day_closing', amount: 1000, method: 'cash' }],
+    }, { initial_balance: 0, payment_opening_balances: {}, dayStartHour: 3 });
+    expect(balance.cash).toBe(70);
   });
 });
 

@@ -2,6 +2,7 @@
 // مشترك بين: تقفيل اليوم (POS)، الخزنة الرئيسية (Savings)، التقارير (Reports).
 // كان متكرّر في 3 أماكن، فأي خطأ كان بيظهر 3 مرات — التوحيد هنا يمنع ذلك.
 import { ALL_PAYMENT_KEYS, openingBalanceOf, splitFromRow, primaryMethod } from './paymentMethods';
+import { businessDateStr } from './businessDay';
 
 type Bucket = Record<string, number>;
 
@@ -236,11 +237,11 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
   const net: Bucket = {};
   ALL_PAYMENT_KEYS.forEach((k) => { net[k] = 0; });
 
-  // POS هو مصدر الحقيقة للتقفيل: آخر تحويل فعلي من المحل إلى الرئيسية هو نقطة
-  // الصفر التشغيلية. نبدأ بعد صف التحويل نفسه (created_at > cutoff) لأن
-  // مصروف التقفيل قد أخرج الرصيد بالفعل ولا يجوز خصمه مرة ثانية.
-  // لا نستخدم صف day_closing وحده كنقطة قطع؛ فقد يكون توقيته مختلفًا عن مصروف
-  // التحويل المرتبط به. مصروف التحويل هو القيد الفعلي الذي يصفّر درج المحل.
+  // POS هو مصدر الحقيقة للتقفيل، لكن نقطة الصفر هي **اليوم المحاسبي** لا وقت
+  // إنشاء القيد. قد يُحفظ قيد التحويل في منتصف اليوم أو بعده كوقت اصطناعي؛
+  // لذلك كان الاعتماد على created_at يضع فواتير نفس اليوم (حتى 03:00) بعد
+  // التقفيل ويُظهرها كرصد جديد في الدرج. نحدد آخر يوم محاسبي مقفول ثم نأخذ
+  // فقط الحركات التابعة لليوم التالي وما بعده.
   const orders = rows.orders || [];
   const expenses = rows.expenses || [];
   const purchases = rows.purchases || [];
@@ -275,11 +276,19 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
     .map(timestampOf)
     .filter((t: number) => Number.isFinite(t));
   const allClosingTimes = [...closingExpenseTimes, ...closingSavingsTimes];
-  const latestShopClosingAt = allClosingTimes.length ? Math.max(...allClosingTimes) : null;
+  const latestClosedBusinessDay = allClosingTimes.length
+    ? allClosingTimes
+      .map((t) => businessDateStr(settings, new Date(t)))
+      .sort()
+      .at(-1) || null
+    : null;
   const isAfterLatestShopClosing = (rec: any): boolean => {
-    if (latestShopClosingAt == null) return true;
+    if (latestClosedBusinessDay == null) return true;
     const t = timestampOf(rec);
-    return Number.isFinite(t) && t > latestShopClosingAt;
+    if (!Number.isFinite(t)) return false;
+    // كل ما يحدث من 03:00 في يوم التقفيل حتى 02:59 من اليوم التالي
+    // يتبع نفس التقفيل، حتى لو كان created_at بعد وقت حفظ قيد التحويل.
+    return businessDateStr(settings, new Date(t)) > latestClosedBusinessDay;
   };
   const scopedOrders = orders.filter(isAfterLatestShopClosing);
   const scopedExpenses = expenses.filter(isAfterLatestShopClosing);
@@ -389,7 +398,7 @@ export function computeShopAvailable(rows: ShopTreasuryRows, settings: any): Buc
 
   // قبل أول تقفيل فقط نحتاج الرصيد الافتتاحي الرسمي. بعد وجود تقفيل، يكون
   // مصروف التحويل نفسه هو نقطة الصفر ولا يجوز إعادة إضافة الرصيد التاريخي.
-  if (latestShopClosingAt == null) {
+  if (latestClosedBusinessDay == null) {
     ALL_PAYMENT_KEYS.forEach((k) => { net[k] += openingBalanceOf(settings, k); });
   }
   return net;

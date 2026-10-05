@@ -5950,8 +5950,12 @@ setupRealtime: () => {
   updateExpense: async (id, expense, opts) => {
     const state = get();
     const current = state.expenses.find((e) => e.id === id);
-    if (current && !(await ensureAccountingDayOpen(state, current.date))) return;
-    if (expense.date && !(await ensureAccountingDayOpen(state, expense.date))) return;
+    // المصروفات المعلّمة [MAIN_TREASURY] تخص الخزنة الرئيسية فقط، ولا يجوز
+    // أن يمنع تعديلها أو تغيير تاريخها قفل يوم درج الكاشير.
+    const effectiveExpense: any = { ...(current as any), ...(expense as any) };
+    const mainOnly = isMainTreasuryExpense(effectiveExpense);
+    if (!mainOnly && current && !(await ensureAccountingDayOpen(state, current.date))) return;
+    if (!mainOnly && expense.date && !(await ensureAccountingDayOpen(state, expense.date))) return;
     const { data, error } = await supabase.from('expenses').update({
       category: expense.category,
       amount: expense.amount,
@@ -7337,15 +7341,17 @@ setupRealtime: () => {
   // ── Employees ─────────────────────────────────────────────
   loadEmployees: async () => {
     const [empRes, transRes, leavesRes, attRes] = await Promise.all([
-      supabase.from('employees').select('*').order('created_at', { ascending: false }),
-      supabase.from('employee_transactions').select('*').order('created_at', { ascending: false }),
-      supabase.from('employee_leaves').select('*').order('created_at', { ascending: false }),
-      supabase.from('employee_attendance').select('*').order('created_at', { ascending: false }),
+      fetchAllRows<Record<string, unknown>>('employees', '*'),
+      fetchAllRows<Record<string, unknown>>('employee_transactions', '*'),
+      fetchAllRows<Record<string, unknown>>('employee_leaves', '*'),
+      fetchAllRows<Record<string, unknown>>('employee_attendance', '*'),
     ]);
-    if (empRes.data) set({ employees: empRes.data as Employee[] });
-    if (transRes.data) set({ employeeTransactions: transRes.data as EmployeeTransaction[] });
-    if (leavesRes.data) set({ employeeLeaves: leavesRes.data as EmployeeLeave[] });
-    if (attRes.data) set({ employeeAttendance: attRes.data as EmployeeAttendance[] });
+    set({
+      employees: empRes as unknown as Employee[],
+      employeeTransactions: transRes as unknown as EmployeeTransaction[],
+      employeeLeaves: leavesRes as unknown as EmployeeLeave[],
+      employeeAttendance: attRes as unknown as EmployeeAttendance[],
+    });
   },
 
   addEmployee: async (employee) => {
@@ -7383,7 +7389,10 @@ setupRealtime: () => {
   addEmployeeTransaction: async (transaction) => {
     const state = get();
     const createdAt = (transaction as any).created_at || accountingTimestampForNow(state.storeSettings);
-    if (!(await ensureAccountingDayOpen(state, createdAt))) return;
+    // صرف الراتب/السلفة من الخزنة الرئيسية لا يلمس درج الكاشير، لذلك لا
+    // يجوز أن يمنعه قفل يوم الكاشير. المعاملة الجديدة تحمل [MAIN_TREASURY]
+    // في ملاحظتها قبل الوصول إلى هنا.
+    if (!isMainTreasuryExpense(transaction) && !(await ensureAccountingDayOpen(state, createdAt))) return;
     const row = { ...transaction, created_at: createdAt };
     const { data, error } = await supabase.from('employee_transactions').insert(row).select().single();
     if (error) {
@@ -7421,7 +7430,7 @@ setupRealtime: () => {
   updateEmployeeTransaction: async (id, transaction) => {
     const current = get().employeeTransactions.find(t => t.id === id);
     if (!current) return;
-    if (!(await ensureAccountingDayOpen(get(), current.created_at))) return;
+    if (!isMainTreasuryExpense(current) && !(await ensureAccountingDayOpen(get(), current.created_at))) return;
 
     const { data, error } = await supabase.from('employee_transactions').update(transaction).eq('id', id).select().single();
     if (error) {
@@ -7463,7 +7472,7 @@ setupRealtime: () => {
   deleteEmployeeTransaction: async (id) => {
     const current = get().employeeTransactions.find(t => t.id === id);
     if (!current) return;
-    if (!(await ensureAccountingDayOpen(get(), current.created_at))) return;
+    if (!isMainTreasuryExpense(current) && !(await ensureAccountingDayOpen(get(), current.created_at))) return;
 
     // نلاقي المصروف المرتبط **قبل** الحذف: on delete set null بتصفّر الربط،
     // فبعد الحذف مش هنعرف نوصله غير بالمطابقة الهشّة.
