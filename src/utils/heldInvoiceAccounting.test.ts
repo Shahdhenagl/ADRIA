@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { buildPaymentLedger } from './paymentLedger';
 import { computeShopAvailable } from './treasury';
 import { heldPaymentBreakdown } from './invoicePayments';
-import { isFullyPrepaidOnlineHeld } from './heldInvoiceLifecycle';
+import { heldNetTotal, heldRemaining, isFullyPrepaidOnlineHeld } from './heldInvoiceLifecycle';
 
 describe('held invoice accounting', () => {
+  it('calculates reservation remaining after discount and deposit consistently', () => {
+    const held = { total: 2960, discount_amount: 90, deposit: 2870 };
+    expect(heldNetTotal(held)).toBe(2870);
+    expect(heldRemaining(held)).toBe(0);
+    expect(heldRemaining({ total: 2960, discount_amount: 0, deposit: 2870 })).toBe(90);
+  });
+
   it('treats a shipped prepaid online order like invoice 543 as status-only delivery', () => {
     expect(isFullyPrepaidOnlineHeld({ kind: 'online', status: 'shipped', total: 900, deposit: 0, discount_amount: 0 })).toBe(true);
     expect(isFullyPrepaidOnlineHeld({ kind: 'online', status: 'money_pending', total: 900, deposit: 0, discount_amount: 0 })).toBe(false);

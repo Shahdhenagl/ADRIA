@@ -1882,6 +1882,12 @@ export default function POS() {
         alert("⚠️ برجاء إدخال بيانات العميل أولاً\n\nلا يمكن إتمام البيع بالآجل بدون اسم العميل ورقم الهاتف.\nاكتب الاسم والرقم في الكاشير وسيتم تسجيل العميل تلقائياً.");
         return;
       }
+      const creditDue = Math.max(0, currentTotal - effectivePaidAmount);
+      if (!window.confirm(
+        `المبلغ المدفوع (${effectivePaidAmount.toFixed(2)}) أقل من صافي الفاتورة (${currentTotal.toFixed(2)}).\n` +
+        `المتبقي (${creditDue.toFixed(2)}) سيتسجل آجل على العميل ${currentCustomerName.trim()}.\n\n` +
+        'هل تريد تسجيل الفاتورة كبيع آجل؟',
+      )) return;
     }
 
     // تاريخ مخصّص للفاتورة (فواتير قديمة) من شارة التاريخ — فاضي = تاريخ الآن.

@@ -15,6 +15,7 @@ import { escapeHtml } from './escapeHtml';
 import { printDocument, AUTO_PRINT_SCRIPT } from './printWindow';
 import { buildPagesQrBlock } from './pagesQr';
 import { formatQty } from './units';
+import { heldNetTotal, heldRemaining } from './heldInvoiceLifecycle';
 
 export interface ShippingLabelHeld {
   id: string;
@@ -25,6 +26,7 @@ export interface ShippingLabelHeld {
   notes?: string | null;
   items?: any[];
   total: number;
+  discount_amount?: number | null;
   deposit?: number | null;
   deposit_split?: Record<string, number> | null;
   status?: string | null;
@@ -42,8 +44,8 @@ const STATUS_TEXT: Record<string, string> = {
 export async function printShippingLabel(held: ShippingLabelHeld, settings: any): Promise<void> {
   const cur = settings?.currency || 'ج.م';
   const dep = Math.max(0, Number(held.deposit) || 0);
-  const total = Number(held.total) || 0;
-  const due = Math.max(0, total - dep);
+  const total = heldNetTotal(held);
+  const due = heldRemaining(held);
   const orderRef = String(held.id).slice(-6).toUpperCase();
   const statusText = STATUS_TEXT[String(held.status || 'held')] || '';
 
@@ -169,7 +171,9 @@ export async function printShippingLabel(held: ShippingLabelHeld, settings: any)
   </table>
 
   <div class="summary-section">
-    <div class="summary-row total"><span>إجمالي الطلب:</span><span>${total.toFixed(2)} ${escapeHtml(cur)}</span></div>
+    <div class="summary-row"><span>الإجمالي قبل الخصم:</span><span>${(Number(held.total) || 0).toFixed(2)} ${escapeHtml(cur)}</span></div>
+    ${(Number(held.discount_amount) || 0) > 0 ? `<div class="summary-row"><span>الخصم:</span><span>− ${(Number(held.discount_amount) || 0).toFixed(2)} ${escapeHtml(cur)}</span></div>` : ''}
+    <div class="summary-row total"><span>الصافي:</span><span>${total.toFixed(2)} ${escapeHtml(cur)}</span></div>
     ${dep > 0 ? `<div class="summary-row"><span>مدفوع مقدماً (عربون):</span><span>− ${dep.toFixed(2)} ${escapeHtml(cur)}</span></div>` : ''}
 
     <div class="payment-status">

@@ -5,6 +5,7 @@ import { activePaymentKeys, payLabelOf } from '../../utils/paymentMethods';
 import { formatQty } from '../../utils/units';
 import { printShippingLabel } from '../../utils/printShippingLabel';
 import { HeldReturnModal } from '../../components/HeldReturnModal';
+import { heldNetTotal, heldRemaining } from '../../utils/heldInvoiceLifecycle';
 
 // حد اعتبار الحجز «قديم» — بعده بيتلوّن تحذيري في القائمة وبيتعدّ في بطاقة التنبيه.
 const STALE_DAYS = 14;
@@ -62,7 +63,7 @@ export default function HeldInvoices() {
   const stats = useMemo(() => {
     const of = (st: HeldStatus) => rows.filter((r) => (r.status || 'held') === st);
     const sumTotal = (list: HeldInvoice[]) => list.reduce((s, r) => s + (Number(r.total) || 0), 0);
-    const sumDue = (list: HeldInvoice[]) => list.reduce((s, r) => s + Math.max(0, (Number(r.total) || 0) - (Number(r.deposit) || 0)), 0);
+    const sumDue = (list: HeldInvoice[]) => list.reduce((s, r) => s + heldRemaining(r), 0);
     const byStatus = {} as Record<HeldStatus, { count: number; money: number }>;
     (['held', 'shipped', 'money_pending', 'delivered', 'returned', 'cancelled'] as HeldStatus[]).forEach((st) => {
       const list = of(st);
@@ -295,7 +296,7 @@ export default function HeldInvoices() {
           {list.map((r) => {
             const age = ageDaysOf(r);
             const dep = Number(r.deposit) || 0;
-            const remaining = Math.max(0, (Number(r.total) || 0) - dep);
+            const remaining = heldRemaining(r);
             const st = (r.status || 'held') as HeldStatus;
             const stale = isStale(r);
             return (
@@ -328,7 +329,8 @@ export default function HeldInvoices() {
                   </div>
 
                   <div className="text-left shrink-0">
-                    <div className="text-lg font-black text-indigo-600">{Number(r.total).toFixed(2)} <span className="text-[10px] text-slate-400">{cur}</span></div>
+                    <div className="text-lg font-black text-indigo-600">{heldNetTotal(r).toFixed(2)} <span className="text-[10px] text-slate-400">{cur}</span></div>
+                    {Number(r.discount_amount) > 0 && <div className="text-[11px] font-bold text-slate-400">قبل الخصم: {Number(r.total).toFixed(2)}</div>}
                     {dep > 0 && (
                       <div className="text-[11px] font-black mt-1 space-y-0.5">
                         <div className="text-emerald-600">عربون: {dep.toFixed(2)}</div>
@@ -343,7 +345,7 @@ export default function HeldInvoices() {
 
                 {isActive(r) && (
                   <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-100 dark:border-slate-700">
-                    {r.kind === 'online' && (
+                    {isActive(r) && (
                       <button
                         onClick={async () => {
                           if (printingId) return;
@@ -352,7 +354,7 @@ export default function HeldInvoices() {
                         }}
                         disabled={!!printingId}
                         className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 px-3 py-2 rounded-xl font-black text-xs disabled:opacity-50">
-                        <Printer size={14} /> {printingId === r.id ? 'جارٍ الطباعة...' : 'طباعة إيصال الطلب'}
+                        <Printer size={14} /> {printingId === r.id ? 'جارٍ الطباعة...' : r.kind === 'online' ? 'طباعة إيصال الطلب' : 'طباعة الحجز والمتبقي'}
                       </button>
                     )}
                     {/* تقدّم الحالة خطوة خطوة: تجهيز ← شحن ← الفلوس في الطريق.
