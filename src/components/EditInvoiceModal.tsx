@@ -7,6 +7,7 @@ import { escapeHtml } from '../utils/escapeHtml';
 import { buildPagesQrBlock } from '../utils/pagesQr';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '../utils/paymentMethods';
 import { businessDateStr, timestampForBusinessDate } from '../utils/businessDay';
+import { exchangeSettlementAmount } from '../utils/exchangeAccounting';
 
 interface EditInvoiceModalProps {
   invoice: Order;
@@ -188,7 +189,10 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   }, [invoice]);
 
   // فرق الاستبدال: موجب = نحصّل من العميل، سالب = نرجّع للعميل
-  const settleAmount = exchangeMode ? total - selectedOldTotal : total - oldPaid;
+  // فرق الاستبدال يُحسب بين إجمالي الفاتورة النهائي قبل/بعد الاستبدال، وليس
+  // بين أسعار الأصناف الخام؛ لأن الخصم الإجمالي لا يتوزع على الصنف المستبدل.
+  // هذا يمنع ظهور قيمة الخصم (مثل 90 جنيهًا) كمديونية على العميل.
+  const settleAmount = exchangeMode ? exchangeSettlementAmount(oldTotal, finalExchangeTotal) : total - oldPaid;
   const methodLabelOf = (m: string) => payLabelOf(storeSettings as any, m);
 
   // قيمة الفرق المطلوب توزيعها (بدون إشارة — الاتجاه بيتحدد من settleAmount).
