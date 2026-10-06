@@ -5,7 +5,7 @@ import { payLabelOf, ALL_PAYMENT_KEYS } from '../utils/paymentMethods';
 // الربط بين صف الموظف وصف المصروف — دوال نقية في utils عشان تتغطّى بالتستات.
 import { findLinkedSalaryExpense, findLinkedEmployeeTx } from '../utils/salaryLink';
 export { findLinkedSalaryExpense, findLinkedEmployeeTx };
-import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, isMainTreasuryPurchase, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
+import { markMainTreasuryNote, markSavingsGroupNote, savingsGroupIdOf, isMainTreasuryExpense, isMainTreasuryPurchase, isSupplierReturnInvoice, newSavingsGroupId, savingsSourceTouchesShop } from '../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../utils/businessDay';
 import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassword, hasOfflinePassword } from '../utils/offlineCache';
 import { withTimeout, isNetworkError, NET_TIMEOUT } from '../utils/net';
@@ -6505,6 +6505,12 @@ setupRealtime: () => {
     const state = get();
     const oldInvoice = state.purchaseInvoices.find(inv => inv.id === invoiceId);
     if (!oldInvoice) throw new Error('الفاتورة غير موجودة');
+    // مرتجعات المورد لا تُعدّل كفاتورة شراء؛ تعديلها يعيد إدخال الكمية إلى
+    // المخزون ويشوّه رصيد المورد. يشمل ذلك السجلات القديمة التي كان رقمها
+    // RET- لكن source_invoice_id فيها فارغًا.
+    if (isSupplierReturnInvoice(oldInvoice)) {
+      throw new Error('لا يمكن تعديل مرتجع المورد. احذف المرتجع الخاطئ ثم سجّله من شاشة «فاتورة مرتجع» بالكميات والسعر الصحيحين.');
+    }
     const closed = await isAccountingDayClosed(state.storeSettings, oldInvoice.created_at);
     if (closed) {
       // تعديل الخصم/تكلفة المخزون آمن بعد التقفيل، لكن تغيير المدفوع أو وسيلة الدفع

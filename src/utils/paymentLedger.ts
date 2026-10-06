@@ -7,7 +7,7 @@
  */
 import { ALL_PAYMENT_KEYS, type PaymentKey } from './paymentMethods';
 import { calculateCashRefunded } from './returns';
-import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isReservationReclassification, isSavingsTransfer, stripTreasuryMarkers, refundPartsOf } from './treasury';
+import { isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isReservationReclassification, isSavingsTransfer, isSupplierReturnInvoice, stripTreasuryMarkers, refundPartsOf } from './treasury';
 
 export type LedgerKind = 'sale' | 'payment' | 'return' | 'expense' | 'income' | 'purchase' | 'purchase_return' | 'transfer';
 
@@ -243,7 +243,7 @@ export function buildPaymentLedger(orders: any[], expenses: any[], purchases: an
     // shareOf بترجّع قيمة مطلقة، فالإشارة بتتحدد من هنا.
     const isInflow = raw < 0;
     const total = Math.abs(raw);
-    const isReturn = Boolean(inv.source_invoice_id);
+    const isReturn = isSupplierReturnInvoice(inv);
     for (const k of ALL_PAYMENT_KEYS) {
       const amt = shareOf(inv, k, total);
       if (amt > 0.001) {

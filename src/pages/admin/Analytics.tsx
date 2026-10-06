@@ -17,7 +17,7 @@ import 'jspdf-autotable';
 import html2canvas from 'html2canvas-pro';
 import { allocatePayment } from '../../utils/paymentAllocator';
 import { calculateCustomerDebt } from '../../utils/customerDebt';
-import { isMainTreasuryExpense, isInternalTransfer, isSavingsTransfer } from '../../utils/treasury';
+import { isMainTreasuryExpense, isInternalTransfer, isSavingsTransfer, isSupplierReturnInvoice } from '../../utils/treasury';
 
 // Fix for jspdf-autotable typing
 declare module 'jspdf' {
@@ -170,7 +170,12 @@ export default function Analytics() {
     });
 
     const totalCustomerDebt = calculateCustomerDebt(globalOrders);
-    const totalSupplierDebt = Math.max(0, purchaseInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0));
+  const totalSupplierDebt = Math.max(0, purchaseInvoices.reduce((sum, inv) => {
+    const diff = isSupplierReturnInvoice(inv)
+      ? -(Math.abs(Number(inv.total) || 0) - Math.abs(Number(inv.paid_amount) || 0))
+      : (Number(inv.total) || 0) - (Number(inv.paid_amount) || 0);
+    return sum + diff;
+  }, 0));
 
     const profit = revenue - cost;
     const margin = revenue > 0 ? (profit / revenue) * 100 : 0;

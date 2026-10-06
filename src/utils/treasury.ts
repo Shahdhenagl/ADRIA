@@ -50,6 +50,19 @@ export function applyInternalTransferNet(net: Bucket, rec: any): void {
 }
 
 /**
+ * يعرّف مرتجع المورد حتى مع البيانات القديمة التي لم يكن فيها
+ * source_invoice_id محفوظًا. المساران القديم والجديد يستخدمان RET- أو
+ * ملاحظة «مرتجع مورد»، لذلك لا يصح اعتبار الصف فاتورة شراء عادية.
+ */
+export function isSupplierReturnInvoice(invoice: any): boolean {
+  const number = String(invoice?.invoice_number || '').trim().toUpperCase();
+  const notes = String(invoice?.notes || '');
+  return Boolean(invoice?.source_invoice_id)
+    || number.startsWith('RET-')
+    || notes.includes('مرتجع مورد');
+}
+
+/**
  * صف وهمي بيمثّل **الفلوس الراجعة للعميل** في مرتجع، بشكل يفهمه `applySplit`.
  *
  * المرتجع بقى ممكن يترد على أكتر من وسيلة (db/67): الأعمدة `refunded_*`

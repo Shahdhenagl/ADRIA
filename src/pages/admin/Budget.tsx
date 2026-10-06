@@ -11,7 +11,7 @@ import html2canvas from 'html2canvas-pro';
 import { ALL_PAYMENT_KEYS, activePaymentKeys, payLabelOf, operationalSavingsOpeningBalanceOf, type PaymentKey } from '../../utils/paymentMethods';
 import { calculateCashRefunded } from '../../utils/returns';
 import { businessDateStr, businessDayRange } from '../../utils/businessDay';
-import { computeShopAvailable, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, refundPartsOf } from '../../utils/treasury';
+import { computeShopAvailable, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSupplierReturnInvoice, refundPartsOf } from '../../utils/treasury';
 import { calculateCustomerDebt } from '../../utils/customerDebt';
 
 interface UnifiedTransaction {
@@ -492,7 +492,12 @@ export default function Budget() {
   const totalCustomerDebt = useMemo(() => calculateCustomerDebt(orders), [orders]);
 
   const totalSupplierDebt = useMemo(() => {
-    return Math.max(0, purchaseInvoices.reduce((sum, inv) => sum + (inv.total - inv.paid_amount), 0));
+    return Math.max(0, purchaseInvoices.reduce((sum, inv) => {
+      const diff = isSupplierReturnInvoice(inv)
+        ? -(Math.abs(Number(inv.total) || 0) - Math.abs(Number(inv.paid_amount) || 0))
+        : (Number(inv.total) || 0) - (Number(inv.paid_amount) || 0);
+      return sum + diff;
+    }, 0));
   }, [purchaseInvoices]);
 
   const getMethodIcon = (method: string) => {

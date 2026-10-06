@@ -12,7 +12,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas-pro';
 import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_, openingBalanceOf, totalOpeningBalance } from '../../utils/paymentMethods';
 import { allocatePayment } from '../../utils/paymentAllocator';
-import { computeShopAvailable, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers, refundRecordOf, refundShareOfMethod } from '../../utils/treasury';
+import { computeShopAvailable, isMainTreasuryExpense, isMainTreasuryOrder, isMainTreasuryPurchase, isSavingsTransfer, isSupplierReturnInvoice, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId, savingsGroupIdOf, stripTreasuryMarkers, refundRecordOf, refundShareOfMethod } from '../../utils/treasury';
 import { businessDateStr, businessDayRange, timestampForBusinessDate } from '../../utils/businessDay';
 import { categoriesFor, withAddedCategory } from '../../utils/financeCategories';
 
@@ -346,7 +346,10 @@ export default function Finance() {
     for (const inv of purchaseInvoices) {
       if (!inv.supplier_id) continue;
       if (!debtMap[inv.supplier_id]) debtMap[inv.supplier_id] = 0;
-      debtMap[inv.supplier_id] += (inv.total - inv.paid_amount);
+      const diff = isSupplierReturnInvoice(inv)
+        ? -(Math.abs(Number(inv.total) || 0) - Math.abs(Number(inv.paid_amount) || 0))
+        : (Number(inv.total) || 0) - (Number(inv.paid_amount) || 0);
+      debtMap[inv.supplier_id] += diff;
     }
     return Object.values(debtMap)
       .map(d => Math.max(0, d))

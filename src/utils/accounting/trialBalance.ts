@@ -1,7 +1,7 @@
 import { ALL_PAYMENT_KEYS, openingBalanceOf, savingsOpeningBalanceOf } from '../paymentMethods';
 import {
   applySplit, isInternalTransfer, isMainTreasuryExpense, isMainTreasuryOrder,
-  isMainTreasuryPurchase, isPartnerCapitalOpening, refundRecordOf,
+  isMainTreasuryPurchase, isPartnerCapitalOpening, isSupplierReturnInvoice, refundRecordOf,
 } from '../treasury';
 import type { AccountType } from './accounts';
 import { calculateCustomerDebt } from '../customerDebt';
@@ -197,7 +197,9 @@ export function buildTrialBalance(input: LedgerInput): TrialBalance {
   (purchaseInvoices || []).forEach((p) => {
     const total = Number(p.total) || 0;
     const paid = Number(p.paid_amount) || 0;
-    const diff = total - paid;
+    // المرتجع المورد يُخفض المديونية حتى لو كان السجل القديم محفوظًا بإجمالي
+    // موجب؛ تصنيفه يعتمد على RET-/الملاحظة وليس على الإشارة وحدها.
+    const diff = isSupplierReturnInvoice(p) ? -(Math.abs(total) - Math.abs(paid)) : total - paid;
     if (diff > 0.009) payable += diff;
     else if (diff < -0.009) supplierCredit += -diff;
   });

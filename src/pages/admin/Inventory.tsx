@@ -9,6 +9,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 // html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها وتكسر تصدير PDF).
 import html2canvas from 'html2canvas-pro';
+import { isSupplierReturnInvoice } from '../../utils/treasury';
 
 type StockMovementLine = {
   at?: string | null;
@@ -235,13 +236,14 @@ export default function Inventory() {
       (inv.items || []).forEach((item: any) => {
         if (item.product_id !== pid) return;
         const qty = Number(item.quantity) || 0;
+        const isReturn = isSupplierReturnInvoice(inv);
         rows.push({
           at: inv.created_at,
-          source: inv.source_invoice_id ? 'مرتجع مورد' : 'فاتورة شراء',
+          source: isReturn ? 'مرتجع مورد' : 'فاتورة شراء',
           ref: inv.invoice_number || inv.id,
           qty,
           cost: Number(item.purchase_price) || 0,
-          note: inv.source_invoice_id ? `مرتجع من فاتورة ${inv.source_invoice_id}` : (inv.notes || null),
+          note: isReturn ? `مرتجع من فاتورة ${inv.source_invoice_id || 'بدون فاتورة مصدر'}` : (inv.notes || null),
         });
       });
     });

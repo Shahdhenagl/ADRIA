@@ -10,7 +10,7 @@ import { generateBarcode, printBarcodeLabelsBatch } from '../../utils/printBarco
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import PaymentSplitInputs from '../../components/PaymentSplitInputs';
 import { activePaymentKeys, formToSplit, sumSplit, primaryMethod as primaryMethod_ } from '../../utils/paymentMethods';
-import { isMainTreasuryPurchase, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../../utils/treasury';
+import { isMainTreasuryPurchase, isSupplierReturnInvoice, markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../../utils/treasury';
 import * as XLSX from 'xlsx';
 
 function ProductSearchSelect({
@@ -238,7 +238,9 @@ export default function Suppliers() {
   });
 
   // صف المرتجع بيتعرف من source_invoice_id (db/46)؛ كمياته وإجماليه سالبين.
-  const isReturnRow = (inv: any) => Boolean(inv.source_invoice_id);
+  // يشمل المرتجعات القديمة التي حُفظت قبل إضافة source_invoice_id، وكانت
+  // تحمل رقم RET- أو ملاحظة مرتجع فقط.
+  const isReturnRow = (inv: any) => isSupplierReturnInvoice(inv);
   // الكمية المرتجعة سابقاً لكل منتج في فاتورة معيّنة.
   const returnedQtyOf = (sourceInvoiceId: string) => {
     const map: Record<string, number> = {};
