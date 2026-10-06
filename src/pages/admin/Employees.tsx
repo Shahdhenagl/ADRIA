@@ -10,6 +10,7 @@ import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '
 import { markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../../utils/treasury';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import { computeLatenessOn, shiftForDate, shiftLabel } from '../../utils/shifts';
+import { advanceBalanceOf, salaryRemainingOf } from '../../utils/employeePayroll';
 
 // شكل مبسّط للفاتورة/الصنف لحساب مبيعات الموظف وعمولته. متساهل عن قصد عشان
 // يستوعب الشكلين: فواتير الستور (الأصناف متسطّحة) وصفوف الداتابيز الخام
@@ -433,7 +434,7 @@ export default function Employees() {
 
   const getEmployeeMonthStats = (empId: string, month: string, excludeTransactionId?: string) => {
     const emp = employees.find(e => e.id === empId);
-    if (!emp) return { salary: 0, advances: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0, salaryTxDeductions: 0, lateMinutes: 0, lateDays: 0, presentDays: 0, leaveDays: 0, manualDays: 0, manualCount: 0 };
+    if (!emp) return { salary: 0, advances: 0, advanceBalance: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0, salaryTxDeductions: 0, lateMinutes: 0, lateDays: 0, presentDays: 0, leaveDays: 0, manualDays: 0, manualCount: 0 };
 
     const monthTrans = employeeTransactions.filter(t => t.employee_id === empId && t.month === month && t.id !== excludeTransactionId);
 
@@ -450,13 +451,19 @@ export default function Employees() {
     // المكافآت بتزوّد المستحق، فبتتجمع جوه الـ clamp مش بعده.
     const bonuses = getManualMonthBonuses(empId, month);
 
-    const remaining = Math.max(0, emp.monthly_salary + bonuses - advances - paidSalary - deductions - leaveDeductions - attendanceDeductions - manualDeductions);
+    const advanceBalance = advanceBalanceOf(employeeTransactions.filter((t) => t.employee_id === empId && t.month <= month));
+    const remaining = salaryRemainingOf({
+      monthlySalary: emp.monthly_salary,
+      bonuses,
+      paidSalary,
+      deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions,
+    });
 
     // ملاحظة: `deductions` المرجَّعة = إجمالي كل الخصومات (بما فيها خصومات صرف
     // سابق). معادلات الـ net في مودال صرف الراتب بتعتمد عليها بالمعنى ده — أي
     // تغيير هنا لازم يمشي معاها. الحقول التفصيلية تحتها للعرض بس.
     return {
-      salary: emp.monthly_salary, advances, paidSalary,
+      salary: emp.monthly_salary, advances, advanceBalance, paidSalary,
       deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions,
       incentives, leaveDeductions, attendanceDeductions, manualDeductions, bonuses, remaining,
       // تفاصيل للعرض في كشف صرف الراتب
@@ -1985,6 +1992,10 @@ export default function Employees() {
                     <span className="text-amber-600 font-bold flex items-center gap-1">سلف الشهر</span>
                     <span className="font-black text-amber-700">{stats.advances.toLocaleString()} {storeSettings.currency}</span>
                   </div>
+                  <div className="flex items-center justify-between text-sm p-3 bg-orange-50 rounded-xl border border-orange-100 mt-2">
+                    <span className="text-orange-600 font-bold flex items-center gap-1">رصيد السلف المتبقي</span>
+                    <span className="font-black text-orange-700">{stats.advanceBalance.toLocaleString()} {storeSettings.currency}</span>
+                  </div>
                   <div className="flex items-center justify-between text-sm p-3 bg-emerald-50 rounded-xl border border-emerald-100 mt-2">
                     <span className="text-emerald-600 font-bold flex items-center gap-1">المتبقي صرفه ({currentMonth})</span>
                     <span className="font-black text-emerald-700">{stats.remaining.toLocaleString()} {storeSettings.currency}</span>
@@ -2350,7 +2361,7 @@ export default function Employees() {
                 const gross = stats.salary + stats.bonuses;
                 // نفس معادلة الـ net المستخدمة في حقول الفورم — الكشف لازم يوصّل
                 // لنفس الرقم اللي بيتحط في «المبلغ الإجمالي».
-                const totalDed = stats.advances + stats.paidSalary + stats.deductions + extraDed;
+                const totalDed = stats.paidSalary + stats.deductions + extraDed;
                 const net = Math.max(0, gross - totalDed);
 
                 const det = getMonthDetailRows(selectedEmployee!.id, transFormData.month);
@@ -2358,10 +2369,8 @@ export default function Employees() {
                 const shortDate = (d?: string) => (d || '').slice(5); // MM-DD
 
                 const dedRows = [
-                  {
-                    key: 'advances', label: 'سلف مصروفة خلال الشهر', hint: '', value: stats.advances,
-                    details: det.advances.map(t => ({ id: t.id, when: shortDate(t.created_at?.slice(0, 10)), text: t.note || 'سلفة', amount: t.amount, waived: 0, kind: null })),
-                  },
+                  // السلفة دين مستقل، وليست خصمًا من راتب الشهر؛ تظهر كسطر
+                  // منفصل أسفل إجمالي المستحق ولا تدخل في totalDed.
                   {
                     key: 'paid', label: 'راتب مصروف سابقاً هذا الشهر', hint: '', value: stats.paidSalary,
                     details: det.paidSalaries.map(t => ({ id: t.id, when: shortDate(t.created_at?.slice(0, 10)), text: t.note || 'صرف راتب', amount: t.amount, waived: 0, kind: null })),
@@ -2445,6 +2454,10 @@ export default function Employees() {
                       <div className="flex justify-between text-sm pt-1.5 border-t border-slate-200">
                         <span className="font-black text-slate-700">إجمالي المستحق</span>
                         <span className="font-black text-slate-800">{money(gross)} <span className="text-[10px] text-slate-400">{cur}</span></span>
+                      </div>
+                      <div className="flex justify-between text-sm pt-1.5 mt-1 border-t border-amber-200">
+                        <span className="font-bold text-orange-600">رصيد السلف المتبقي (دين مستقل)</span>
+                        <span className="font-black text-orange-700">{money(stats.advanceBalance)} <span className="text-[10px] text-orange-400">{cur}</span></span>
                       </div>
                     </div>
 
@@ -2574,7 +2587,7 @@ export default function Employees() {
                           const dailyRate = selectedEmployee!.monthly_salary / 30;
                           const totalDed = (parseFloat(days) || 0) * dailyRate + (parseFloat(transFormData.dedAmount) || 0);
                           const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
-                          const net = Math.max(0, stats.salary + stats.bonuses - stats.advances - stats.paidSalary - stats.deductions - totalDed);
+                          const net = Math.max(0, stats.salary + stats.bonuses - stats.paidSalary - stats.deductions - totalDed);
                           setTransFormData({
                             ...transFormData, 
                             dedDays: days,
@@ -2597,7 +2610,7 @@ export default function Employees() {
                           const dailyRate = selectedEmployee!.monthly_salary / 30;
                           const totalDed = (parseFloat(transFormData.dedDays) || 0) * dailyRate + (parseFloat(amt) || 0);
                           const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
-                          const net = Math.max(0, stats.salary + stats.bonuses - stats.advances - stats.paidSalary - stats.deductions - totalDed);
+                          const net = Math.max(0, stats.salary + stats.bonuses - stats.paidSalary - stats.deductions - totalDed);
                           setTransFormData({
                             ...transFormData, 
                             dedAmount: amt,
@@ -2643,7 +2656,7 @@ export default function Employees() {
                       if (transType === 'salary') {
                         const stats = getEmployeeMonthStats(selectedEmployee!.id, newMonth, editingTransaction?.id);
                         const totalDed = (parseFloat(transFormData.dedDays) || 0) * (selectedEmployee!.monthly_salary / 30) + (parseFloat(transFormData.dedAmount) || 0);
-                        const net = Math.max(0, stats.salary + stats.bonuses - stats.advances - stats.paidSalary - stats.deductions - totalDed);
+                        const net = Math.max(0, stats.salary + stats.bonuses - stats.paidSalary - stats.deductions - totalDed);
                         setTransFormData({
                           ...transFormData,
                           month: newMonth,
