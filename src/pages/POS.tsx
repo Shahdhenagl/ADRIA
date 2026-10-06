@@ -1882,6 +1882,13 @@ export default function POS() {
         alert("⚠️ برجاء إدخال بيانات العميل أولاً\n\nلا يمكن إتمام البيع بالآجل بدون اسم العميل ورقم الهاتف.\nاكتب الاسم والرقم في الكاشير وسيتم تسجيل العميل تلقائياً.");
         return;
       }
+      if (!deferredNote.trim()) {
+        alert(
+          `⚠️ المبلغ المدفوع (${effectivePaidAmount.toFixed(2)}) أقل من صافي الفاتورة (${currentTotal.toFixed(2)}).\n\n` +
+          'لن يتم حفظ الفاتورة بمبلغ ناقص كبيع عادي. اكتب سبب/موعد الآجل في خانة «ملاحظة / سبب الآجل» ثم أعد الضغط على التحصيل.',
+        );
+        return;
+      }
       const creditDue = Math.max(0, currentTotal - effectivePaidAmount);
       if (!window.confirm(
         `المبلغ المدفوع (${effectivePaidAmount.toFixed(2)}) أقل من صافي الفاتورة (${currentTotal.toFixed(2)}).\n` +
@@ -4464,7 +4471,7 @@ export default function POS() {
                 <div className="mt-4">
                   <label className="text-sm font-bold text-slate-600 dark:text-slate-300 block mb-2 flex items-center gap-2">
                     <FileText size={16} />
-                    ملاحظة / سبب الآجل (اختياري)
+                    ملاحظة / سبب الآجل (مطلوبة)
                   </label>
                   <textarea
                     value={deferredNote}
