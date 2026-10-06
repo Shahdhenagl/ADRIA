@@ -408,7 +408,7 @@ export default function Suppliers() {
           setInvMode('purchase');
           setInvSupplierId('');
           setInvPay({});
-          setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
+          setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '1' }]);
           setActiveTab('invoices');
         }
       } catch (error: any) {
@@ -510,7 +510,7 @@ export default function Suppliers() {
       setInvSupplierId('');
       setInvPay({});
       setInvTreasurySource('main');
-      setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
+      setInvItems([{ product_id: '', quantity: '1', purchase_price: '', to_display: '1' }]);
       setPurchaseDiscountType('fixed');
       setPurchaseDiscountValue('');
       setActiveTab('invoices');
@@ -552,7 +552,7 @@ export default function Suppliers() {
     printBarcodeLabelsBatch(labels, { currency: storeSettings.currency, storeName: storeSettings.name });
   };
 
-  const addInvRow = () => setInvItems([...invItems, { product_id: '', quantity: '1', purchase_price: '', to_display: '0' }]);
+  const addInvRow = () => setInvItems([...invItems, { product_id: '', quantity: '1', purchase_price: '', to_display: '1' }]);
   const removeInvRow = (idx: number) => setInvItems(invItems.filter((_, i) => i !== idx));
   const updateInvRow = (idx: number, field: string, value: string) => {
     if (field === 'product_id' && value === 'NEW_PRODUCT') {
@@ -561,7 +561,16 @@ export default function Suppliers() {
       setShowQuickProductModal(true);
       return;
     }
-    const updated = invItems.map((item, i) => i === idx ? { ...item, [field]: value } : item);
+    const updated = invItems.map((item, i) => {
+      if (i !== idx) return item;
+      const next = { ...item, [field]: value };
+      // طالما المستخدم لم يغير توزيع المحل يدويًا، حافظ على افتراضي «كل
+      // الكمية في المحل» عند زيادة كمية السطر.
+      if (field === 'quantity' && String(item.to_display) === String(item.quantity)) {
+        next.to_display = value;
+      }
+      return next;
+    });
     if (field === 'product_id' && value) {
       const prod = products.find(p => p.id === value);
       if (prod) updated[idx].purchase_price = String(prod.purchase_price || prod.average_purchase_price || '');
@@ -572,7 +581,7 @@ export default function Suppliers() {
   // إضافة صف جديد وفتح خانة المنتج فيه تلقائياً (يُستخدم عند الضغط Enter من خانة السعر)
   const addInvRowAndFocus = () => {
     setInvItems(prev => {
-      const next = [...prev, { product_id: '', quantity: '1', purchase_price: '', to_display: '0' }];
+      const next = [...prev, { product_id: '', quantity: '1', purchase_price: '', to_display: '1' }];
       setAutoOpenRow(next.length - 1);
       return next;
     });

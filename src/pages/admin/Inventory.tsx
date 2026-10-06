@@ -350,7 +350,9 @@ export default function Inventory() {
         });
       });
 
-    movementAdjustments.forEach((adj: any) => {
+    movementAdjustments
+      .filter((adj: any) => adj.product_id === pid)
+      .forEach((adj: any) => {
       rows.push({
         at: adj.created_at,
         source: 'تسوية جرد',
@@ -359,7 +361,7 @@ export default function Inventory() {
         cost: Number(adj.cost) || 0,
         note: `سيستم ${Number(adj.system_qty) || 0} / جرد ${Number(adj.counted_qty) || 0}${adj.note ? ` - ${adj.note}` : ''}`,
       });
-    });
+      });
 
     return rows.sort((a, b) => {
       const at = a.at ? new Date(a.at).getTime() : 0;
