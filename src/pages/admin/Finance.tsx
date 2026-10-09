@@ -26,6 +26,7 @@ export default function Finance() {
   const activeOrders = useMemo(() => orders.filter((order) => !order.is_deleted), [orders]);
   const [savingsTransactions, setSavingsTransactions] = useState<any[]>([]);
   const [treasuryExpenses, setTreasuryExpenses] = useState<any[]>([]);
+  const [treasuryAuditEvents, setTreasuryAuditEvents] = useState<any[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -48,9 +49,11 @@ export default function Finance() {
         const { fetchAllRows } = await import('../../lib/supabase');
         const rows = await fetchAllRows('savings_transactions');
         if (!cancelled) setSavingsTransactions(Array.isArray(rows) ? rows : []);
+        const audit = await fetchAllRows('treasury_audit_events');
+        if (!cancelled) setTreasuryAuditEvents(Array.isArray(audit) ? audit : []);
       } catch (error) {
-        console.error('load savings_transactions:', error);
-        if (!cancelled) setSavingsTransactions([]);
+        console.error('load treasury ledger/audit:', error);
+        if (!cancelled) { setSavingsTransactions([]); setTreasuryAuditEvents([]); }
       }
     })();
     return () => { cancelled = true; };
@@ -1404,6 +1407,37 @@ export default function Finance() {
           </button>
           );
         })}
+      </div>
+
+      {/* Treasury audit report: notifications, posted ledger rows and reversals. */}
+      <div className="bg-white rounded-[32px] shadow-sm border border-amber-100 overflow-hidden mb-8">
+        <div className="p-6 border-b border-amber-50 flex items-center justify-between">
+          <h3 className="font-black text-slate-800 flex items-center gap-2">
+            <FileText size={20} className="text-amber-600" /> تقرير مراجعة الخزنة والتنبيهات
+          </h3>
+          <span className="text-xs font-bold bg-amber-50 text-amber-700 px-3 py-1 rounded-full">
+            {treasuryAuditEvents.length} سجل
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-right">
+            <thead><tr className="bg-amber-50/40 text-slate-400 text-[10px] font-black border-b border-amber-50">
+              <th className="p-4">التاريخ</th><th className="p-4">المصدر</th><th className="p-4">الوصف</th><th className="p-4">المبلغ</th><th className="p-4">الحالة</th>
+            </tr></thead>
+            <tbody className="divide-y divide-slate-50">
+              {treasuryAuditEvents.length === 0 ? <tr><td colSpan={5} className="p-8 text-center text-slate-400 font-bold">لا توجد سجلات تدقيق بعد</td></tr> :
+                [...treasuryAuditEvents].sort((a, b) => new Date(b.event_at || b.occurred_at || 0).getTime() - new Date(a.event_at || a.occurred_at || 0).getTime()).slice(0, 100).map((a: any) => (
+                  <tr key={a.id} className="text-sm">
+                    <td className="p-4 text-slate-400 text-xs">{a.occurred_at ? new Date(a.occurred_at).toLocaleString('ar-EG') : '—'}</td>
+                    <td className="p-4 font-bold text-slate-600">{a.source || '—'}</td>
+                    <td className="p-4 text-slate-600">{a.note || (a.event_kind === 'missing_report' ? 'تنبيه موجود — القيد مفقود' : '—')}</td>
+                    <td className="p-4 font-black text-red-600">{Number(a.amount || 0).toLocaleString()} {storeSettings.currency}</td>
+                    <td className="p-4"><span className={`px-2 py-1 rounded-lg text-[10px] font-black ${a.status === 'missing' ? 'bg-red-50 text-red-600' : a.status === 'reversed' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>{a.status === 'missing' ? 'مفقودة' : a.status === 'reversed' ? 'معكوسة محاسبيًا' : 'مسجلة'}</span></td>
+                  </tr>
+                ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* Daily Transactions Table */}

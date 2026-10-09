@@ -5732,11 +5732,16 @@ setupRealtime: () => {
       .filter((m) => s[m] > 0)
       .map((m) => ({ direction: 'out', amount: s[m], method: m, source: source || 'main_expense', note: note || null, ...(groupId ? { group_id: groupId } : {}), ...(createdAt ? { created_at: createdAt } : {}) }));
     if (rows.length) {
-      const { error } = await supabase.from('savings_transactions').insert(rows);
+      const { data: postedRows, error } = await supabase.from('savings_transactions').insert(rows).select('id, direction, amount, method, source, note, group_id, created_at');
       if (error) {
         console.error('recordMainTreasuryOut error:', error);
         return false;
       }
+      await supabase.from('treasury_audit_events').insert((postedRows || []).map((r: any) => ({
+        event_kind: 'notification', original_transaction_id: r.id, group_id: r.group_id || null,
+        direction: r.direction, amount: r.amount, method: r.method, source: r.source,
+        note: r.note, occurred_at: r.created_at, status: 'posted', metadata: { telegram: 'savings_out' },
+      })));
     }
 
     sendTelegramAlert({
@@ -5761,11 +5766,16 @@ setupRealtime: () => {
       .filter((m) => s[m] > 0)
       .map((m) => ({ direction: 'in', amount: s[m], method: m, source: source || 'main_income', note: note || null, ...(groupId ? { group_id: groupId } : {}), ...(createdAt ? { created_at: createdAt } : {}) }));
     if (rows.length) {
-      const { error } = await supabase.from('savings_transactions').insert(rows);
+      const { data: postedRows, error } = await supabase.from('savings_transactions').insert(rows).select('id, direction, amount, method, source, note, group_id, created_at');
       if (error) {
         console.error('recordMainTreasuryIn error:', error);
         return false;
       }
+      await supabase.from('treasury_audit_events').insert((postedRows || []).map((r: any) => ({
+        event_kind: 'notification', original_transaction_id: r.id, group_id: r.group_id || null,
+        direction: r.direction, amount: r.amount, method: r.method, source: r.source,
+        note: r.note, occurred_at: r.created_at, status: 'posted', metadata: { telegram: 'savings_in' },
+      })));
     }
 
     sendTelegramAlert({
@@ -5830,8 +5840,30 @@ setupRealtime: () => {
     groupRows.forEach((r) => { const m = r.method || 'cash'; if (split[m] !== undefined) split[m] += Number(r.amount) || 0; });
     const total = Object.values(split).reduce((a, b) => a + b, 0);
     const source = tx.source || groupRows[0]?.source;
+    const reversalGroupId = newSavingsGroupId();
+    const reversalRows = groupRows.map((r: any) => ({
+      direction: r.direction === 'in' ? 'out' : 'in',
+      amount: Number(r.amount) || 0,
+      method: r.method || 'cash',
+      source: `${source || 'manual'}_reversal`,
+      note: `عكس محاسبي للقيد الملغى${r.note ? ` — ${r.note}` : ''}`,
+      group_id: reversalGroupId,
+    }));
+    const { data: reversalData, error: reversalErr } = await supabase
+      .from('savings_transactions').insert(reversalRows).select('id, direction, amount, method, source, note, group_id, created_at');
+    if (reversalErr) {
+      console.error('create treasury reversal error:', reversalErr);
+      alert('تعذّر إنشاء القيد العكسي — لم يتم إلغاء الحركة الأصلية.');
+      return false;
+    }
+    await supabase.from('treasury_audit_events').insert(groupRows.map((r: any, i: number) => ({
+      event_kind: 'void', operation_id: reversalGroupId, original_transaction_id: r.id,
+      reversal_transaction_id: reversalData?.[i]?.id || null, group_id: r.group_id || null,
+      direction: r.direction, amount: r.amount, method: r.method, source: r.source,
+      note: r.note, occurred_at: r.created_at, status: 'reversed', reason: 'إلغاء محاسبي من شاشة المالية',
+    })));
 
-    // 2) احذف صفوف الدفتر.
+    // 2) أزل الصف الأصلي من الرصيد التشغيلي بعد تثبيت القيد العكسي؛ الأصل محفوظ في audit.
     const { error: delErr } = await supabase.from('savings_transactions').delete().in('id', ids);
     if (delErr) { console.error('deleteSavingsOperation error:', delErr); alert('تعذّر حذف المعاملة'); return false; }
 
@@ -5923,7 +5955,19 @@ setupRealtime: () => {
         });
         if (local) linkedId = local.id;
       }
-      if (linkedId) await get().deleteExpense(linkedId);
+      if (linkedId) {
+        const linkedExpense = expenses.find((e) => e.id === linkedId);
+        const originalNote = linkedExpense?.note || '';
+        const voidNote = `${originalNote}${originalNote ? ' — ' : ''}[VOIDED] عكس محاسبي ${reversalGroupId}`;
+        const { data: voidedExpense, error: voidExpenseErr } = await supabase
+          .from('expenses').update({ note: voidNote }).eq('id', linkedId).select().single();
+        if (voidExpenseErr) {
+          console.error('Mark linked expense voided error:', voidExpenseErr);
+          alert('تم عكس حركة الخزنة، لكن تعذّر وسم المصروف كملغى. راجعيه يدويًا.');
+        } else {
+          set((s) => ({ expenses: s.expenses.map((e) => e.id === linkedId ? voidedExpense as Expense : e) }));
+        }
+      }
       else {
         // مش لاقيين صف المصروف المقابل. صفوف الدفتر اتمسحت خلاص، فالمصروف
         // هيفضل في الميزانية موسوم [MAIN_TREASURY] — مستبعَد من خزينة الكاشير
@@ -6019,6 +6063,19 @@ setupRealtime: () => {
   deleteExpense: async (id: string, opts) => {
     const state = get();
     const current = state.expenses.find((e) => e.id === id);
+    // المصروف المرتبط بالخزنة الرئيسية لا يُحذف منفردًا؛ نمرره لمسار
+    // الإلغاء المحاسبي حتى يُحفظ القيد الأصلي ويُنشأ قيد عكسي للطرفين.
+    if (current && isMainTreasuryExpense(current)) {
+      const gid = savingsGroupIdOf(current.note);
+      if (gid) {
+        const { data: linkedRows } = await supabase.from('savings_transactions').select('*').eq('group_id', gid).limit(100);
+        const linked = (linkedRows as any[] || [])[0];
+        if (linked) {
+          await get().deleteSavingsOperation(linked);
+          return;
+        }
+      }
+    }
     // صفوف الخزنة الرئيسية ([MAIN_TREASURY]) مستبعَدة أصلاً من درج الكاشير، فتقفيل
     // اليوم مبيتأثرش بحذفها — وإلا حذف حركة رئيسية كان بيمسح صف الدفتر ويسيب
     // المصروف معلّق لما اليوم يكون مقفول.
