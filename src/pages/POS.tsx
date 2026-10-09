@@ -895,12 +895,14 @@ export default function POS() {
   // تاريخ تسجيل المرتجع — الافتراضي اليوم المحاسبي الحالي. بيتغيّر لما المرتجع
   // يكون حصل امبارح ويتسجّل النهاردة، عشان يقع في تقفيل يومه الصح.
   const [refundDate, setRefundDate] = useState(() => businessDateStr(storeSettings));
+  // مكان رجوع البضاعة: المحل هو الافتراضي، والمستودع اختيار صريح.
+  const [refundStockLocation, setRefundStockLocation] = useState<'display' | 'warehouse'>('display');
   // خصم من اللي راجع للعميل (رسوم/تلف) — بيفضل في الدرج ويتسجّل إيراد مستقل.
   const [refundFeeStr, setRefundFeeStr] = useState('');
   // تصفير خانات التقسيم مع كل فاتورة مرتجع جديدة.
   useEffect(() => {
     setRefundSplitMode(false); setRefundSplitInput({});
-    setRefundFeeStr(''); setRefundDate(businessDateStr(storeSettings));
+    setRefundFeeStr(''); setRefundDate(businessDateStr(storeSettings)); setRefundStockLocation('display');
   }, [activeReturnOrder?.id]);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [lastInvoiceId, setLastInvoiceId] = useState('');
@@ -1623,10 +1625,10 @@ export default function POS() {
 
     const success = await processReturn(
       activeReturnOrder.id, returnsArray, primary, refundSplit,
-      { refundDate },
+      { refundDate, stockLocation: refundStockLocation },
     );
     if (success) {
-      alert('تم إرجاع المنتجات المحددة بنجاح!');
+      alert(`تم إرجاع المنتجات المحددة بنجاح إلى ${refundStockLocation === 'display' ? 'المحل' : 'المستودع'}!`);
       const updatedOrder = useStore.getState().orders.find(o => o.id === activeReturnOrder.id);
       setActiveReturnOrder(updatedOrder);
       setPendingReturns({}); setReturnDebtDeduction(null); setRefundMethod('cash');
@@ -2355,9 +2357,9 @@ export default function POS() {
       const refundSplit: Record<string, number> = { ...netSplit };
       await processReturn(
         activeReturnOrder.id, returnsArray, primary, refundSplit,
-        { refundDate },
+        { refundDate, stockLocation: refundStockLocation },
       );
-      alert('تم استرجاع الفاتورة بالكامل بنجاح');
+      alert(`تم استرجاع الفاتورة بالكامل إلى ${refundStockLocation === 'display' ? 'المحل' : 'المستودع'} بنجاح`);
       const updatedOrder = useStore.getState().orders.find(o => o.id === activeReturnOrder.id);
       setActiveReturnOrder(updatedOrder);
       setPendingReturns({}); setReturnDebtDeduction(null); setRefundMethod('cash');
@@ -3580,6 +3582,21 @@ export default function POS() {
                           />
                           <p className="text-[10px] font-bold text-slate-400 mt-1">يُخصم من قيمة المرتجع ويخرج من الخزنة الصافي فقط</p>
                         </div>
+                      </div>
+                    )}
+
+                    {selectedReturnValue > 0 && (
+                      <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-xl p-3 border border-indigo-200 dark:border-indigo-800 mb-3">
+                        <label className="block text-[10px] font-black text-indigo-700 dark:text-indigo-300 mb-1">مكان رجوع البضاعة</label>
+                        <select
+                          value={refundStockLocation}
+                          onChange={(e) => setRefundStockLocation(e.target.value as 'display' | 'warehouse')}
+                          className="w-full bg-white dark:bg-slate-800 border border-indigo-200 dark:border-indigo-700 rounded-lg px-3 py-2.5 text-sm font-black outline-none focus:ring-2 focus:ring-indigo-400"
+                        >
+                          <option value="display">المحل (المعروض) — افتراضي</option>
+                          <option value="warehouse">المستودع</option>
+                        </select>
+                        <p className="text-[10px] font-bold text-indigo-600 dark:text-indigo-300 mt-1">اختاري المكان قبل حفظ المرتجع؛ لا يتم تغيير المكان تلقائيًا.</p>
                       </div>
                     )}
 

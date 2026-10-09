@@ -23,6 +23,8 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
   // بيتحوّل لـ timestamp في نص اليوم المحاسبي عشان فرق UTC/المحلي ميرميهوش لليوم اللي بعده.
   const todayBusinessDate = businessDateStr(storeSettings);
   const [exchangeDate, setExchangeDate] = useState<string>(todayBusinessDate);
+  // الصنف المرتجع من الاستبدال يرجع للمحل افتراضيًا، ويمكن توجيهه للمستودع.
+  const [exchangeStockLocation, setExchangeStockLocation] = useState<'display' | 'warehouse'>('display');
 
   // لقطة من أصناف الفاتورة قبل الاستبدال (للطباعة قبل/بعد)
   const [originalItems] = useState<OrderItem[]>(invoice.items.map(i => ({ ...i })));
@@ -350,7 +352,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
       updatedData,
       exchangeMode ? finalExchangeItems : cart,
       reason,
-      { exchange: !!exchangeMode, paymentOnly },
+      { exchange: !!exchangeMode, paymentOnly, stockLocation: exchangeMode ? exchangeStockLocation : undefined },
     );
 
     if (success) {
@@ -728,6 +730,18 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
                     <p className="text-xs text-slate-500 mt-1">
                       حركة الفرق هتتسجّل في تقفيل ومعاملات وميزانية اليوم ده. لازم يكون يوم لسه مش مقفول في الخزنة.
                     </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold text-slate-600 mb-1">مكان رجوع الصنف المستبدل</label>
+                    <select
+                      value={exchangeStockLocation}
+                      onChange={(e) => setExchangeStockLocation(e.target.value as 'display' | 'warehouse')}
+                      className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none font-bold"
+                    >
+                      <option value="display">المحل (المعروض) — افتراضي</option>
+                      <option value="warehouse">المستودع</option>
+                    </select>
+                    <p className="text-[11px] text-slate-400 mt-1 font-bold">اختاري المكان قبل تأكيد الاستبدال.</p>
                   </div>
                 </div>
               ) : (

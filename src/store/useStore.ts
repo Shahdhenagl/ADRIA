@@ -722,7 +722,7 @@ interface CashierStore {
   // opts.refundDate: اليوم المحاسبي اللي المرتجع يتسجّل عليه (YYYY-MM-DD).
   //   من غيره بيتسجّل على النهاردة — فمرتجع حصل امبارح كان بيقع في تقفيل يوم غلط.
   // opts.deduction: مبلغ بيتخصم من اللي راجع للعميل ويفضل في الدرج (رسوم/تلف).
-  processReturn: (orderId: string, returns: { productId: string, returnQty: number, refundAmount: number, debtDeduction?: number }[], refundMethod?: string, refundSplit?: Record<string, number>, opts?: { refundDate?: string; deduction?: number; deductionNote?: string }) => Promise<boolean>;
+  processReturn: (orderId: string, returns: { productId: string, returnQty: number, refundAmount: number, debtDeduction?: number }[], refundMethod?: string, refundSplit?: Record<string, number>, opts?: { refundDate?: string; deduction?: number; deductionNote?: string; stockLocation?: 'display' | 'warehouse' }) => Promise<boolean>;
   processPurchaseReturn: (
     sourceInvoiceId: string,
     returns: { productId: string; returnQty: number }[],
@@ -743,7 +743,7 @@ interface CashierStore {
   deleteOrder: (orderId: string, reason?: string) => Promise<boolean>;
   /** إلغاء مرتجع اتعمل بالغلط — بيرجّع الفاتورة لحالتها قبل الإرجاع. */
   undoReturn: (orderId: string) => Promise<boolean>;
-  editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string, opts?: { exchange?: boolean; paymentOnly?: boolean }) => Promise<boolean>;
+  editOrder: (orderId: string, updatedData: Partial<Order>, updatedItems: OrderItem[], reason: string, opts?: { exchange?: boolean; paymentOnly?: boolean; stockLocation?: 'display' | 'warehouse' }) => Promise<boolean>;
   markOrderExchanged: (orderId: string, exchangeData: any) => Promise<boolean>;
   updateOrderRefundedAt: (orderId: string, refundedAt: string) => Promise<boolean>;
   ensureDayOpen: (value?: string | Date | null) => Promise<boolean>;
@@ -3301,6 +3301,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     const order = state.orders[orderIndex];
 
     const executeOfflineReturn = () => {
+      const stockLocation = opts?.stockLocation || 'display';
       let updatedItems = [...order.items];
       let updatedProducts = [...state.products];
 
@@ -3309,7 +3310,11 @@ export const useStore = create<CashierStore>((set, get) => ({
           i.id === ret.productId ? { ...i, returned_quantity: i.returned_quantity + ret.returnQty, refunded_amount: (i.refunded_amount || 0) + ret.refundAmount } : i
         );
         updatedProducts = updatedProducts.map((p) =>
-          p.id === ret.productId ? { ...p, stock_quantity: p.stock_quantity + ret.returnQty } : p
+          p.id === ret.productId ? {
+            ...p,
+            stock_quantity: p.stock_quantity + ret.returnQty,
+            display_quantity: (Number(p.display_quantity) || 0) + (stockLocation === 'display' ? ret.returnQty : 0),
+          } : p
         );
       }
 
@@ -3410,7 +3415,7 @@ export const useStore = create<CashierStore>((set, get) => ({
             .from('products')
             .update({ 
               stock_quantity: product.stock_quantity + ret.returnQty,
-              display_quantity: (Number(product.display_quantity) || 0) + ret.returnQty 
+              display_quantity: (Number(product.display_quantity) || 0) + (opts?.stockLocation === 'warehouse' ? 0 : ret.returnQty)
             })
             .eq('id', ret.productId);
           if (prodError) throw prodError;
@@ -3419,7 +3424,7 @@ export const useStore = create<CashierStore>((set, get) => ({
             p.id === ret.productId ? { 
               ...p, 
               stock_quantity: p.stock_quantity + ret.returnQty,
-              display_quantity: (Number(p.display_quantity) || 0) + ret.returnQty 
+              display_quantity: (Number(p.display_quantity) || 0) + (opts?.stockLocation === 'warehouse' ? 0 : ret.returnQty)
             } : p
           );
         }
@@ -3816,7 +3821,10 @@ export const useStore = create<CashierStore>((set, get) => ({
         const dbStock = (prodData?.stock_quantity ?? localStock) as number;
         const dbDisplay = (prodData?.display_quantity ?? localDisplay) as number;
         const newStock = Math.max(0, dbStock + delta);
-        const newDisplay = delta > 0 ? dbDisplay + delta : displayAfterStockDrop({ stock_quantity: dbStock, display_quantity: dbDisplay }, newStock, Math.abs(delta));
+        // في الاستبدال: الصنف المرتجع يدخل المحل افتراضيًا، أو المستودع حسب اختيار المستخدم.
+        const newDisplay = delta > 0 && opts?.stockLocation !== 'warehouse'
+          ? dbDisplay + delta
+          : displayAfterStockDrop({ stock_quantity: dbStock, display_quantity: dbDisplay }, newStock, Math.abs(delta));
 
         const { error: productError } = await supabase
           .from('products')
@@ -3829,7 +3837,9 @@ export const useStore = create<CashierStore>((set, get) => ({
           updatedProducts[productIndex] = {
             ...updatedProducts[productIndex],
             stock_quantity: Math.max(0, localStock + delta),
-            display_quantity: delta > 0 ? localDisplay + delta : displayAfterStockDrop(updatedProducts[productIndex], Math.max(0, localStock + delta), Math.abs(delta)),
+            display_quantity: delta > 0 && opts?.stockLocation !== 'warehouse'
+              ? localDisplay + delta
+              : displayAfterStockDrop(updatedProducts[productIndex], Math.max(0, localStock + delta), Math.abs(delta)),
           };
         }
       }
