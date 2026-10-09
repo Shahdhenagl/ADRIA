@@ -807,7 +807,7 @@ interface CashierStore {
   deleteWriteOff: (id: string) => Promise<void>;
 
   // Expenses
-  addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<void>;
+  addExpense: (expense: Omit<Expense, 'id' | 'date'>) => Promise<boolean>;
   managerWithdraw: (managerName: string, split: { cash: number; visa: number; wallet: number; instapay: number; method5?: number; method6?: number }, fromMain?: boolean) => Promise<boolean>;
   recordPartnerTransaction: (tx: { partner_id: string; partner_name: string; type: 'deposit' | 'withdraw'; amount: number; treasury?: 'shop' | 'main'; method: string; note?: string }) => Promise<boolean>;
   deletePartnerTransaction: (tx: { id: string; group_id?: string | null; treasury?: string; partner_name?: string; type?: 'deposit' | 'withdraw'; amount?: number }) => Promise<boolean>;
@@ -1238,15 +1238,15 @@ function getPublicInvoiceUrl(invoiceId: string): string {
   return `${baseUrl}/view-invoice/${invoiceId}`;
 }
 
-async function sendTelegramAlert(payload: Record<string, unknown>) {
-  if (typeof fetch === 'undefined') return;
+async function sendTelegramAlert(payload: Record<string, unknown>): Promise<boolean> {
+  if (typeof fetch === 'undefined') return false;
   try {
     // Attach the current Supabase session token so the endpoint can verify the
     // caller is an authenticated staff member (enforced when REQUIRE_ALERT_AUTH
     // is set server-side — see SECURITY_SETUP.md).
     const { data } = await supabase.auth.getSession();
     const token = data.session?.access_token;
-    await fetch('/api/telegram-alert', {
+    const response = await fetch('/api/telegram-alert', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1254,8 +1254,19 @@ async function sendTelegramAlert(payload: Record<string, unknown>) {
       },
       body: JSON.stringify(payload),
     });
+    if (!response.ok) {
+      console.warn('Telegram alert rejected:', response.status);
+      return false;
+    }
+    try {
+      const result = await response.json();
+      return result?.ok !== false;
+    } catch {
+      return true;
+    }
   } catch (error) {
     console.warn('Telegram alert failed:', error);
+    return false;
   }
 }
 
@@ -5356,7 +5367,7 @@ setupRealtime: () => {
       alert(isClosingEntry
         ? 'هذا اليوم مقفول بالفعل. لا يمكن تقفيله مرة أخرى.'
         : `اليوم ${businessDateStr(state.storeSettings, dateValueForAccounting(expenseDate))} تم تقفيله بالفعل. لا يمكن إضافة أو تعديل أو حذف أي حركة مالية في يوم مقفول.`);
-      return;
+      return false;
     }
     const { data, error } = await supabase.from('expenses').insert({
       category: expense.category,
@@ -5378,7 +5389,8 @@ setupRealtime: () => {
 
     if (error) {
       console.error("Add Expense Error:", error);
-      return;
+      alert('تعذّر حفظ المصروف: ' + error.message);
+      return false;
     }
 
     if (data) {
@@ -5400,6 +5412,7 @@ setupRealtime: () => {
       };
       set((state) => ({ expenses: [newExp, ...state.expenses] }));
     }
+    return Boolean(data);
   },
 
   // سحب المدير: يُسجّل كمصروف "سحب مدير" (يخصم من الخزنة) + تنبيه تليجرام. لا يُحذف.
@@ -5557,14 +5570,23 @@ setupRealtime: () => {
           ...(dateISO ? { created_at: dateISO } : {})
         };
       });
+    let postedSavingsIds: string[] = [];
     if (rows.length) {
-      const { error } = await supabase.from('savings_transactions').insert(rows);
+      const { data: postedRows, error } = await supabase.from('savings_transactions').insert(rows).select('id, direction, amount, method, source, note, group_id, created_at');
       if (error) { console.error('savingsTransfer savings insert error:', error); alert('تعذّر تسجيل حركة الخزنة الرئيسية' + (String(error.message || '').includes('group_id') ? ' — شغّلي db/39_savings_group_id.sql أولاً.' : '')); return false; }
+      postedSavingsIds = (postedRows || []).map((r: any) => r.id).filter(Boolean);
+      if (postedRows?.length) {
+        await supabase.from('treasury_audit_events').insert(postedRows.map((r: any) => ({
+          event_kind: 'notification', original_transaction_id: r.id, group_id: r.group_id || groupId,
+          direction: r.direction, amount: r.amount, method: r.method, source: r.source,
+          note: r.note, occurred_at: r.created_at, status: 'posted', metadata: { telegram: 'pending' },
+        })));
+      }
     }
 
     // انعكاس على خزنة المحل — نثبّت التاريخ (created_at) على اليوم المحاسبي المُقفَل لو اتبعت،
     // عشان تقفيل يوم 8 (لو اتعمل فعلياً في يوم 9) يتحسب على يوم 8 مش يوم 9.
-    await get().addExpense({
+    const expenseSaved = await get().addExpense({
       category: direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية',
       amount: direction === 'in' ? total : -total,
       note: markSavingsGroupNote(note || (direction === 'in' ? 'تحويل من المحل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية للمحل'), groupId),
@@ -5572,6 +5594,12 @@ setupRealtime: () => {
       paid_cash: s.cash, paid_visa: s.visa, paid_wallet: s.wallet, paid_instapay: s.instapay, paid_method5: s.method5 || 0, paid_method6: s.method6 || 0,
       ...(dateISO ? { created_at: dateISO } : {}),
     } as Omit<Expense, 'id' | 'date'>);
+    if (!expenseSaved) {
+      if (postedSavingsIds.length) await supabase.from('savings_transactions').delete().in('id', postedSavingsIds);
+      await supabase.from('treasury_audit_events').delete().eq('group_id', groupId);
+      alert('فشل حفظ التحويل كاملًا؛ تم إلغاء حركة الخزنة الرئيسية ولم يتم إرسال تنبيه.');
+      return false;
+    }
 
     sendTelegramAlert({
       type: direction === 'in' ? 'savings_in' : 'savings_out',
@@ -5580,6 +5608,8 @@ setupRealtime: () => {
       description: `${direction === 'in' ? 'تحويل للخزنة الرئيسية' : 'تحويل من الخزنة الرئيسية'}: ${total.toFixed(2)}`,
       amount: total,
       paymentMethod: primary,
+      operationId: groupId,
+      groupId,
       date: new Date().toISOString(),
     });
     return true;

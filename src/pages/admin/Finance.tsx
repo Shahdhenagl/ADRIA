@@ -910,7 +910,11 @@ export default function Finance() {
           payment_method: primaryM,
           created_at: pickedCreatedAt
         };
-        await addExpense(expenseData as any);
+        const expenseSaved = await addExpense(expenseData as any);
+        if (!expenseSaved) {
+          alert('لم يتم تسجيل المصروف، لذلك لم يتم تسجيل أي حركة في الخزنة أو إرسال تنبيه.');
+          return;
+        }
         if (spendFromMainTreasury) {
           await recordMainTreasuryOut(split as any, 'main_expense', `${formData.category}${formData.note ? ` - ${formData.note}` : ''}`, pickedCreatedAt, mainGroupId as any);
         } else if (incomeToMainTreasury) {
