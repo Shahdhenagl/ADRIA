@@ -511,40 +511,40 @@ export default function Employees() {
 
   // --- Profile Logic ---
   const profileEmployee = employees.find(e => e.id === selectedProfileId);
+  // السجلات القديمة قد تفتقد month أو تحتويه بشكل غير قياسي؛ نستخدم date أو
+  // start_date أو created_at كبديل حتى لا يظهر البروفايل فارغاً.
+  const profileDateOf = (row: any): string => {
+    const explicit = row?.date || row?.start_date;
+    if (typeof explicit === 'string' && /^\d{4}-\d{2}-\d{2}/.test(explicit)) return explicit.slice(0, 10);
+    return row?.created_at ? businessDateStr(storeSettings as any, new Date(row.created_at)) : '';
+  };
+  const profileMonthOf = (row: any): string => {
+    const month = typeof row?.month === 'string' ? row.month.slice(0, 7) : '';
+    return /^\d{4}-\d{2}$/.test(month) ? month : profileDateOf(row).slice(0, 7);
+  };
+  const profileMatchesPeriod = (row: any): boolean => {
+    const date = profileDateOf(row);
+    const month = profileMonthOf(row);
+    if (profileTimeFilter === 'all') return true;
+    if (profileTimeFilter === 'month') return month === currentBusinessMonth;
+    if (profileTimeFilter === 'custom_month') return month === profileCustomMonth;
+    if (profileTimeFilter === 'custom_year') return month.startsWith(profileCustomYear);
+    const start = new Date();
+    start.setDate(start.getDate() - 6);
+    return date >= businessDateStr(storeSettings as any, start) && date <= todayBusiness;
+  };
   const profileTransactions = useMemo(() => {
     if (!profileEmployee) return [];
     let txs = employeeTransactions.filter(t => t.employee_id === profileEmployee.id);
     
-    if (profileTimeFilter === 'month') {
-      const currentMonth = currentBusinessMonth;
-      txs = txs.filter(t => t.month === currentMonth || t.created_at.startsWith(currentMonth));
-    } else if (profileTimeFilter === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      txs = txs.filter(t => new Date(t.created_at) >= sevenDaysAgo);
-    } else if (profileTimeFilter === 'custom_month') {
-      txs = txs.filter(t => t.month === profileCustomMonth || t.created_at.startsWith(profileCustomMonth));
-    } else if (profileTimeFilter === 'custom_year') {
-      txs = txs.filter(t => t.month.startsWith(profileCustomYear) || t.created_at.startsWith(profileCustomYear));
-    }
+    txs = txs.filter(profileMatchesPeriod);
     return txs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
   }, [profileEmployee, employeeTransactions, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
   const profileLeaves = useMemo(() => {
     if (!profileEmployee) return [];
     let leaves = employeeLeaves.filter(l => l.employee_id === profileEmployee.id);
-    if (profileTimeFilter === 'month') {
-      const currentMonth = currentBusinessMonth;
-      leaves = leaves.filter(l => l.month === currentMonth || l.start_date.startsWith(currentMonth));
-    } else if (profileTimeFilter === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      leaves = leaves.filter(l => new Date(l.start_date) >= sevenDaysAgo);
-    } else if (profileTimeFilter === 'custom_month') {
-      leaves = leaves.filter(l => l.month === profileCustomMonth || l.start_date.startsWith(profileCustomMonth));
-    } else if (profileTimeFilter === 'custom_year') {
-      leaves = leaves.filter(l => l.month.startsWith(profileCustomYear) || l.start_date.startsWith(profileCustomYear));
-    }
+    leaves = leaves.filter(profileMatchesPeriod);
     return leaves.sort((a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime());
   }, [profileEmployee, employeeLeaves, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
@@ -611,18 +611,7 @@ export default function Employees() {
   const profileDeductions = useMemo(() => {
     if (!profileEmployee) return [];
     let rows = employeeDeductions.filter(d => d.employee_id === profileEmployee.id);
-    if (profileTimeFilter === 'month') {
-      const currentMonth = currentBusinessMonth;
-      rows = rows.filter(d => d.month === currentMonth || String(d.date || '').startsWith(currentMonth));
-    } else if (profileTimeFilter === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      rows = rows.filter(d => new Date(d.date) >= sevenDaysAgo);
-    } else if (profileTimeFilter === 'custom_month') {
-      rows = rows.filter(d => d.month === profileCustomMonth || String(d.date || '').startsWith(profileCustomMonth));
-    } else if (profileTimeFilter === 'custom_year') {
-      rows = rows.filter(d => d.month.startsWith(profileCustomYear) || String(d.date || '').startsWith(profileCustomYear));
-    }
+    rows = rows.filter(profileMatchesPeriod);
     return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [profileEmployee, employeeDeductions, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
@@ -630,18 +619,7 @@ export default function Employees() {
   const profileBonuses = useMemo(() => {
     if (!profileEmployee) return [];
     let rows = employeeBonuses.filter(b => b.employee_id === profileEmployee.id);
-    if (profileTimeFilter === 'month') {
-      const currentMonth = currentBusinessMonth;
-      rows = rows.filter(b => b.month === currentMonth || String(b.date || '').startsWith(currentMonth));
-    } else if (profileTimeFilter === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      rows = rows.filter(b => new Date(b.date) >= sevenDaysAgo);
-    } else if (profileTimeFilter === 'custom_month') {
-      rows = rows.filter(b => b.month === profileCustomMonth || String(b.date || '').startsWith(profileCustomMonth));
-    } else if (profileTimeFilter === 'custom_year') {
-      rows = rows.filter(b => b.month.startsWith(profileCustomYear) || String(b.date || '').startsWith(profileCustomYear));
-    }
+    rows = rows.filter(profileMatchesPeriod);
     return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [profileEmployee, employeeBonuses, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
@@ -656,20 +634,18 @@ export default function Employees() {
     let periodLabel: string;
     let month = '';
     if (profileTimeFilter === 'month') {
-      inPeriod = (o) => String(o.date || '').slice(0, 7) === currentMonth;
+      inPeriod = (o) => profileMonthOf(o) === currentMonth;
       periodLabel = `شهر ${currentMonth}`;
       month = currentMonth;
     } else if (profileTimeFilter === 'custom_month') {
-      inPeriod = (o) => String(o.date || '').slice(0, 7) === profileCustomMonth;
+      inPeriod = (o) => profileMonthOf(o) === profileCustomMonth;
       periodLabel = `شهر ${profileCustomMonth}`;
       month = profileCustomMonth;
     } else if (profileTimeFilter === 'custom_year') {
-      inPeriod = (o) => String(o.date || '').startsWith(profileCustomYear);
+      inPeriod = (o) => profileMonthOf(o).startsWith(profileCustomYear);
       periodLabel = `سنة ${profileCustomYear}`;
     } else if (profileTimeFilter === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-      inPeriod = (o) => new Date(o.date) >= sevenDaysAgo;
+      inPeriod = (o) => profileMatchesPeriod(o);
       periodLabel = 'آخر 7 أيام';
     } else {
       inPeriod = () => true;

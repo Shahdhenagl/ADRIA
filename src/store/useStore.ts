@@ -1664,7 +1664,7 @@ export const useStore = create<CashierStore>((set, get) => ({
     set({ isRefreshing: true });
 
     try {
-      const [settingsRes, categoriesRes, productsRes, discountsRes, customersRes, ordersRows, counterRes, cashiersRes, employeesRes, employeeTransactionRows, employeeLeavesRes, employeeAttendanceRes] =
+      const [settingsRes, categoriesRes, productsRes, discountsRes, customersRes, ordersRows, counterRes, cashiersRes, employeesRes, employeeTransactionRows, employeeLeavesRes, employeeAttendanceRes, employeeDeductionsRes, employeeBonusesRes] =
         await withTimeout(Promise.all([
           supabase.from('store_settings').select('*').limit(1).maybeSingle(),
           supabase.from('categories').select('*').order('name'),
@@ -1676,8 +1676,10 @@ export const useStore = create<CashierStore>((set, get) => ({
           supabase.from('cashiers').select('*').order('created_at', { ascending: false }),
           supabase.from('employees').select('*').order('created_at', { ascending: false }),
           fetchAllRows<Record<string, unknown>>('employee_transactions'),
-          supabase.from('employee_leaves').select('*').order('created_at', { ascending: false }),
-          supabase.from('employee_attendance').select('*').order('created_at', { ascending: false }),
+          fetchAllRows<Record<string, unknown>>('employee_leaves'),
+          fetchAllRows<Record<string, unknown>>('employee_attendance'),
+          fetchAllRows<Record<string, unknown>>('employee_deductions'),
+          fetchAllRows<Record<string, unknown>>('employee_bonuses'),
         ]), NET_TIMEOUT.fullLoad, 'تحميل البيانات');
 
       const settings = settingsRes.data ? mapSettings(settingsRes.data as Record<string, unknown>) : get().storeSettings;
@@ -1786,26 +1788,11 @@ export const useStore = create<CashierStore>((set, get) => ({
           : (sessionStorage.getItem('cashier_pos_auth') === 'true' ? { id: 'master', name: 'المدير', pin: '123456', phone: '', photo_url: '', created_at: '' } : null),
         employees: (employeesRes.data ?? []) as Employee[],
         employeeTransactions: (employeeTransactionRows ?? []) as unknown as EmployeeTransaction[],
-        employeeLeaves: (employeeLeavesRes.data ?? []) as EmployeeLeave[],
-        employeeAttendance: (employeeAttendanceRes.data ?? []) as EmployeeAttendance[],
+        employeeLeaves: (employeeLeavesRes ?? []) as unknown as EmployeeLeave[],
+        employeeAttendance: (employeeAttendanceRes ?? []) as unknown as EmployeeAttendance[],
+        employeeDeductions: (employeeDeductionsRes ?? []) as unknown as EmployeeDeduction[],
+        employeeBonuses: (employeeBonusesRes ?? []) as unknown as EmployeeBonus[],
       });
-
-      // خصومات الموظفين تُجلب منفصلة عشان لو الجدول لسه ماتعملش (db/42) الشاشة
-      // كلها ما تقعش — نفس أسلوب المصاريف تحت.
-      try {
-        const { data: dedData } = await supabase.from('employee_deductions').select('*').order('created_at', { ascending: false });
-        if (dedData) set({ employeeDeductions: dedData as EmployeeDeduction[] });
-      } catch (e) {
-        console.warn('employee_deductions not available:', e);
-      }
-
-      // نفس الأسلوب الدفاعي لمكافآت الموظفين (db/45).
-      try {
-        const { data: bonusData } = await supabase.from('employee_bonuses').select('*').order('created_at', { ascending: false });
-        if (bonusData) set({ employeeBonuses: bonusData as EmployeeBonus[] });
-      } catch (e) {
-        console.warn('employee_bonuses not available:', e);
-      }
 
       // Fetch expenses separately to avoid breaking the whole loadAll if the table is missing
       try {
@@ -7447,17 +7434,21 @@ setupRealtime: () => {
 
   // ── Employees ─────────────────────────────────────────────
   loadEmployees: async () => {
-    const [empRes, transRes, leavesRes, attRes] = await Promise.all([
+    const [empRes, transRes, leavesRes, attRes, dedRes, bonusRes] = await Promise.all([
       fetchAllRows<Record<string, unknown>>('employees', '*'),
       fetchAllRows<Record<string, unknown>>('employee_transactions', '*'),
       fetchAllRows<Record<string, unknown>>('employee_leaves', '*'),
       fetchAllRows<Record<string, unknown>>('employee_attendance', '*'),
+      fetchAllRows<Record<string, unknown>>('employee_deductions', '*'),
+      fetchAllRows<Record<string, unknown>>('employee_bonuses', '*'),
     ]);
     set({
       employees: empRes as unknown as Employee[],
       employeeTransactions: transRes as unknown as EmployeeTransaction[],
       employeeLeaves: leavesRes as unknown as EmployeeLeave[],
       employeeAttendance: attRes as unknown as EmployeeAttendance[],
+      employeeDeductions: dedRes as unknown as EmployeeDeduction[],
+      employeeBonuses: bonusRes as unknown as EmployeeBonus[],
     });
   },
 
