@@ -886,7 +886,8 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
           </div>
         </div>
 
-        <div className="p-6 border-t border-slate-100 bg-white flex justify-end gap-3">
+        {/* شريط الحفظ ثابت أسفل النافذة حتى لا يختفي بعد تمرير تفاصيل الفاتورة. */}
+        <div className="sticky bottom-0 z-20 p-4 sm:p-6 border-t border-slate-200 bg-white/95 backdrop-blur flex justify-end gap-3 shadow-[0_-4px_12px_rgba(15,23,42,0.08)]">
           <button
             onClick={onClose}
             className="px-6 py-3 text-slate-600 hover:bg-slate-100 rounded-xl font-bold transition-colors"
@@ -898,7 +899,7 @@ export function EditInvoiceModal({ invoice, onClose, requireOtp, exchangeMode }:
             disabled={isSubmitting || (exchangeMode && !splitOk)}
             className="px-8 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
           >
-            {isSubmitting ? 'جاري الحفظ...' : (exchangeMode ? 'تأكيد الاستبدال وطباعة' : 'حفظ التعديلات')}
+            {isSubmitting ? 'جاري الحفظ...' : (exchangeMode ? 'حفظ الاستبدال وطباعة' : 'حفظ الفاتورة')}
           </button>
         </div>
       </div>
