@@ -3769,6 +3769,17 @@ export default function POS() {
                         })}
                       </div>
                     </div>
+                    {/* زر حفظ مستقل أسفل محتوى المرتجع؛ يظل ظاهرًا عند فتح تقسيم وسائل الدفع. */}
+                    <div className="sticky bottom-0 z-30 -mx-1 px-1 py-3 bg-white/95 dark:bg-slate-800/95 backdrop-blur border-t border-slate-200 dark:border-slate-700 shadow-[0_-4px_12px_rgba(15,23,42,0.12)]">
+                      <button
+                        type="button"
+                        onClick={handleConfirmReturns}
+                        disabled={Object.values(pendingReturns).filter(pr => pr.returnQty > 0).length === 0}
+                        className="w-full bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-4 py-3 rounded-xl text-sm font-black shadow-lg transition-all min-h-[46px]"
+                      >
+                        حفظ المرتجع
+                      </button>
+                    </div>
                   </>
                 );
               })()}
