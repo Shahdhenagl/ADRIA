@@ -218,9 +218,9 @@ export default function Finance() {
     let startOfPeriod: Date;
 
     if (filterType === 'monthly') {
-      startOfPeriod = new Date(selDate.getFullYear(), selDate.getMonth(), 1);
+      startOfPeriod = businessDayRange(`${selDate.getFullYear()}-${String(selDate.getMonth() + 1).padStart(2, '0')}-01`, storeSettings as any).start;
     } else if (filterType === 'yearly') {
-      startOfPeriod = new Date(selDate.getFullYear(), 0, 1);
+      startOfPeriod = businessDayRange(`${selDate.getFullYear()}-01-01`, storeSettings as any).start;
     } else {
       // بداية اليوم المحاسبي (افتراضي 3 الفجر بالتوقيت المحلي) — نفس منطق تقفيل POS.
       // أي معاملة قبل الساعة 3 الفجر تُحسب على اليوم السابق. لازم يطابق matchDate
@@ -255,13 +255,13 @@ export default function Finance() {
 
   // 2. Period Transactions
   const periodTransactions = useMemo(() => {
-    const selDate = new Date(selectedDate);
     const matchDate = (dateVal: any) => {
       const d = new Date(dateVal);
-      if (filterType === 'monthly') return d.getFullYear() === selDate.getFullYear() && d.getMonth() === selDate.getMonth();
-      if (filterType === 'yearly') return d.getFullYear() === selDate.getFullYear();
+      const accountingDate = businessDateStr(storeSettings as any, d);
+      if (filterType === 'monthly') return accountingDate.slice(0, 7) === selectedDate.slice(0, 7);
+      if (filterType === 'yearly') return accountingDate.slice(0, 4) === selectedDate.slice(0, 4);
       // اليوم المحاسبي (3 الفجر): معاملة قبلها تُحسب على اليوم السابق — نفس منطق POS.
-      return businessDateStr(storeSettings as any, new Date(dateVal)) === selectedDate;
+      return accountingDate === selectedDate;
     };
     const displayOrders: Array<{ order: any; amount: number; date: string; split: Record<string, number>; note: string }> = [];
     activeOrders.forEach((o: any) => {
@@ -392,10 +392,12 @@ export default function Finance() {
     const range = filterType === 'daily'
       ? businessDayRange(selectedDate, storeSettings as any)
       : (() => {
-          const start = new Date(`${selectedDate.slice(0, 7)}-01T03:00:00`);
-          const end = filterType === 'monthly'
-            ? new Date(start.getFullYear(), start.getMonth() + 1, 1, 3, 0, 0, 0)
-            : new Date(start.getFullYear() + 1, 0, 1, 3, 0, 0, 0);
+          const start = businessDayRange(`${selectedDate.slice(0, 7)}-01`, storeSettings as any).start;
+          const nextMonth = new Date(start.getFullYear(), start.getMonth() + 1, 1);
+          const endDate = filterType === 'monthly'
+            ? `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}-01`
+            : `${start.getFullYear() + 1}-01-01`;
+          const end = businessDayRange(endDate, storeSettings as any).start;
           return { start, end };
         })();
     const inRange = (row: any) => {
