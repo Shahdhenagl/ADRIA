@@ -3680,7 +3680,9 @@ export default function POS() {
                     )}
 
                     <div className="flex-1 border border-gray-200 dark:border-slate-700 flex flex-col rounded-xl overflow-hidden">
-                      <div className="bg-gray-100 dark:bg-slate-700 p-3 sm:p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-200 dark:border-slate-600 gap-3">
+                      {/* شريط الإجراءات يفضل ظاهرًا أثناء النزول لخانات تقسيم الدفع؛
+                          قبل كده كان في أعلى القائمة ويختفي مع التمرير. */}
+                      <div className="sticky top-0 z-20 bg-gray-100 dark:bg-slate-700 p-3 sm:p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-gray-200 dark:border-slate-600 gap-3 shadow-sm">
                         <div className="flex flex-col">
                           <span className="font-bold text-gray-700 dark:text-gray-200 font-mono tracking-wider whitespace-nowrap break-keep">الأصناف المتاحة للإرجاع</span>
                           <span className="text-[10px] text-slate-500 font-bold">رقم الفاتورة: #{activeReturnOrder.id} | المرتجع مسبقاً: {pastRefunds.toFixed(2)} {storeSettings.currency}</span>
@@ -3697,7 +3699,7 @@ export default function POS() {
                             disabled={Object.values(pendingReturns).filter(pr => pr.returnQty > 0).length === 0}
                             className="flex-1 sm:flex-initial bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white px-3 sm:px-4 py-2.5 rounded-xl text-xs font-black shadow-lg transition-all min-h-[40px]"
                           >
-                            تأكيد المرتجعات المحددة
+                            حفظ المرتجع
                           </button>
                         </div>
                       </div>
