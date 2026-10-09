@@ -208,6 +208,7 @@ export default function Employees() {
     date: todayBusiness,
     dedDays: '',
     dedAmount: '',
+    advance_repayment: '0',
     commissionRate: '',
     note: ''
   });
@@ -434,13 +435,14 @@ export default function Employees() {
 
   const getEmployeeMonthStats = (empId: string, month: string, excludeTransactionId?: string) => {
     const emp = employees.find(e => e.id === empId);
-    if (!emp) return { salary: 0, advances: 0, advanceBalance: 0, paidSalary: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0, salaryTxDeductions: 0, lateMinutes: 0, lateDays: 0, presentDays: 0, leaveDays: 0, manualDays: 0, manualCount: 0 };
+    if (!emp) return { salary: 0, advances: 0, advanceBalance: 0, paidSalary: 0, advanceRepayments: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0, salaryTxDeductions: 0, lateMinutes: 0, lateDays: 0, presentDays: 0, leaveDays: 0, manualDays: 0, manualCount: 0 };
 
     const monthTrans = employeeTransactions.filter(t => t.employee_id === empId && t.month === month && t.id !== excludeTransactionId);
 
     const advances = monthTrans.filter(t => t.type === 'advance').reduce((sum, t) => sum + t.amount, 0);
     const paidSalary = monthTrans.filter(t => t.type === 'salary').reduce((sum, t) => sum + t.amount, 0);
     const deductions = monthTrans.filter(t => t.type === 'salary').reduce((sum, t) => sum + (t.deductions || 0), 0);
+    const advanceRepayments = monthTrans.filter(t => t.type === 'salary').reduce((sum, t) => sum + (Number(t.advance_repayment) || 0), 0);
     const incentives = monthTrans.filter(t => t.type === 'incentive').reduce((sum, t) => sum + t.amount, 0);
     const leave = getLeaveMonthDetail(empId, month);
     const attendance = getAttendanceMonthDetail(empId, month);
@@ -457,6 +459,7 @@ export default function Employees() {
       bonuses,
       paidSalary,
       deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions,
+      advanceRepayments,
     });
 
     // ملاحظة: `deductions` المرجَّعة = إجمالي كل الخصومات (بما فيها خصومات صرف
@@ -464,7 +467,8 @@ export default function Employees() {
     // تغيير هنا لازم يمشي معاها. الحقول التفصيلية تحتها للعرض بس.
     return {
       salary: emp.monthly_salary, advances, advanceBalance, paidSalary,
-      deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions,
+      advanceRepayments,
+      deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions + advanceRepayments,
       incentives, leaveDeductions, attendanceDeductions, manualDeductions, bonuses, remaining,
       // تفاصيل للعرض في كشف صرف الراتب
       salaryTxDeductions: deductions,
@@ -484,6 +488,7 @@ export default function Employees() {
         'الوظيفة': emp.job_title || '',
         'الراتب الشهري': Number(emp.monthly_salary) || 0,
         'السلف': s.advances,
+        'سداد سلفة من الراتب': s.advanceRepayments,
         'الحوافز': s.incentives,
         'المكافآت': s.bonuses,
         // الخصم متفصّل لمصادره — عمود واحد مجمّع مش بيسمح بمراجعة الكشف.
@@ -747,7 +752,7 @@ export default function Employees() {
     await updateEmployee(emp.id, { is_active: !isActive });
   };
 
-  const handleOpenTransModal = (emp: Employee, type: 'salary' | 'advance' | 'incentive', transaction?: EmployeeTransaction) => {
+  const handleOpenTransModal = (emp: Employee, type: 'salary' | 'advance' | 'incentive', transaction?: EmployeeTransaction, repayAdvance = false) => {
     setSelectedEmployee(emp);
     setTransType(type);
     setEditingTransaction(transaction || null);
@@ -766,6 +771,7 @@ export default function Employees() {
         date: transaction.created_at ? new Date(transaction.created_at).toISOString().slice(0, 10) : todayBusiness,
         dedDays: '',
         dedAmount: (transaction.deductions || 0).toString(),
+        advance_repayment: (transaction.advance_repayment || 0).toString(),
         commissionRate: '',
         note: transaction.note || ''
       });
@@ -776,7 +782,10 @@ export default function Employees() {
     const currentBusinessDate = businessDateStr(storeSettings as any);
     const currentMonth = currentBusinessDate.slice(0, 7);
     const stats = getEmployeeMonthStats(emp.id, currentMonth);
-    const netAmount = type === 'salary' ? stats.remaining : '';
+    // زر «سداد سلفة من الراتب» يقترح سلف الشهر الحالي فقط (مثل 325 في حالة زينب)،
+    // ويمكن للمدير تعديل الحقل يدويًا لسداد جزء أو كل الرصيد القديم.
+    const suggestedRepayment = type === 'salary' && repayAdvance ? Math.min(stats.advances, stats.advanceBalance, stats.remaining) : 0;
+    const netAmount = type === 'salary' ? Math.max(0, stats.remaining - suggestedRepayment) : '';
 
     setTransFormData({
       amount: netAmount.toString(),
@@ -788,8 +797,9 @@ export default function Employees() {
       date: currentBusinessDate,
       dedDays: '',
       dedAmount: '',
+      advance_repayment: suggestedRepayment.toFixed(2),
       commissionRate: (type === 'salary' && emp.commission_rate) ? String(emp.commission_rate) : '',
-      note: type === 'salary' ? `راتب شهر ${currentMonth}` : type === 'incentive' ? `حافز شهر ${currentMonth}` : ''
+      note: type === 'salary' ? `راتب شهر ${currentMonth}${suggestedRepayment > 0 ? ` — سداد سلفة ${suggestedRepayment.toFixed(2)}` : ''}` : type === 'incentive' ? `حافز شهر ${currentMonth}` : ''
     });
     setShowTransModal(true);
   };
@@ -898,6 +908,14 @@ export default function Employees() {
     const total = payKeys.reduce((s, k) => s + split[k], 0);
 
     if (total <= 0) return alert('يرجى إدخال مبلغ صحيح');
+    const requestedRepayment = transType === 'salary' ? Math.max(0, Number(transFormData.advance_repayment) || 0) : 0;
+    const statsBeforeSave = transType === 'salary' ? getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id) : null;
+    if (requestedRepayment > (statsBeforeSave?.advanceBalance || 0) + 0.004) {
+      return alert(`سداد السلفة لا يمكن أن يتجاوز الرصيد المتبقي (${(statsBeforeSave?.advanceBalance || 0).toLocaleString()} ${storeSettings.currency}).`);
+    }
+    if (transType === 'salary' && requestedRepayment > statsBeforeSave!.remaining + 0.004) {
+      return alert('مبلغ سداد السلفة أكبر من صافي الراتب المتاح.');
+    }
 
     const paymentMethod = primaryMethod_(split);
 
@@ -933,6 +951,7 @@ export default function Employees() {
       paid_method6: split.method6 || 0,
       month: transFormData.month,
       deductions: (parseFloat(transFormData.dedAmount) || 0) + ((parseFloat(transFormData.dedDays) || 0) * (emp.monthly_salary / 30)),
+      advance_repayment: transType === 'salary' ? requestedRepayment : 0,
       // الصرف من الرئيسية: نعلّم الملاحظة بـ [MAIN_TREASURY] فتُستبعد من خزينة الكاشير
       // (القوائم/الإجماليات/التقفيل)، والمبلغ يتخصم من الخزنة الرئيسية بدلها.
       // والـ group_id بيربطها بصف دفتر الرئيسية عشان الحذف يعكس الاتنين مع بعض.
@@ -1417,6 +1436,13 @@ export default function Employees() {
                 className="flex items-center gap-2 px-6 py-3 rounded-2xl text-white font-bold hover:opacity-90 transition shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Landmark size={20} /> صرف راتب
+              </button>
+              <button
+                onClick={() => handleOpenTransModal(profileEmployee, 'salary', undefined, true)}
+                disabled={!(profileEmployee.is_active ?? true) || getEmployeeMonthStats(profileEmployee.id, currentBusinessMonth).advanceBalance <= 0}
+                className="flex items-center gap-2 px-6 py-3 rounded-2xl bg-amber-50 text-amber-700 font-bold hover:bg-amber-100 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <Wallet size={20} /> سداد سلفة من الراتب
               </button>
             </div>
           </div>
@@ -2008,6 +2034,13 @@ export default function Employees() {
                   >
                     <Landmark size={16} /> {stats.remaining <= 0 ? 'مُسدد بالكامل' : 'صرف راتب'}
                   </button>
+                  <button
+                    onClick={() => handleOpenTransModal(emp, 'salary', undefined, true)}
+                    disabled={!isActive || stats.advanceBalance <= 0 || stats.remaining <= 0}
+                    className="col-span-2 flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-50 text-amber-700 font-bold hover:bg-amber-100 transition text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Wallet size={16} /> سداد سلفة من الراتب
+                  </button>
                 </div>
                 <button
                   onClick={() => handleCheckIn(emp)}
@@ -2335,9 +2368,10 @@ export default function Employees() {
                 const extraAmount = parseFloat(transFormData.dedAmount) || 0;
                 const extraDed = extraDays * dailyRate + extraAmount;
                 const gross = stats.salary + stats.bonuses;
+                const advanceRepayment = Math.max(0, Number(transFormData.advance_repayment) || 0);
                 // نفس معادلة الـ net المستخدمة في حقول الفورم — الكشف لازم يوصّل
                 // لنفس الرقم اللي بيتحط في «المبلغ الإجمالي».
-                const totalDed = stats.paidSalary + stats.deductions + extraDed;
+                const totalDed = stats.paidSalary + stats.deductions + extraDed + advanceRepayment;
                 const net = Math.max(0, gross - totalDed);
 
                 const det = getMonthDetailRows(selectedEmployee!.id, transFormData.month);
@@ -2377,6 +2411,10 @@ export default function Employees() {
                       text: d.reason || (Number(d.days || 0) > 0 ? `${num(Number(d.days))} يوم` : 'خصم'),
                       amount: Number(d.amount || 0), waived: Number(d.waived_amount || 0), kind: 'manual' as const,
                     })),
+                  },
+                  {
+                    key: 'advanceRepayment', label: 'سداد سلفة من الراتب', value: advanceRepayment,
+                    hint: advanceRepayment > 0 ? 'سيقلّل المبلغ المصروف ويقلّل رصيد السلف' : '', details: [],
                   },
                   { key: 'prev', label: 'خصومات من صرف سابق', hint: '', value: stats.salaryTxDeductions, details: [] },
                   {
@@ -2561,7 +2599,7 @@ export default function Employees() {
                         onChange={e => {
                           const days = e.target.value;
                           const dailyRate = selectedEmployee!.monthly_salary / 30;
-                          const totalDed = (parseFloat(days) || 0) * dailyRate + (parseFloat(transFormData.dedAmount) || 0);
+                          const totalDed = (parseFloat(days) || 0) * dailyRate + (parseFloat(transFormData.dedAmount) || 0) + (parseFloat(transFormData.advance_repayment) || 0);
                           const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
                           const net = Math.max(0, stats.salary + stats.bonuses - stats.paidSalary - stats.deductions - totalDed);
                           setTransFormData({
@@ -2584,7 +2622,7 @@ export default function Employees() {
                         onChange={e => {
                           const amt = e.target.value;
                           const dailyRate = selectedEmployee!.monthly_salary / 30;
-                          const totalDed = (parseFloat(transFormData.dedDays) || 0) * dailyRate + (parseFloat(amt) || 0);
+                          const totalDed = (parseFloat(transFormData.dedDays) || 0) * dailyRate + (parseFloat(amt) || 0) + (parseFloat(transFormData.advance_repayment) || 0);
                           const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
                           const net = Math.max(0, stats.salary + stats.bonuses - stats.paidSalary - stats.deductions - totalDed);
                           setTransFormData({
@@ -2597,6 +2635,37 @@ export default function Employees() {
                         }} 
                       />
                     </div>
+                  </div>
+                  <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <label className="text-sm font-black text-amber-800">سداد سلفة من الراتب</label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
+                          const repayment = Math.min(stats.advanceBalance, stats.remaining);
+                          const extra = (parseFloat(transFormData.dedDays) || 0) * (selectedEmployee!.monthly_salary / 30) + (parseFloat(transFormData.dedAmount) || 0);
+                          const net = Math.max(0, stats.salary + stats.bonuses - stats.paidSalary - stats.deductions - extra - repayment);
+                          setTransFormData({ ...transFormData, advance_repayment: repayment.toFixed(2), amount: net.toFixed(2), paid_cash: net.toFixed(2), paid_visa: '', paid_wallet: '', paid_instapay: '' });
+                        }}
+                        className="text-xs font-black px-3 py-2 rounded-xl bg-amber-600 text-white hover:bg-amber-700"
+                      >استخدام كل رصيد السلفة</button>
+                    </div>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={transFormData.advance_repayment}
+                      onChange={e => {
+                        const repayment = Math.max(0, parseFloat(e.target.value) || 0);
+                        const stats = getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id);
+                        const extra = (parseFloat(transFormData.dedDays) || 0) * (selectedEmployee!.monthly_salary / 30) + (parseFloat(transFormData.dedAmount) || 0);
+                        const net = Math.max(0, stats.salary + stats.bonuses - stats.paidSalary - stats.deductions - extra - repayment);
+                        setTransFormData({ ...transFormData, advance_repayment: e.target.value, amount: net.toFixed(2), paid_cash: net.toFixed(2), paid_visa: '', paid_wallet: '', paid_instapay: '' });
+                      }}
+                      className="w-full bg-white border border-amber-200 rounded-xl p-3 outline-none font-black text-amber-800"
+                    />
+                    <p className="text-[11px] font-bold text-amber-700">الرصيد المتاح للسداد: {getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id).advanceBalance.toLocaleString()} {storeSettings.currency} — المبلغ سيُخصم من الراتب ويقلّل رصيد السلف.</p>
                   </div>
                 </div>
               )}
@@ -2631,7 +2700,7 @@ export default function Employees() {
                       const newMonth = e.target.value;
                       if (transType === 'salary') {
                         const stats = getEmployeeMonthStats(selectedEmployee!.id, newMonth, editingTransaction?.id);
-                        const totalDed = (parseFloat(transFormData.dedDays) || 0) * (selectedEmployee!.monthly_salary / 30) + (parseFloat(transFormData.dedAmount) || 0);
+                        const totalDed = (parseFloat(transFormData.dedDays) || 0) * (selectedEmployee!.monthly_salary / 30) + (parseFloat(transFormData.dedAmount) || 0) + (parseFloat(transFormData.advance_repayment) || 0);
                         const net = Math.max(0, stats.salary + stats.bonuses - stats.paidSalary - stats.deductions - totalDed);
                         setTransFormData({
                           ...transFormData,

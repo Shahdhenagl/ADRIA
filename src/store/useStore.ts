@@ -500,6 +500,8 @@ export interface EmployeeTransaction {
   paid_method6?: number;
   month: string;
   deductions: number;
+  /** مبلغ سداد سلفة اختاره المدير من صرف هذا الراتب؛ null للسجلات القديمة. */
+  advance_repayment?: number | null;
   note: string;
   created_at: string;
 }
