@@ -5791,6 +5791,8 @@ setupRealtime: () => {
       description: `صرف من الخزنة الرئيسية: ${total.toFixed(2)}${note ? ` — ${note}` : ''}`,
       amount: total,
       paymentMethod: primaryOfSplit(s),
+      operationId: groupId || undefined,
+      groupId: groupId || undefined,
       date: new Date().toISOString(),
     });
     return true;
@@ -5825,6 +5827,8 @@ setupRealtime: () => {
       description: `إيداع بالخزنة الرئيسية: ${total.toFixed(2)}${note ? ` — ${note}` : ''}`,
       amount: total,
       paymentMethod: primaryOfSplit(s),
+      operationId: groupId || undefined,
+      groupId: groupId || undefined,
       date: new Date().toISOString(),
     });
     return true;
