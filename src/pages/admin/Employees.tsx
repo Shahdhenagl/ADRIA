@@ -173,7 +173,7 @@ export default function Employees() {
   // البند المفتوح في كشف الراتب (لعرض صفوفه والمسامحة عليها). null = الكل مقفول.
   const [expandedSalaryRow, setExpandedSalaryRow] = useState<string | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
-  const [profileTimeFilter, setProfileTimeFilter] = useState<'month' | 'week' | 'all' | 'custom_month' | 'custom_year'>('month');
+  const [profileTimeFilter, setProfileTimeFilter] = useState<'month' | 'week' | 'all' | 'custom_month' | 'custom_year'>('all');
   const [profileCustomMonth, setProfileCustomMonth] = useState<string>(currentBusinessMonth);
   const [profileCustomYear, setProfileCustomYear] = useState<string>(new Date().getFullYear().toString());
   const [payrollMonth, setPayrollMonth] = useState<string>(currentBusinessMonth);
