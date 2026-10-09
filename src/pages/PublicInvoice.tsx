@@ -6,6 +6,7 @@ import { CheckCircle2, Printer, Download, Phone, User, MapPin } from 'lucide-rea
 // html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها).
 import html2canvas from 'html2canvas-pro';
 import { calculateOrderReturnValue } from '../utils/returns';
+import { paidForDisplay, paidSplitForDisplay } from '../utils/invoicePayments';
 
 
 export default function PublicInvoice() {
@@ -265,23 +266,29 @@ export default function PublicInvoice() {
   );
 
   const subtotal = order.items.reduce((sum, item) => sum + (item.quantity * item.sale_price), 0);
+  const isPayment = order.type === 'payment';
+  const returnedValue = isPayment ? 0 : calculateOrderReturnValue(order);
+  const effectiveTotal = Math.max(0, order.total - returnedValue);
+  const paymentKeys = ['cash', 'visa', 'wallet', 'instapay', 'method5', 'method6'];
+  const paidShown = Math.min(effectiveTotal, Math.max(0, paidForDisplay(order, paymentKeys)));
+  const paidSplit = paidSplitForDisplay(order, paymentKeys);
+  const paidSplitSum = Object.values(paidSplit).reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+  const displayScale = paidSplitSum > 0 ? paidShown / paidSplitSum : 1;
   const taxRate = settings.taxRate || 0;
   // If Tax exists: Total = (Subtotal - Discount) * (1 + TaxRate)
   // Discount = Subtotal - (Total / (1 + TaxRate))
   const calculatedDiscount = Math.max(0, subtotal - (order.total / (1 + (taxRate / 100))));
   const taxValue = (subtotal - calculatedDiscount) * (taxRate / 100);
-  const isPayment = order.type === 'payment';
-
   const visitMatch = order.notes?.match(/\[زيارة:\s*([^\]]+)\s*\]/);
   const visitId = visitMatch ? visitMatch[1].trim() : null;
   const cleanNotes = order.notes ? order.notes.replace(/\[زيارة:\s*[^\]]+\s*\]/, '').trim() : '';
 
-  let displayCash = order.paid_cash || 0;
-  let displayVisa = order.paid_visa || 0;
-  let displayWallet = order.paid_wallet || 0;
-  let displayInstapay = order.paid_instapay || 0;
-  let displayMethod5 = order.paid_method5 || 0;
-  let displayMethod6 = order.paid_method6 || 0;
+  let displayCash = Math.max(0, paidSplit.cash || 0) * displayScale;
+  let displayVisa = Math.max(0, paidSplit.visa || 0) * displayScale;
+  let displayWallet = Math.max(0, paidSplit.wallet || 0) * displayScale;
+  let displayInstapay = Math.max(0, paidSplit.instapay || 0) * displayScale;
+  let displayMethod5 = Math.max(0, paidSplit.method5 || 0) * displayScale;
+  let displayMethod6 = Math.max(0, paidSplit.method6 || 0) * displayScale;
 
   if (displayCash === 0 && displayVisa === 0 && displayWallet === 0 && displayInstapay === 0 && displayMethod5 === 0 && displayMethod6 === 0 && order.paid_amount > 0) {
     const method = (order.payment_method || 'cash').toLowerCase();
@@ -501,13 +508,14 @@ export default function PublicInvoice() {
                   <div className="h-px bg-slate-200 my-1"></div>
                   <div className="flex justify-between items-center text-xl font-black text-slate-800">
                     <span>الإجمالي</span>
-                    <span className="text-2xl">{order.total.toFixed(2)} {settings.currency}</span>
+                    <span className="text-2xl">{effectiveTotal.toFixed(2)} {settings.currency}</span>
                   </div>
+                  {returnedValue > 0.009 && <div className="text-xs font-bold text-rose-600 text-left">مرتجع/استبدال: -{returnedValue.toFixed(2)} {settings.currency}</div>}
                 </>
               )}
 
               {/* Payment Status / Debt info */}
-              <div className={`p-4 rounded-xl border text-center font-black ${order.type === 'payment' ? 'bg-indigo-50 border-indigo-100' : (order.paid_amount < order.total ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100')}`}>
+              <div className={`p-4 rounded-xl border text-center font-black ${order.type === 'payment' ? 'bg-indigo-50 border-indigo-100' : (paidShown < effectiveTotal ? 'bg-red-50 text-red-600 border-red-100' : 'bg-emerald-50 text-emerald-600 border-emerald-100')}`}>
                 {isPayment ? (
                   <div className="space-y-3">
                     <div className="text-indigo-600 text-lg border-b border-indigo-100 pb-2">المبلغ المدفوع: {order.paid_amount.toFixed(2)} {settings.currency}</div>
@@ -520,10 +528,10 @@ export default function PublicInvoice() {
                       <span className="text-lg font-black">{Math.max(0, (order as any).debtAfter || 0).toFixed(2)} {settings.currency}</span>
                     </div>
                   </div>
-                ) : order.paid_amount < order.total ? (
+                ) : paidShown < effectiveTotal ? (
                   <div className="flex flex-col gap-1">
-                    <div className="text-base">متبقي آجل: {(order.total - order.paid_amount).toFixed(2)} {settings.currency}</div>
-                    <div className="text-[10px] opacity-70">تم سداد: {order.paid_amount.toFixed(2)} {settings.currency}</div>
+                    <div className="text-base">متبقي آجل: {(effectiveTotal - paidShown).toFixed(2)} {settings.currency}</div>
+                    <div className="text-[10px] opacity-70">تم سداد: {paidShown.toFixed(2)} {settings.currency}</div>
                   </div>
                 ) : (
                   <div className="flex items-center justify-center gap-2">

@@ -108,7 +108,15 @@ export default function Reports() {
   };
   const effectiveTotalOf = (o: any) => Math.max(0, (Number(o.total) || 0) - calculateOrderReturnValue(o));
   const sales = useMemo(() => orders.filter((o: any) => !o.is_deleted && o.type === 'sale' && inRange(o.date)).sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime()), [orders, from, to]);
-  const salesTotals = useMemo(() => sales.reduce((acc: any, o: any) => { acc.total += effectiveTotalOf(o); acc.paid += originalPaidOf(o); acc.profit += profitOf(o); return acc; }, { total: 0, paid: 0, profit: 0 }), [sales, orders]);
+  const salesTotals = useMemo(() => sales.reduce((acc: any, o: any) => {
+    const effectiveTotal = effectiveTotalOf(o);
+    // بعد المرتجع أو الاستبدال لا يمكن أن يتجاوز المدفوع صافي قيمة الفاتورة.
+    // هذا يمنع ظهور الفاتورة كأنها محصّلة 680 بينما صافيها بعد مرتجع 390 هو 290.
+    acc.total += effectiveTotal;
+    acc.paid += Math.min(effectiveTotal, originalPaidOf(o));
+    acc.profit += profitOf(o);
+    return acc;
+  }, { total: 0, paid: 0, profit: 0 }), [sales, orders]);
 
   // ملخص ربحية الفترة: المشتريات النقدية ليست مصروفًا بالكامل؛ تكلفة البضاعة
   // المباعة محسوبة داخل ربح الفواتير، ونضيف فقط المصروفات التشغيلية والرواتب.

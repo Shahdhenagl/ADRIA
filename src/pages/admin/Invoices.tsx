@@ -808,7 +808,9 @@ export default function Invoices() {
                 filteredOrders.map((order) => {
                   const hasReturns = order.items.some(i => i.returned_quantity > 0);
                   const returnedValue = calculateOrderReturnValue(order);
-                  const effectiveDebt = order.type === 'payment' ? 0 : Math.max(0, order.total - order.paid_amount);
+                  const effectiveDebt = order.type === 'payment'
+                    ? 0
+                    : Math.max(0, order.total - returnedValue - order.paid_amount);
 
                   // Calculate Profit
                   const profit = calculateInvoiceProfit(order);
@@ -827,7 +829,7 @@ export default function Invoices() {
                                   if (o.type === 'payment' && o.notes?.includes('سداد أجل للفاتورة رقم')) {
                                     return sum;
                                   }
-                                  const eTotal = o.type === 'payment' ? 0 : o.total;
+                                  const eTotal = o.type === 'payment' ? 0 : Math.max(0, o.total - calculateOrderReturnValue(o));
                                   return sum + (eTotal - o.paid_amount);
                                 }, 0);
                               return cDebt > 0 ? (
@@ -937,7 +939,7 @@ export default function Invoices() {
                           <span className="inline-flex items-center gap-1 bg-red-100 text-red-600 px-3 py-1 rounded-lg text-xs font-bold">
                             <ArrowRightLeft size={14} /> مرتجع جزئي/كلي
                           </span>
-                        ) : order.total - order.paid_amount > 0 ? (
+                        ) : effectiveDebt > 0 ? (
                           <span className="inline-flex items-center gap-1 bg-orange-100 text-orange-700 px-3 py-1 rounded-lg text-xs font-bold">
                             فاتورة أجل
                           </span>
