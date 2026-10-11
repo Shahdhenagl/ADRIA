@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { supabase, fetchAllRows } from '../lib/supabase';
-import { unitMinQty, unitStep } from '../utils/units';
+import { isFractionalUnit, unitMinQty, unitStep } from '../utils/units';
 import { payLabelOf, ALL_PAYMENT_KEYS } from '../utils/paymentMethods';
 // الربط بين صف الموظف وصف المصروف — دوال نقية في utils عشان تتغطّى بالتستات.
 import { findLinkedSalaryExpense, findLinkedEmployeeTx } from '../utils/salaryLink';
@@ -11,6 +11,7 @@ import { saveSnapshot, loadSnapshot, rememberOfflinePassword, verifyOfflinePassw
 import { withTimeout, isNetworkError, NET_TIMEOUT } from '../utils/net';
 import { isFullyPrepaidOnlineHeld } from '../utils/heldInvoiceLifecycle';
 import { loadActiveProductDiscounts, applyActiveDiscountPrices } from '../utils/productDiscounts';
+import { calculateStockLocationTransfer, type StockTransferDirection } from '../utils/stockLocationTransfer';
 
 // Effective unit price for the current invoice type (retail / half-wholesale / wholesale).
 function priceForType(product: any, type: string): number {
@@ -791,6 +792,7 @@ interface CashierStore {
    * حقيقي زي استبدال المخزون — نقل كمية من منتج لآخر). opts.intakeSource: مصدر القيد.
    */
   updateProduct: (id: string, product: Partial<Product>, opts?: { skipIntakeLog?: boolean; intakeSource?: StockIntake['source'] }) => Promise<void>;
+  transferProductLocation: (id: string, direction: StockTransferDirection, quantity: number) => Promise<void>;
   adjustStock: (items: { product_id: string; counted_qty: number; location?: 'all' | 'display' | 'warehouse' }[], note?: string) => Promise<number>;
   deleteProduct: (id: string) => Promise<void>;
 
@@ -5154,6 +5156,46 @@ setupRealtime: () => {
         }]);
       }
     }
+  },
+
+  transferProductLocation: async (id, direction, quantity) => {
+    const product = get().products.find((p) => p.id === id);
+    if (!product) throw new Error('المنتج غير موجود؛ حدّث الصفحة وحاول مرة أخرى');
+    const amount = Number(quantity);
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error('أدخل كمية أكبر من صفر');
+    if (!isFractionalUnit(product.unit) && !Number.isInteger(amount)) {
+      throw new Error('هذا المنتج يُنقل بأعداد صحيحة فقط');
+    }
+
+    // Compare-and-set on the current DB values prevents overwriting a concurrent sale.
+    const { data: latest, error: readError } = await supabase
+      .from('products')
+      .select('stock_quantity, display_quantity')
+      .eq('id', id)
+      .single();
+    if (readError || !latest) throw readError || new Error('تعذّر قراءة رصيد المنتج');
+
+    const stock = Number(latest.stock_quantity) || 0;
+    const rawDisplay = Number(latest.display_quantity) || 0;
+    const result = calculateStockLocationTransfer(stock, rawDisplay, amount, direction);
+    let updateQuery = supabase.from('products').update({ display_quantity: result.displayQuantity }).eq('id', id);
+    updateQuery = latest.stock_quantity == null
+      ? updateQuery.is('stock_quantity', null)
+      : updateQuery.eq('stock_quantity', stock);
+    updateQuery = latest.display_quantity == null
+      ? updateQuery.is('display_quantity', null)
+      : updateQuery.eq('display_quantity', rawDisplay);
+    const { data: saved, error: updateError } = await updateQuery
+      .select('id, stock_quantity, display_quantity')
+      .maybeSingle();
+    if (updateError) throw updateError;
+    if (!saved) throw new Error('تغيّر رصيد المنتج بالتزامن. حدّث الصفحة ثم أعد المحاولة');
+
+    set((state) => ({
+      products: state.products.map((p) => p.id === id
+        ? { ...p, stock_quantity: Number(saved.stock_quantity), display_quantity: Number(saved.display_quantity) }
+        : p),
+    }));
   },
 
   // ── مخزون دخل بدون فاتورة شراء (db/59) ────────────────────

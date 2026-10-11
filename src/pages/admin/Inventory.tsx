@@ -10,6 +10,7 @@ import jsPDF from 'jspdf';
 // html2canvas-pro يدعم ألوان oklch() في Tailwind v4 (النسخة الأصلية تفشل معها وتكسر تصدير PDF).
 import html2canvas from 'html2canvas-pro';
 import { isSupplierReturnInvoice } from '../../utils/treasury';
+import type { StockTransferDirection } from '../../utils/stockLocationTransfer';
 
 type StockMovementLine = {
   at?: string | null;
@@ -21,7 +22,7 @@ type StockMovementLine = {
 };
 
 export default function Inventory() {
-  const { products, categories, storeSettings, addProduct, updateProduct, orders, suppliers, addSupplier,
+  const { products, categories, storeSettings, addProduct, updateProduct, transferProductLocation, orders, suppliers, addSupplier,
     stockIntakes, purchaseInvoices, productionOrders, devoItems, writeOffs, heldInvoices, logStockIntake, deleteStockIntake } = useStore();
   const [searchQuery, setSearchQuery] = useState('');
   const [stockLocation, setStockLocation] = useState<'all' | 'warehouse' | 'display'>('all');
@@ -41,6 +42,11 @@ export default function Inventory() {
   const [movementAdjustments, setMovementAdjustments] = useState<any[]>([]);
   const [movementLoading, setMovementLoading] = useState(false);
   const [movementError, setMovementError] = useState('');
+  const [transferProductId, setTransferProductId] = useState<string | null>(null);
+  const [transferDirection, setTransferDirection] = useState<StockTransferDirection>('warehouse_to_display');
+  const [transferQuantity, setTransferQuantity] = useState('');
+  const [transferBusy, setTransferBusy] = useState(false);
+  const [transferError, setTransferError] = useState('');
 
   const playSuccessSound = () => {
     try {
@@ -176,6 +182,10 @@ export default function Inventory() {
   const movementProduct = useMemo(
     () => products.find(p => p.id === movementProductId) || null,
     [products, movementProductId]
+  );
+  const transferProduct = useMemo(
+    () => products.find(p => p.id === transferProductId) || null,
+    [products, transferProductId]
   );
   const productSupplierHistory = useMemo(() => {
     if (!movementProductId) return [] as Array<{ id: string; name: string; invoiceCount: number; quantity: number; totalValue: number; lastPrice: number; lastDate: string | null }>;
@@ -488,6 +498,32 @@ export default function Inventory() {
     const { supabase } = await import('../../lib/supabase');
     await supabase.from('categories').delete().eq('id', id);
     useStore.setState(s => ({ categories: s.categories.filter(c => c.id !== id) }));
+  };
+
+  const openTransferModal = (product: Product) => {
+    setTransferProductId(product.id);
+    setTransferDirection('warehouse_to_display');
+    setTransferQuantity('');
+    setTransferError('');
+  };
+
+  const handleTransferLocation = async () => {
+    if (!transferProduct) return;
+    setTransferBusy(true);
+    setTransferError('');
+    try {
+      const quantity = Number(transferQuantity);
+      await transferProductLocation(transferProduct.id, transferDirection, quantity);
+      const from = transferDirection === 'warehouse_to_display' ? 'المستودع' : 'المحل';
+      const to = transferDirection === 'warehouse_to_display' ? 'المحل' : 'المستودع';
+      setTransferProductId(null);
+      setTransferQuantity('');
+      alert(`تم نقل ${formatQty(quantity, transferProduct.unit)} من ${from} إلى ${to}. إجمالي المخزون لم يتغير.`);
+    } catch (error) {
+      setTransferError(error instanceof Error ? error.message : 'تعذّر نقل الكمية. حاول مرة أخرى.');
+    } finally {
+      setTransferBusy(false);
+    }
   };
 
   const handleEditStock = (product: Product) => {
@@ -1429,6 +1465,62 @@ export default function Inventory() {
         </div>
       )}
 
+      {/* LOCATION TRANSFER MODAL */}
+      {transferProduct && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200">
+            <div className="p-6 border-b flex justify-between items-center bg-indigo-50">
+              <div>
+                <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><ArrowLeftRight size={22} className="text-indigo-600" /> نقل بين المستودع والمحل</h2>
+                <p className="text-sm text-slate-500 mt-1">{transferProduct.name} · {transferProduct.barcode || 'بدون باركود'}</p>
+              </div>
+              <button onClick={() => setTransferProductId(null)} disabled={transferBusy} className="text-slate-400 hover:text-slate-600 bg-white p-2 rounded-xl shadow-sm border border-slate-200 disabled:opacity-50"><X size={20} /></button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-3 text-center">
+                <div className="bg-slate-50 border border-slate-100 rounded-2xl p-3">
+                  <p className="text-xs font-bold text-slate-500">المستودع المتاح</p>
+                  <p className="text-lg font-black text-slate-800">{formatQty(Math.max(0, Number(transferProduct.stock_quantity || 0) - dispOf(transferProduct)), transferProduct.unit)}</p>
+                </div>
+                <div className="bg-indigo-50 border border-indigo-100 rounded-2xl p-3">
+                  <p className="text-xs font-bold text-indigo-600">المحل</p>
+                  <p className="text-lg font-black text-indigo-800">{formatQty(dispOf(transferProduct), transferProduct.unit)}</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <button type="button" onClick={() => { setTransferDirection('warehouse_to_display'); setTransferError(''); }}
+                  className={`rounded-xl border p-3 text-sm font-bold transition ${transferDirection === 'warehouse_to_display' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+                  من المستودع إلى المحل
+                </button>
+                <button type="button" onClick={() => { setTransferDirection('display_to_warehouse'); setTransferError(''); }}
+                  className={`rounded-xl border p-3 text-sm font-bold transition ${transferDirection === 'display_to_warehouse' ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+                  من المحل إلى المستودع
+                </button>
+              </div>
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1">الكمية ({getUnitConfig(transferProduct.unit).label})</label>
+                <input type="number" min="0" max={transferDirection === 'warehouse_to_display'
+                  ? Math.max(0, Number(transferProduct.stock_quantity || 0) - dispOf(transferProduct))
+                  : dispOf(transferProduct)}
+                  step={isFractionalUnit(transferProduct.unit) ? '0.001' : '1'} value={transferQuantity}
+                  onChange={e => { setTransferQuantity(e.target.value); setTransferError(''); }}
+                  placeholder="أدخل الكمية المراد نقلها" autoFocus
+                  className="w-full bg-slate-50 border border-slate-200 py-3 px-4 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none" />
+                <p className="text-xs text-slate-500 mt-2">إجمالي المخزون سيبقى {formatQty(transferProduct.stock_quantity, transferProduct.unit)}؛ التغيير في موقع التخزين فقط.</p>
+              </div>
+              {transferError && <p role="alert" className="text-sm font-bold text-red-700 bg-red-50 border border-red-100 rounded-xl p-3">{transferError}</p>}
+            </div>
+            <div className="p-6 border-t flex gap-3">
+              <button type="button" onClick={handleTransferLocation} disabled={transferBusy || !transferQuantity || Number(transferQuantity) <= 0}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-xl font-bold shadow-lg transition disabled:opacity-50 flex items-center justify-center gap-2">
+                <ArrowLeftRight size={18} /> {transferBusy ? 'جاري النقل...' : 'تأكيد النقل'}
+              </button>
+              <button type="button" onClick={() => setTransferProductId(null)} disabled={transferBusy} className="flex-1 bg-slate-100 text-slate-700 py-3 rounded-xl font-bold hover:bg-slate-200 transition disabled:opacity-50">إلغاء</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* SWAP STOCK MODAL */}
       {showSwapModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1880,6 +1972,9 @@ export default function Inventory() {
 
                     <td className="p-4">
                       <div className="flex items-center justify-center gap-2">
+                        <button onClick={() => openTransferModal(product)} className="p-2 text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700 rounded-lg transition" title="نقل كمية بين المستودع والمحل">
+                          <ArrowLeftRight size={18} />
+                        </button>
                         <button onClick={() => openEditModal(product)} className="p-2 text-indigo-400 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition" title="تعديل المنتج">
                           <Edit2 size={18} />
                         </button>
