@@ -800,7 +800,7 @@ interface CashierStore {
 
   // مخزون دخل بدون فاتورة شراء (db/59)
   loadStockIntakes: () => Promise<void>;
-  logStockIntake: (rows: Array<{ product_id: string; product_name: string; quantity: number; unit_cost: number; source: StockIntake['source']; note?: string | null }>) => Promise<void>;
+  logStockIntake: (rows: Array<{ product_id: string; product_name: string; quantity: number; unit_cost: number; source: StockIntake['source']; note?: string | null }>) => Promise<boolean>;
   deleteStockIntake: (id: string) => Promise<void>;
 
   // الديڤو والإهلاك
@@ -5121,13 +5121,14 @@ setupRealtime: () => {
       // كمية ابتدائية عند إنشاء المنتج = مخزون دخل بدون فاتورة شراء (db/59).
       const initialQty = Number((data as any).stock_quantity) || 0;
       if (initialQty > 0) {
-        get().logStockIntake([{
+        const logged = await get().logStockIntake([{
           product_id: data.id,
           product_name: (data as any).name || '',
           quantity: initialQty,
           unit_cost: Number((data as any).average_purchase_price || (data as any).purchase_price) || 0,
           source: 'product_created',
         }]);
+        if (!logged) console.error('Product created with unlogged opening stock:', data.id);
       }
       return data as Product;
     }
@@ -5146,7 +5147,7 @@ setupRealtime: () => {
       // تتفسّر بعدين (شوف db/69 — أصناف كميتها أقل من كل حركاتها المسجّلة).
       // النقصان بيتسجّل بكمية سالبة ومصدر مستقل عشان يبان في السجل بوضوح.
       if (delta !== 0) {
-        get().logStockIntake([{
+        await get().logStockIntake([{
           product_id: id,
           product_name: updated.name || before.name,
           quantity: delta,
@@ -5213,10 +5214,11 @@ setupRealtime: () => {
   logStockIntake: async (rows) => {
     const { prepareStockIntakePayload } = await import('../utils/stockIntake');
     const payload = prepareStockIntakePayload(rows);
-    if (!payload.length) return;
+    if (!payload.length) return true;
     const { data, error } = await supabase.from('stock_intakes').insert(payload).select();
-    if (error) { console.error('logStockIntake error:', error); return; }
+    if (error) { console.error('logStockIntake error:', error); return false; }
     if (data) set((s) => ({ stockIntakes: [...(data as StockIntake[]), ...s.stockIntakes] }));
+    return true;
   },
 
   deleteStockIntake: async (id) => {
