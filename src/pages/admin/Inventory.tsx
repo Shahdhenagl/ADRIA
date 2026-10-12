@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore, type Product } from '../../store/useStore';
 import { Plus, Edit2, EyeOff, Eye, Search, X, Tag, FileText, Table as TableIcon, Box, AlertTriangle, TrendingUp, ScanLine, CheckCircle2, Printer, Upload, Download, ArrowLeftRight, Layers, Trash2, History, Users } from 'lucide-react';
 import { normalizeArabic } from '../../utils/textUtils';
@@ -32,6 +32,7 @@ export default function Inventory() {
   const [showCatForm, setShowCatForm] = useState(false);
   const [showLowStock, setShowLowStock] = useState(false);
   const [showOutOfStock, setShowOutOfStock] = useState(false);
+  const [showUnexplainedStock, setShowUnexplainedStock] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('all');
   
@@ -42,6 +43,7 @@ export default function Inventory() {
   const [movementAdjustments, setMovementAdjustments] = useState<any[]>([]);
   const [movementLoading, setMovementLoading] = useState(false);
   const [movementError, setMovementError] = useState('');
+  const [allStockAdjustments, setAllStockAdjustments] = useState<any[]>([]);
   const [transferProductId, setTransferProductId] = useState<string | null>(null);
   const [transferDirection, setTransferDirection] = useState<StockTransferDirection>('warehouse_to_display');
   const [transferQuantity, setTransferQuantity] = useState('');
@@ -124,6 +126,48 @@ export default function Inventory() {
     return m;
   }, [orders]);
 
+  // تحميل تسويات الجرد مرة واحدة حتى لا نعتبر الفرق الموثق فرقاً غير مفسر.
+  useEffect(() => {
+    let cancelled = false;
+    import('../../lib/supabase').then(({ supabase }) => supabase
+      .from('stock_adjustments')
+      .select('product_id,diff')
+      .limit(10000)
+      .then(({ data, error }) => {
+        if (!cancelled && !error) setAllStockAdjustments(data || []);
+      })
+    ).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+
+  // الرصيد المتوقع من كل مصادر الحركة المتاحة، مع استبعاد تسويات الجرد الموثقة
+  // من «الفرق غير المفسر» وإظهارها كحركة معروفة.
+  const unexplainedByProduct = useMemo(() => {
+    const expected = new Map<string, number>();
+    const add = (id: string, qty: number) => expected.set(id, (expected.get(id) || 0) + qty);
+    const productOfItem = (item: any) => item.product_id || item.id;
+    purchaseInvoices.forEach((inv: any) => (inv.items || []).forEach((item: any) => {
+      const id = productOfItem(item);
+      if (id) add(id, (isSupplierReturnInvoice(inv) ? -1 : 1) * (Number(item.quantity) || 0));
+    }));
+    stockIntakes.forEach((intake: any) => {
+      if (intake.source !== 'stocktake') add(intake.product_id, Number(intake.quantity) || 0);
+    });
+    orders.filter((o: any) => !o.is_deleted && o.type !== 'payment').forEach((order: any) => (order.items || []).forEach((item: any) => {
+      const id = productOfItem(item);
+      if (!id) return;
+      add(id, -(Number(item.quantity) || 0) + (Number(item.returned_quantity) || 0));
+    }));
+    heldInvoices.filter((h: any) => ['held', 'shipped', 'money_pending'].includes(h.status || 'held'))
+      .forEach((held: any) => (held.items || []).forEach((item: any) => add(productOfItem(item), -(Number(item.quantity) || 0))));
+    productionOrders.forEach((o: any) => add(o.product_id, Number(o.quantity) || 0));
+    devoItems.filter((i: any) => ['pending', 'at_factory', 'closed'].includes(i.status || 'pending'))
+      .forEach((i: any) => add(i.product_id, -(Number(i.quantity) || 0)));
+    writeOffs.forEach((i: any) => add(i.product_id, -(Number(i.quantity) || 0)));
+    allStockAdjustments.forEach((a: any) => add(a.product_id, Number(a.diff) || 0));
+    return new Map(products.map((p: any) => [p.id, (Number(p.stock_quantity) || 0) - (expected.get(p.id) || 0)]));
+  }, [products, purchaseInvoices, stockIntakes, orders, heldInvoices, productionOrders, devoItems, writeOffs, allStockAdjustments]);
+
   const normalizedSearch = normalizeArabic(searchQuery);
   const searchTerms = normalizedSearch.split(' ').filter(t => t.trim() !== '');
 
@@ -135,9 +179,12 @@ export default function Inventory() {
     const matchesHidden = showHidden ? p.is_hidden === true : !p.is_hidden; // showHidden=true → المخفيين فقط
     const matchesCategory = selectedCategory === 'all' || p.category_id === selectedCategory;
     const matchesSeason = seasonFilter === 'all' || p.season === seasonFilter;
-    return matchesSearch && matchesStock && matchesHidden && matchesCategory && matchesSeason;
+    const unexplained = unexplainedByProduct.get(p.id) || 0;
+    const matchesUnexplained = !showUnexplainedStock || Math.abs(unexplained) > 0.001;
+    return matchesSearch && matchesStock && matchesHidden && matchesCategory && matchesSeason && matchesUnexplained;
   }).sort((a, b) => new Date((b as any).created_at || 0).getTime() - new Date((a as any).created_at || 0).getTime());
   const hiddenCount = products.filter(p => p.is_hidden).length;
+  const unexplainedStockCount = products.filter(p => !p.is_hidden && Math.abs(unexplainedByProduct.get(p.id) || 0) > 0.001).length;
 
   // الإحصائيات حسب الفلاتر المختارة (الموسم + التصنيف + المخزن).
   const statsBase = products.filter(p => !p.is_hidden
@@ -1907,6 +1954,18 @@ export default function Inventory() {
                 {showHidden ? 'إخفاء المخفيين' : `إظهار المخفيين (${hiddenCount})`}
               </button>
             )}
+            <button
+              onClick={() => setShowUnexplainedStock(!showUnexplainedStock)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-sm border transition ${
+                showUnexplainedStock
+                  ? 'bg-amber-600 text-white border-amber-600'
+                  : 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100'
+              }`}
+              title="يعرض المنتجات التي لا يساوي رصيدها الحالي مجموع حركاتها المسجلة"
+            >
+              <AlertTriangle size={15} />
+              {showUnexplainedStock ? 'عرض كل المنتجات' : `فروقات غير مفسرة (${unexplainedStockCount})`}
+            </button>
             <div className="text-sm text-slate-500 font-bold bg-white px-4 py-2 border border-slate-200 rounded-xl">
               إجمالي المنتجات: {products.length}
             </div>
