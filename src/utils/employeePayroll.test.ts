@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  advanceHistoryThroughMonthOf,
   advanceBalanceOf,
   hasAmbiguousAdvanceTransactionOrder,
   salaryRemainingOf,
@@ -25,6 +26,18 @@ describe('employee payroll and advances', () => {
     ];
     expect(advanceBalanceOf(tx)).toBe(0);
     expect(salaryRemainingOf({ monthlySalary: 6000, paidSalary: 4821, advanceRepayments: 1155 })).toBe(24);
+  });
+
+  it('validates an edited salary repayment against the balance before that salary was saved', () => {
+    const transactions = [
+      { id: 'advance-sep', type: 'advance' as const, amount: 5000, month: '2026-09' },
+      { id: 'salary-sep', type: 'salary' as const, amount: 3000, advance_repayment: 3000, month: '2026-09' },
+    ];
+
+    expect(advanceBalanceOf(transactions)).toBe(2000);
+    const balanceBeforeEdit = advanceBalanceOf(advanceHistoryThroughMonthOf(transactions, '2026-09', 'salary-sep'));
+    expect(balanceBeforeEdit).toBe(5000);
+    expect(3000).toBeLessThanOrEqual(balanceBeforeEdit);
   });
 
   it('uses actual recorded order when a salary and an advance share the same accounting timestamp', () => {

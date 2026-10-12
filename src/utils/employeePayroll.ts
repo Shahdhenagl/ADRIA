@@ -5,6 +5,7 @@ export interface EmployeePayrollTransaction {
   /** المبلغ المسدّد من السلفة داخل صرف الراتب؛ null في السجلات القديمة. */
   advance_repayment?: number | null;
   deductions?: number | null;
+  month?: string | null;
   note?: string | null;
   /** وقت القيد المحاسبي/تاريخ العمل. */
   created_at?: string | null;
@@ -72,6 +73,18 @@ export const hasAmbiguousAdvanceTransactionOrder = (
 /** إجمالي السلف المصروفة. */
 export const advanceTotalOf = (transactions: EmployeePayrollTransaction[]): number =>
   transactions.filter((t) => t.type === 'advance').reduce((sum, t) => sum + amountOf(t), 0);
+
+/**
+ * حركات الموظف الداخلة في رصيد الشهر. عند تعديل راتب قائم، نستثني نفس
+ * المعاملة كيلا يُخصم سدادها القديم من الرصيد قبل التحقق من المبلغ الجديد.
+ */
+export const advanceHistoryThroughMonthOf = (
+  transactions: EmployeePayrollTransaction[],
+  month: string,
+  excludeTransactionId?: string,
+): EmployeePayrollTransaction[] => transactions.filter((transaction) =>
+  transaction.id !== excludeTransactionId && String(transaction.month || '') <= month,
+);
 
 /**
  * رصيد السلف المتبقي بطريقة FIFO. السجلات القديمة التي لا تحتوي

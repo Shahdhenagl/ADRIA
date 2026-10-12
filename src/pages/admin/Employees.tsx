@@ -11,6 +11,7 @@ import { markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '.
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import { computeLatenessOn, shiftForDate, shiftLabel } from '../../utils/shifts';
 import {
+  advanceHistoryThroughMonthOf,
   advanceBalanceOf,
   compareEmployeeTransactionOrder,
   hasAmbiguousAdvanceTransactionOrder,
@@ -463,7 +464,11 @@ export default function Employees() {
     // المكافآت بتزوّد المستحق، فبتتجمع جوه الـ clamp مش بعده.
     const bonuses = getManualMonthBonuses(empId, month);
 
-    const advanceHistory = employeeTransactions.filter((t) => t.employee_id === empId && t.month <= month);
+    const advanceHistory = advanceHistoryThroughMonthOf(
+      employeeTransactions.filter((t) => t.employee_id === empId),
+      month,
+      excludeTransactionId,
+    );
     const advanceBalance = advanceBalanceOf(advanceHistory);
     const advanceOrderAmbiguous = hasAmbiguousAdvanceTransactionOrder(advanceHistory);
     const remaining = salaryRemainingOf({
