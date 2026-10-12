@@ -148,7 +148,9 @@ export default function Inventory() {
     const productOfItem = (item: any) => item.product_id || item.id;
     purchaseInvoices.forEach((inv: any) => (inv.items || []).forEach((item: any) => {
       const id = productOfItem(item);
-      if (id) add(id, (isSupplierReturnInvoice(inv) ? -1 : 1) * (Number(item.quantity) || 0));
+      // purchase_items.quantity محفوظ بإشارته: فاتورة الشراء موجبة ومرتجع المورد سالب.
+      // لا نعكس الإشارة مرة ثانية، وإلا سيظهر المرتجع كأنه دخول جديد للمخزون.
+      if (id) add(id, Number(item.quantity) || 0);
     }));
     stockIntakes.forEach((intake: any) => {
       if (intake.source !== 'stocktake') add(intake.product_id, Number(intake.quantity) || 0);
