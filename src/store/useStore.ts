@@ -505,6 +505,8 @@ export interface EmployeeTransaction {
   advance_repayment?: number | null;
   note: string;
   created_at: string;
+  /** وقت إدخال الصف فعلياً؛ null للحركات القديمة التي لا يمكن استعادة ترتيبها. */
+  recorded_at?: string | null;
 }
 
 export interface EmployeeLeave {

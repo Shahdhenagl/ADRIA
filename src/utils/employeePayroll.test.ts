@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { advanceBalanceOf, salaryRemainingOf } from './employeePayroll';
+import {
+  advanceBalanceOf,
+  hasAmbiguousAdvanceTransactionOrder,
+  salaryRemainingOf,
+} from './employeePayroll';
 
 describe('employee payroll and advances', () => {
   it('keeps 2000 loan balance after a 5000 advance and 3000 salary payment', () => {
@@ -21,5 +25,43 @@ describe('employee payroll and advances', () => {
     ];
     expect(advanceBalanceOf(tx)).toBe(0);
     expect(salaryRemainingOf({ monthlySalary: 6000, paidSalary: 4821, advanceRepayments: 1155 })).toBe(24);
+  });
+
+  it('uses actual recorded order when a salary and an advance share the same accounting timestamp', () => {
+    const priorAdvance = {
+      id: 'prior', type: 'advance' as const, amount: 3130,
+      created_at: '2026-07-31T12:00:00Z', recorded_at: '2026-07-31T12:01:00Z',
+    };
+    const salaryFirst = {
+      id: 'salary', type: 'salary' as const, amount: 4300,
+      created_at: '2026-08-01T12:00:00Z', recorded_at: '2026-08-01T12:00:01Z',
+    };
+    const advanceSecond = {
+      id: 'advance', type: 'advance' as const, amount: 5000,
+      created_at: '2026-08-01T12:00:00Z', recorded_at: '2026-08-01T12:00:02Z',
+    };
+
+    expect(advanceBalanceOf([advanceSecond, salaryFirst, priorAdvance])).toBe(5000);
+    expect(advanceBalanceOf([priorAdvance, salaryFirst, advanceSecond])).toBe(5000);
+    expect(hasAmbiguousAdvanceTransactionOrder([salaryFirst, advanceSecond])).toBe(false);
+  });
+
+  it('marks legacy same-time rows ambiguous but keeps their display order deterministic', () => {
+    const priorAdvance = {
+      id: 'prior', type: 'advance' as const, amount: 3130,
+      created_at: '2026-07-31T12:00:00Z',
+    };
+    const salary = {
+      id: 'c03a2ed9', type: 'salary' as const, amount: 4300,
+      created_at: '2026-08-01T12:00:00Z',
+    };
+    const advance = {
+      id: '00cef974', type: 'advance' as const, amount: 5000,
+      created_at: '2026-08-01T12:00:00Z',
+    };
+
+    expect(advanceBalanceOf([salary, advance, priorAdvance])).toBe(3830);
+    expect(advanceBalanceOf([priorAdvance, advance, salary])).toBe(3830);
+    expect(hasAmbiguousAdvanceTransactionOrder([salary, advance])).toBe(true);
   });
 });

@@ -10,7 +10,12 @@ import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '
 import { markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../../utils/treasury';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import { computeLatenessOn, shiftForDate, shiftLabel } from '../../utils/shifts';
-import { advanceBalanceOf, salaryRemainingOf } from '../../utils/employeePayroll';
+import {
+  advanceBalanceOf,
+  compareEmployeeTransactionOrder,
+  hasAmbiguousAdvanceTransactionOrder,
+  salaryRemainingOf,
+} from '../../utils/employeePayroll';
 
 // شكل مبسّط للفاتورة/الصنف لحساب مبيعات الموظف وعمولته. متساهل عن قصد عشان
 // يستوعب الشكلين: فواتير الستور (الأصناف متسطّحة) وصفوف الداتابيز الخام
@@ -431,11 +436,11 @@ export default function Employees() {
       const emp = employees.find(e => e.id === t.employee_id);
       return emp?.name.toLowerCase().includes(searchTerm.toLowerCase());
     })
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    .sort((a, b) => compareEmployeeTransactionOrder(b, a));
 
   const getEmployeeMonthStats = (empId: string, month: string, excludeTransactionId?: string) => {
     const emp = employees.find(e => e.id === empId);
-    if (!emp) return { salary: 0, advances: 0, advanceBalance: 0, paidSalary: 0, advanceRepayments: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0, salaryTxDeductions: 0, lateMinutes: 0, lateDays: 0, presentDays: 0, leaveDays: 0, manualDays: 0, manualCount: 0 };
+    if (!emp) return { salary: 0, advances: 0, advanceBalance: 0, advanceOrderAmbiguous: false, paidSalary: 0, advanceRepayments: 0, deductions: 0, incentives: 0, leaveDeductions: 0, attendanceDeductions: 0, manualDeductions: 0, bonuses: 0, remaining: 0, salaryTxDeductions: 0, lateMinutes: 0, lateDays: 0, presentDays: 0, leaveDays: 0, manualDays: 0, manualCount: 0 };
 
     const monthTrans = employeeTransactions.filter(t => t.employee_id === empId && t.month === month && t.id !== excludeTransactionId);
 
@@ -453,7 +458,9 @@ export default function Employees() {
     // المكافآت بتزوّد المستحق، فبتتجمع جوه الـ clamp مش بعده.
     const bonuses = getManualMonthBonuses(empId, month);
 
-    const advanceBalance = advanceBalanceOf(employeeTransactions.filter((t) => t.employee_id === empId && t.month <= month));
+    const advanceHistory = employeeTransactions.filter((t) => t.employee_id === empId && t.month <= month);
+    const advanceBalance = advanceBalanceOf(advanceHistory);
+    const advanceOrderAmbiguous = hasAmbiguousAdvanceTransactionOrder(advanceHistory);
     const remaining = salaryRemainingOf({
       monthlySalary: emp.monthly_salary,
       bonuses,
@@ -466,7 +473,7 @@ export default function Employees() {
     // سابق). معادلات الـ net في مودال صرف الراتب بتعتمد عليها بالمعنى ده — أي
     // تغيير هنا لازم يمشي معاها. الحقول التفصيلية تحتها للعرض بس.
     return {
-      salary: emp.monthly_salary, advances, advanceBalance, paidSalary,
+      salary: emp.monthly_salary, advances, advanceBalance, advanceOrderAmbiguous, paidSalary,
       advanceRepayments,
       deductions: deductions + leaveDeductions + attendanceDeductions + manualDeductions + advanceRepayments,
       incentives, leaveDeductions, attendanceDeductions, manualDeductions, bonuses, remaining,
@@ -543,7 +550,7 @@ export default function Employees() {
     let txs = employeeTransactions.filter(t => t.employee_id === profileEmployee.id);
     
     txs = txs.filter(profileMatchesPeriod);
-    return txs.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    return txs.sort((a, b) => compareEmployeeTransactionOrder(b, a));
   }, [profileEmployee, employeeTransactions, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
   const profileLeaves = useMemo(() => {
@@ -1199,16 +1206,16 @@ export default function Employees() {
         .sort((a, b) => (a.date || '').localeCompare(b.date || '')),
       advances: employeeTransactions
         .filter(t => t.employee_id === empId && t.month === month && t.type === 'advance')
-        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+        .sort(compareEmployeeTransactionOrder),
       incentives: employeeTransactions
         .filter(t => t.employee_id === empId && t.month === month && t.type === 'incentive')
-        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+        .sort(compareEmployeeTransactionOrder),
       bonuses: employeeBonuses
         .filter(b => b.employee_id === empId && b.month === month)
         .sort((a, b) => (a.date || '').localeCompare(b.date || '')),
       paidSalaries: employeeTransactions
         .filter(t => t.employee_id === empId && t.month === month && t.type === 'salary')
-        .sort((a, b) => a.created_at.localeCompare(b.created_at)),
+        .sort(compareEmployeeTransactionOrder),
     };
   };
 
@@ -1998,6 +2005,11 @@ export default function Employees() {
                     <span className="text-orange-600 font-bold flex items-center gap-1">رصيد السلف المتبقي</span>
                     <span className="font-black text-orange-700">{stats.advanceBalance.toLocaleString()} {storeSettings.currency}</span>
                   </div>
+                  {stats.advanceOrderAmbiguous && (
+                    <p className="mt-2 rounded-lg bg-amber-50 p-2 text-[10px] font-bold text-amber-800">
+                      ترتيب بعض حركات السلف القديمة غير مؤكد لتطابق وقت القيد؛ الرصيد تقديري.
+                    </p>
+                  )}
                   <div className="flex items-center justify-between text-sm p-3 bg-emerald-50 rounded-xl border border-emerald-100 mt-2">
                     <span className="text-emerald-600 font-bold flex items-center gap-1">المتبقي صرفه ({currentMonth})</span>
                     <span className="font-black text-emerald-700">{stats.remaining.toLocaleString()} {storeSettings.currency}</span>
@@ -2666,6 +2678,9 @@ export default function Employees() {
                       className="w-full bg-white border border-amber-200 rounded-xl p-3 outline-none font-black text-amber-800"
                     />
                     <p className="text-[11px] font-bold text-amber-700">الرصيد المتاح للسداد: {getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id).advanceBalance.toLocaleString()} {storeSettings.currency} — المبلغ سيُخصم من الراتب ويقلّل رصيد السلف.</p>
+                    {getEmployeeMonthStats(selectedEmployee!.id, transFormData.month, editingTransaction?.id).advanceOrderAmbiguous && (
+                      <p className="text-[11px] font-bold text-red-700">تنبيه: ترتيب بعض الحركات القديمة ملتبس؛ راجعي كشف الحساب قبل اعتماد سداد السلفة.</p>
+                    )}
                   </div>
                 </div>
               )}
