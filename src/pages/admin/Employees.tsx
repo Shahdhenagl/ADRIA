@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { useStore, type Employee, type EmployeeTransaction, type EmployeeLeave, type EmployeeAttendance } from '../../store/useStore';
 import {
@@ -10,6 +10,8 @@ import { activePaymentKeys, payLabelOf, primaryMethod as primaryMethod_ } from '
 import { markMainTreasuryNote, markSavingsGroupNote, newSavingsGroupId } from '../../utils/treasury';
 import { businessDateStr, timestampForBusinessDate } from '../../utils/businessDay';
 import { computeLatenessOn, shiftForDate, shiftLabel } from '../../utils/shifts';
+import { buildAutomaticAbsenceRecords, previousCalendarDay } from '../../utils/employeeAbsence';
+import { supabase } from '../../lib/supabase';
 import {
   advanceHistoryThroughMonthOf,
   advanceBalanceOf,
@@ -52,7 +54,7 @@ export default function Employees() {
     addEmployeeLeave, updateEmployeeLeave, deleteEmployeeLeave,
     addEmployeeDeduction, updateEmployeeDeduction, deleteEmployeeDeduction,
     addEmployeeBonus, deleteEmployeeBonus,
-    addEmployeeAttendance, updateEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut,
+    addEmployeeAttendance, addAutoEmployeeAbsences, updateEmployeeAttendance, deleteEmployeeAttendance, recordMainTreasuryOut,
     adminPermissions
   } = useStore();
   // مستخدم HR المحدود يرى الموظفين والرواتب والحضور، ويسجل/يعدل الحضور اليدوي فقط.
@@ -67,6 +69,8 @@ export default function Employees() {
   // وهو نفسه اللي تسجيل الحضور وصرف الراتب بيستخدموه أصلاً.
   const todayBusiness = businessDateStr(storeSettings as any);
   const currentBusinessMonth = todayBusiness.slice(0, 7);
+  const [absenceTrackingFrom, setAbsenceTrackingFrom] = useState<string | null>(null);
+  const absenceSyncStarted = useRef(false);
 
   // مصدر صرف معاملة الموظف: خزنة المحل (الكاشير) أو الخزنة الرئيسية.
   const [transTreasury, setTransTreasury] = useState<'shop' | 'main'>('shop');
@@ -280,6 +284,42 @@ export default function Employees() {
     return formatDateInput(nextDate);
   };
 
+  // تتم المزامنة بعد إغلاق اليوم المحاسبي فقط؛ بذلك لا يُسجّل اليوم الجاري غيابًا
+  // قبل انتهاء الدوام، وتُستعاد الأيام المغلقة منذ تشغيل الميزة عند فتح الصفحة.
+  useEffect(() => {
+    if (!employees.length || absenceSyncStarted.current) return;
+    absenceSyncStarted.current = true;
+    let cancelled = false;
+
+    void (async () => {
+      const { data: policy, error: policyError } = await supabase
+        .from('employee_attendance_settings')
+        .select('absence_tracking_from')
+        .eq('singleton', true)
+        .single();
+      if (policyError) throw policyError;
+
+      const trackingFrom = String(policy.absence_tracking_from);
+      const closedThrough = previousCalendarDay(todayBusiness);
+      const missingRows = buildAutomaticAbsenceRecords({
+        employees,
+        attendance: employeeAttendance,
+        leaves: employeeLeaves,
+        trackingFrom,
+        throughDate: closedThrough,
+      });
+      await addAutoEmployeeAbsences(missingRows);
+      if (!cancelled) setAbsenceTrackingFrom(trackingFrom);
+    })().catch((error) => {
+      console.error('Automatic employee absence sync failed:', error);
+      if (!cancelled) {
+        alert(`تعذّر مزامنة الغياب التلقائي. تأكدي من تشغيل ترحيل قاعدة البيانات db/83_employee_auto_absence.sql.\n${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
+
+    return () => { cancelled = true; };
+  }, [employees, employeeAttendance, employeeLeaves, todayBusiness, addAutoEmployeeAbsences]);
+
   const splitDateRangeByMonth = (start: string, end: string) => {
     const ranges: { start: string; end: string; days: number }[] = [];
     let cursor = new Date(`${start}T00:00:00`);
@@ -303,7 +343,12 @@ export default function Employees() {
   };
 
   // رصيد الإجازة الشهري: يتجدد أول كل شهر بدون ترحيل.
-  const getLeaveBalanceStats = (emp: Employee, month?: string, excludeLeaveId?: string) => {
+  const getLeaveBalanceStats = (
+    emp: Employee,
+    month?: string,
+    excludeLeaveId?: string,
+    excludeAbsenceDates: ReadonlySet<string> = new Set(),
+  ) => {
     const targetMonth = month || currentBusinessMonth;
     const monthlyBalance = monthlyLeaveDaysOf(emp);
     const paidLeaves = employeeLeaves.filter(l =>
@@ -312,7 +357,16 @@ export default function Employees() {
       l.id !== excludeLeaveId &&
       (l.month === targetMonth || l.start_date.slice(0, 7) === targetMonth)
     );
-    const used = paidLeaves.reduce((sum, l) => sum + Number(l.days_count || 0), 0);
+    const paidAbsences = employeeAttendance
+      .filter(a =>
+        a.employee_id === emp.id
+        && a.month === targetMonth
+        && a.absence_leave_type != null
+        && !excludeAbsenceDates.has(a.date)
+        && !employeeLeaves.some(l => l.id !== excludeLeaveId && l.employee_id === emp.id && a.date >= l.start_date && a.date <= l.end_date),
+      )
+      .reduce((sum, a) => sum + Math.max(0, Number(a.absence_paid_days ?? (a.absence_leave_type === 'paid' ? 1 : 0)) || 0), 0);
+    const used = paidLeaves.reduce((sum, l) => sum + Number(l.days_count || 0), 0) + paidAbsences;
 
     return {
       month: targetMonth,
@@ -328,7 +382,8 @@ export default function Employees() {
     start: string,
     end: string,
     leaveType: 'paid' | 'unpaid' | 'granted',
-    excludeLeaveId?: string
+    excludeLeaveId?: string,
+    excludeAbsenceDates: ReadonlySet<string> = new Set(),
   ) => {
     const dailyRate = emp.monthly_salary / 30;
     const ranges = splitDateRangeByMonth(start, end);
@@ -351,7 +406,7 @@ export default function Employees() {
     for (const r of ranges) {
       const month = r.start.slice(0, 7);
       // كل الإجازة "بخصم مرتب" لو اختار المستخدم كده، وإلا نأخذ من الرصيد الشهري أولاً.
-      const remaining = leaveType === 'unpaid' ? 0 : Math.max(0, getLeaveBalanceStats(emp, month, excludeLeaveId).remaining);
+      const remaining = leaveType === 'unpaid' ? 0 : Math.max(0, getLeaveBalanceStats(emp, month, excludeLeaveId, excludeAbsenceDates).remaining);
       const paidDays = Math.min(r.days, remaining);
       const unpaidDays = r.days - paidDays;
 
@@ -374,12 +429,16 @@ export default function Employees() {
   // تفاصيل الحضور/التأخير لموظف في شهر — مش الإجمالي بس، عشان كشف الراتب يوضّح
   // الخصم جه منين (كام يوم تأخير وكام دقيقة) بدل رقم واحد المستخدم يطرحه بنفسه.
   const getAttendanceMonthDetail = (empId: string, month: string) => {
-    const rows = employeeAttendance.filter(a => a.employee_id === empId && (a.month === month || a.date.slice(0, 7) === month));
+    const rows = employeeAttendance.filter(a =>
+      a.employee_id === empId
+      && (a.month === month || a.date.slice(0, 7) === month)
+      && !(a.absence_leave_type != null && employeeLeaves.some(l => l.employee_id === empId && a.date >= l.start_date && a.date <= l.end_date)),
+    );
     return {
       amount: rows.reduce((sum, a) => sum + Number(a.deduction_amount || 0), 0),
       lateMinutes: rows.reduce((sum, a) => sum + Number(a.late_minutes || 0), 0),
       lateDays: rows.filter(a => Number(a.late_minutes || 0) > 0).length,
-      presentDays: rows.length,
+      presentDays: rows.filter(a => a.check_in != null && a.absence_leave_type == null).length,
     };
   };
 
@@ -613,21 +672,30 @@ export default function Employees() {
       const record = rowByDate.get(d);
       // الراحة الأسبوعية (الجمعة لو متحددة راحة للموظف) مش غياب — يوم مش مطلوب فيه دوام.
       const shift = shiftForDate(profileEmployee, d);
-      let status: 'present' | 'absent' | 'leave' | 'off';
-      if (record) {
+      let status: 'present' | 'absent' | 'leave' | 'off' | 'pending' | 'untracked';
+      if (record?.absence_leave_type != null) {
+        if (isLeaveDay(d)) {
+          status = 'leave'; leave++;
+        } else {
+          status = 'absent'; absent++;
+          attDeductions += Number(record.deduction_amount || 0);
+        }
+      } else if (record?.check_in != null) {
         status = 'present'; present++;
         lateMinutes += Number(record.late_minutes || 0);
         if (Number(record.late_minutes || 0) > 0) lateDays++;
         attDeductions += Number(record.deduction_amount || 0);
       } else if (isLeaveDay(d)) { status = 'leave'; leave++; }
       else if (shift.isWeeklyOff) { status = 'off'; off++; }
+      else if (!absenceTrackingFrom || d < absenceTrackingFrom) { status = 'untracked'; }
+      else if (d >= todayStr) { status = 'pending'; }
       else { status = 'absent'; absent++; }
       days.push({ date: d, record: record || null, status, shift: shiftLabel(profileEmployee, d) });
       cursor.setDate(cursor.getDate() + 1);
     }
     days.reverse();
     return { days, records: rows, present, absent, leave, off, lateDays, lateMinutes, attDeductions };
-  }, [profileEmployee, employeeAttendance, employeeLeaves, profileTimeFilter, profileCustomMonth, profileCustomYear]);
+  }, [profileEmployee, employeeAttendance, employeeLeaves, absenceTrackingFrom, todayBusiness, profileTimeFilter, profileCustomMonth, profileCustomYear]);
 
   // الخصومات اليدوية للموظف في الفترة المختارة — نفس فلترة الإجازات.
   const profileDeductions = useMemo(() => {
@@ -1003,12 +1071,19 @@ export default function Employees() {
     if (!selectedEmployee) return;
     if (!leaveFormData.start_date || !leaveFormData.end_date) return alert('يرجى تحديد تاريخ الإجازة');
 
+    const coveredAbsenceDates = new Set(employeeAttendance
+      .filter(a => a.employee_id === selectedEmployee.id
+        && a.absence_leave_type != null
+        && a.date >= leaveFormData.start_date
+        && a.date <= leaveFormData.end_date)
+      .map(a => a.date));
     const alloc = buildLeaveAllocation(
       selectedEmployee,
       leaveFormData.start_date,
       leaveFormData.end_date,
       leaveFormData.leave_type,
-      editingLeave?.id
+      editingLeave?.id,
+      coveredAbsenceDates,
     );
 
     // عند التعديل: نحذف السجل القديم ونعيد إنشاء السجلات الجديدة (قد تنقسم لعدة شهور/أنواع).
@@ -1101,7 +1176,7 @@ export default function Employees() {
       record,
       checkIn: record ? hhmm(record.check_in) : (shift.start || '').slice(0, 5),
       checkOut: record ? hhmm(record.check_out) : (shift.end || '').slice(0, 5),
-      note: record?.note || '',
+      note: record?.absence_leave_type ? '' : (record?.note || ''),
     });
   };
 
@@ -1131,6 +1206,13 @@ export default function Employees() {
           shift_start: (shift.start || '').slice(0, 5),
           late_minutes: lateMinutes,
           deduction_amount: deduction,
+          ...(record.absence_leave_type ? {
+            absence_leave_type: null,
+            absence_paid_days: 0,
+            waived_amount: 0,
+            waived_at: null,
+            waive_note: null,
+          } : {}),
           note,
         } as any);
       } else {
@@ -1171,6 +1253,10 @@ export default function Employees() {
 
   const handleDeleteAttendance = async (attId: string) => {
     if (isHrLimited) return alert('هذا المستخدم يمكنه تسجيل وتعديل الحضور فقط، ولا يملك صلاحية الحذف.');
+    const record = employeeAttendance.find(a => a.id === attId);
+    if (record?.absence_leave_type) {
+      return alert('لا تحذفي سجل الغياب التلقائي؛ سجّلي الحضور الصحيح يدويًا أو أضيفي إجازة معتمدة. وإلا سيُعاد تسجيل الغياب في المزامنة القادمة.');
+    }
     if (!confirm('هل تريد حذف سجل الحضور؟ سيُلغى خصم التأخير المرتبط به.')) return;
     await deleteEmployeeAttendance(attId);
   };
@@ -1182,9 +1268,10 @@ export default function Employees() {
     if (isHrLimited) return alert('لا تملك صلاحية تعديل غرامات التأخير.');
     const emp = employees.find((e) => e.id === rec.employee_id);
     const cur = storeSettings.currency;
+    const absence = rec.absence_leave_type != null;
     const entered = window.prompt(
-      `غرامة تأخير ${emp?.name || ''} يوم ${rec.date}\n` +
-      `التأخير: ${rec.late_minutes || 0} دقيقة — الغرامة المحسوبة تلقائياً: ${Number(rec.deduction_amount || 0).toLocaleString()} ${cur}\n\n` +
+      `${absence ? 'خصم غياب' : 'غرامة تأخير'} ${emp?.name || ''} يوم ${rec.date}\n` +
+      `${absence ? 'الخصم اليومي بعد استنفاد رصيد الإجازة' : `التأخير: ${rec.late_minutes || 0} دقيقة`} — المبلغ الحالي: ${Number(rec.deduction_amount || 0).toLocaleString()} ${cur}\n\n` +
       `اكتب المبلغ الجديد (0 = مسامحة):`,
       String(rec.deduction_amount ?? 0),
     );
@@ -1216,7 +1303,10 @@ export default function Employees() {
     const inMonth = (m?: string, d?: string) => m === month || (d || '').slice(0, 7) === month;
     return {
       attendance: employeeAttendance
-        .filter(a => a.employee_id === empId && inMonth(a.month, a.date) && (Number(a.deduction_amount || 0) > 0.004 || Number(a.waived_amount || 0) > 0.004))
+        .filter(a => a.employee_id === empId
+          && inMonth(a.month, a.date)
+          && !(a.absence_leave_type != null && employeeLeaves.some(l => l.employee_id === empId && a.date >= l.start_date && a.date <= l.end_date))
+          && (Number(a.deduction_amount || 0) > 0.004 || Number(a.waived_amount || 0) > 0.004))
         .sort((a, b) => a.date.localeCompare(b.date)),
       leaves: employeeLeaves
         .filter(l => l.employee_id === empId && l.month === month && l.leave_type === 'unpaid')
@@ -1839,7 +1929,7 @@ export default function Employees() {
             <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
               <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
                 <Clock size={20} className="text-indigo-500" />
-                سجل الحضور والتأخير
+                سجل الحضور والانصراف والغياب
               </h3>
               <div className="flex items-center gap-2 text-[11px] font-black flex-wrap">
                 <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 border border-emerald-100">حضور: {profileAttendance.present}</span>
@@ -1879,7 +1969,9 @@ export default function Employees() {
                         <td className="p-5 text-emerald-600 font-black tabular-nums">{rec ? fmt(rec.check_in) : '—'}</td>
                         <td className="p-5 text-rose-600 font-black tabular-nums">{rec ? fmt(rec.check_out || null) : '—'}</td>
                         <td className="p-5">
-                          {rec && rec.late_minutes > 0
+                          {rec?.absence_leave_type != null
+                            ? <span className="text-slate-300">—</span>
+                            : rec && rec.late_minutes > 0
                             ? <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-red-50 text-red-600 border border-red-100">{rec.late_minutes} دقيقة</span>
                             : rec
                               ? <span className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-100">في الميعاد</span>
@@ -1894,7 +1986,7 @@ export default function Employees() {
                                   ? 'text-red-600 bg-red-50 hover:bg-red-100'
                                   : 'text-slate-400 hover:bg-slate-100'
                               }`}
-                              title="تعديل غرامة التأخير"
+                              title={rec.absence_leave_type ? 'تعديل خصم الغياب أو مسامحته' : 'تعديل غرامة التأخير'}
                             >
                               {rec.deduction_amount > 0 ? `${rec.deduction_amount.toLocaleString()} ${storeSettings.currency}` : '—'}
                               <Edit3 size={13} className="opacity-100 md:opacity-0 md:group-hover:opacity-100" />
@@ -1908,9 +2000,19 @@ export default function Employees() {
                             d.status === 'present' ? 'bg-emerald-50 text-emerald-600 border-emerald-100'
                             : d.status === 'leave' ? 'bg-sky-50 text-sky-600 border-sky-100'
                             : d.status === 'off' ? 'bg-slate-100 text-slate-600 border-slate-200'
+                            : d.status === 'pending' ? 'bg-amber-50 text-amber-700 border-amber-100'
+                            : d.status === 'untracked' ? 'bg-slate-50 text-slate-400 border-slate-100'
                             : 'bg-red-50 text-red-600 border-red-100'
                           }`}>
-                            {d.status === 'present' ? 'حاضر' : d.status === 'leave' ? 'إجازة' : d.status === 'off' ? 'راحة' : 'غائب'}
+                            {d.status === 'present' ? 'حاضر'
+                              : d.status === 'leave' ? 'إجازة'
+                              : d.status === 'off' ? 'راحة'
+                              : d.status === 'pending' ? 'اليوم لم يُغلق'
+                              : d.status === 'untracked' ? 'قبل بدء التتبع'
+                              : d.record?.absence_leave_type === 'paid' ? 'غائب — من الرصيد'
+                              : d.record?.absence_leave_type === 'mixed' ? 'غياب — رصيد وخصم'
+                              : d.record?.absence_leave_type === 'unpaid' ? 'غياب — خصم يوم'
+                              : 'غائب'}
                           </span>
                         </td>
                         <td className="p-5">
@@ -2429,6 +2531,10 @@ export default function Employees() {
                 const det = getMonthDetailRows(selectedEmployee!.id, transFormData.month);
                 const empId = selectedEmployee!.id, mon = transFormData.month;
                 const shortDate = (d?: string) => (d || '').slice(5); // MM-DD
+                const unpaidAbsenceDays = det.attendance.reduce((sum, a) =>
+                  sum + (a.absence_leave_type != null
+                    ? Math.max(0, 1 - Number(a.absence_paid_days || 0))
+                    : 0), 0);
 
                 const dedRows = [
                   // السلفة دين مستقل، وليست خصمًا من راتب الشهر؛ تظهر كسطر
@@ -2438,11 +2544,13 @@ export default function Employees() {
                     details: det.paidSalaries.map(t => ({ id: t.id, when: shortDate(t.created_at?.slice(0, 10)), text: t.note || 'صرف راتب', amount: t.amount, waived: 0, kind: null })),
                   },
                   {
-                    key: 'late', label: 'خصم التأخير', value: stats.attendanceDeductions,
-                    hint: stats.lateDays > 0 ? `${num(stats.lateDays)} يوم تأخير · ${num(stats.lateMinutes)} دقيقة` : '',
+                    key: 'late', label: 'خصم التأخير والغياب', value: stats.attendanceDeductions,
+                    hint: [stats.lateDays > 0 ? `${num(stats.lateDays)} يوم تأخير · ${num(stats.lateMinutes)} دقيقة` : '', unpaidAbsenceDays > 0 ? `${num(unpaidAbsenceDays)} يوم غياب بخصم` : ''].filter(Boolean).join(' · '),
                     details: det.attendance.map(a => ({
                       id: a.id, when: shortDate(a.date),
-                      text: `تأخير ${num(Number(a.late_minutes || 0))} دقيقة${a.shift_start ? ` (الدوام ${a.shift_start.slice(0, 5)})` : ''}`,
+                      text: a.absence_leave_type
+                        ? `غياب — ${a.absence_leave_type === 'paid' ? 'مغطى من رصيد الشهر' : a.absence_leave_type === 'mixed' ? `${num(Number(a.absence_paid_days || 0))} يوم من الرصيد والباقي بخصم` : 'خصم يوم من الراتب'}`
+                        : `تأخير ${num(Number(a.late_minutes || 0))} دقيقة${a.shift_start ? ` (الدوام ${a.shift_start.slice(0, 5)})` : ''}`,
                       amount: Number(a.deduction_amount || 0), waived: Number(a.waived_amount || 0), kind: 'attendance' as const,
                     })),
                   },
@@ -2880,8 +2988,14 @@ export default function Employees() {
               {(() => {
                 const daysCount = getDaysBetween(leaveFormData.start_date, leaveFormData.end_date);
                 const startMonth = leaveFormData.start_date.slice(0, 7);
-                const balance = getLeaveBalanceStats(selectedEmployee, startMonth, editingLeave?.id);
-                const alloc = buildLeaveAllocation(selectedEmployee, leaveFormData.start_date, leaveFormData.end_date, leaveFormData.leave_type, editingLeave?.id);
+                const coveredAbsenceDates = new Set(employeeAttendance
+                  .filter(a => a.employee_id === selectedEmployee.id
+                    && a.absence_leave_type != null
+                    && a.date >= leaveFormData.start_date
+                    && a.date <= leaveFormData.end_date)
+                  .map(a => a.date));
+                const balance = getLeaveBalanceStats(selectedEmployee, startMonth, editingLeave?.id, coveredAbsenceDates);
+                const alloc = buildLeaveAllocation(selectedEmployee, leaveFormData.start_date, leaveFormData.end_date, leaveFormData.leave_type, editingLeave?.id, coveredAbsenceDates);
                 return (
                   <div className="bg-sky-50 rounded-2xl p-4 border border-sky-100 grid grid-cols-2 md:grid-cols-3 gap-3">
                     <div>

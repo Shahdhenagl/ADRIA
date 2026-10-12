@@ -570,13 +570,15 @@ export interface EmployeeAttendance {
   id: string;
   employee_id: string;
   date: string; // YYYY-MM-DD
-  check_in: string; // ISO timestamp للحضور الفعلي
+  check_in: string | null; // null في سجل غياب لم تُسجّل له بصمة حضور
   check_out?: string | null; // ISO timestamp للانصراف (تسجيل ذاتي)
-  shift_start?: string; // 'HH:MM' المتوقع وقت التسجيل
+  shift_start?: string | null; // 'HH:MM' المتوقع وقت التسجيل
   late_minutes: number; // دقائق التأخير (بعد خصم السماح)
   deduction_amount: number; // خصم التأخير من الراتب
   month: string; // YYYY-MM
   note?: string;
+  absence_leave_type?: 'paid' | 'unpaid' | 'mixed' | null;
+  absence_paid_days?: number;
   created_at: string;
   /** مسامحة (db/64): المبلغ المعفى اتنقل هنا والحقل الحيّ اتصفّر — الحسابات بتقرا الحيّ بس. */
   waived_amount?: number;
@@ -898,6 +900,7 @@ interface CashierStore {
   addEmployeeBonus: (bonus: Omit<EmployeeBonus, 'id' | 'created_at'>) => Promise<void>;
   deleteEmployeeBonus: (id: string) => Promise<void>;
   addEmployeeAttendance: (att: Omit<EmployeeAttendance, 'id' | 'created_at'>) => Promise<void>;
+  addAutoEmployeeAbsences: (rows: Omit<EmployeeAttendance, 'id' | 'created_at'>[]) => Promise<number>;
   updateEmployeeAttendance: (id: string, att: Partial<Omit<EmployeeAttendance, 'id' | 'created_at'>>) => Promise<void>;
   deleteEmployeeAttendance: (id: string) => Promise<void>;
 
@@ -7765,6 +7768,30 @@ setupRealtime: () => {
     if (data) {
       set((state) => ({ employeeAttendance: [data as EmployeeAttendance, ...state.employeeAttendance] }));
     }
+  },
+
+  // إدراج الغياب التلقائي دفعة واحدة مع تجاهل التاريخ الذي سبقت مزامنته من جهاز آخر.
+  addAutoEmployeeAbsences: async (rows) => {
+    if (rows.length === 0) return 0;
+    const { data, error } = await supabase
+      .from('employee_attendance')
+      .upsert(rows, { onConflict: 'employee_id,date', ignoreDuplicates: true })
+      .select();
+    if (error) {
+      console.error('Sync automatic employee absences error:', error);
+      throw error;
+    }
+    const inserted = (data || []) as unknown as EmployeeAttendance[];
+    if (inserted.length > 0) {
+      const insertedKeys = new Set(inserted.map((row) => `${row.employee_id}:${row.date}`));
+      set((state) => ({
+        employeeAttendance: [
+          ...inserted,
+          ...state.employeeAttendance.filter((row) => !insertedKeys.has(`${row.employee_id}:${row.date}`)),
+        ],
+      }));
+    }
+    return inserted.length;
   },
 
   // تعديل غرامة التأخير يدوياً — الخصم بيتحسب تلقائياً وقت تسجيل الحضور، لكن
