@@ -886,8 +886,8 @@ interface CashierStore {
   addEmployee: (employee: Omit<Employee, 'id' | 'created_at'>) => Promise<void>;
   updateEmployee: (id: string, employee: Partial<Employee>) => Promise<void>;
   deleteEmployee: (id: string) => Promise<void>;
-  addEmployeeTransaction: (transaction: Omit<EmployeeTransaction, 'id' | 'created_at'> & { created_at?: string }) => Promise<void>;
-  updateEmployeeTransaction: (id: string, transaction: Partial<Omit<EmployeeTransaction, 'id' | 'created_at'>>) => Promise<void>;
+  addEmployeeTransaction: (transaction: Omit<EmployeeTransaction, 'id' | 'created_at'> & { created_at?: string }) => Promise<boolean>;
+  updateEmployeeTransaction: (id: string, transaction: Partial<Omit<EmployeeTransaction, 'id' | 'created_at'>>) => Promise<boolean>;
   deleteEmployeeTransaction: (id: string) => Promise<void>;
   addEmployeeLeave: (leave: Omit<EmployeeLeave, 'id' | 'created_at'>) => Promise<void>;
   updateEmployeeLeave: (id: string, leave: Partial<Omit<EmployeeLeave, 'id' | 'created_at'>>) => Promise<void>;
@@ -7536,13 +7536,17 @@ setupRealtime: () => {
     // صرف الراتب/السلفة من الخزنة الرئيسية لا يلمس درج الكاشير، لذلك لا
     // يجوز أن يمنعه قفل يوم الكاشير. المعاملة الجديدة تحمل [MAIN_TREASURY]
     // في ملاحظتها قبل الوصول إلى هنا.
-    if (!isMainTreasuryExpense(transaction) && !(await ensureAccountingDayOpen(state, createdAt))) return;
-    const row = { ...transaction, created_at: createdAt };
+    if (!isMainTreasuryExpense(transaction) && !(await ensureAccountingDayOpen(state, createdAt))) return false;
+    const row = {
+      ...transaction,
+      note: typeof transaction.note === 'string' ? transaction.note.trim() : '',
+      created_at: createdAt,
+    };
     const { data, error } = await supabase.from('employee_transactions').insert(row).select().single();
     if (error) {
       console.error("Add Employee Transaction Error:", error);
       alert('تعذّر حفظ المعاملة (راتب/سلفة):\n' + (error.message || '') + '\n(جرّبي تسجيل الدخول من جديد كأدمن.)');
-      return;
+      return false;
     }
     
     if (data) {
@@ -7569,17 +7573,27 @@ setupRealtime: () => {
 
       set((state) => ({ employeeTransactions: [data as EmployeeTransaction, ...state.employeeTransactions] }));
     }
+    return Boolean(data);
   },
 
   updateEmployeeTransaction: async (id, transaction) => {
     const current = get().employeeTransactions.find(t => t.id === id);
-    if (!current) return;
-    if (!isMainTreasuryExpense(current) && !(await ensureAccountingDayOpen(get(), current.created_at))) return;
+    if (!current) return false;
+    if (!isMainTreasuryExpense(current) && !(await ensureAccountingDayOpen(get(), current.created_at))) return false;
 
-    const { data, error } = await supabase.from('employee_transactions').update(transaction).eq('id', id).select().single();
+    const normalizedUpdate = {
+      ...transaction,
+      ...(typeof transaction.note === 'string' ? { note: transaction.note.trim() } : {}),
+    };
+    const { data, error } = await supabase.from('employee_transactions').update(normalizedUpdate).eq('id', id).select().single();
     if (error) {
       console.error("Update Employee Transaction Error:", error);
-      return;
+      alert('تعذّر حفظ تعديل المعاملة (راتب/سلفة):\n' + (error.message || '') + '\nلم تُغلق النافذة؛ راجعي البيانات وحاولي مرة أخرى.');
+      return false;
+    }
+    if (!data) {
+      alert('لم يؤكد النظام حفظ تعديل المعاملة. لم تُغلق النافذة؛ حاولي مرة أخرى.');
+      return false;
     }
 
     const updatedTransaction = { ...current, ...(data as EmployeeTransaction) };
@@ -7611,6 +7625,7 @@ setupRealtime: () => {
     set((state) => ({
       employeeTransactions: state.employeeTransactions.map(t => (t.id === id ? updatedTransaction : t))
     }));
+    return true;
   },
 
   deleteEmployeeTransaction: async (id) => {

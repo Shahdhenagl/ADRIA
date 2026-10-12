@@ -948,7 +948,7 @@ export default function Employees() {
       if (!ok) return;
     }
 
-    const baseNote = transFormData.note;
+    const baseNote = transFormData.note.trim();
     const mainGroupId = toMain ? newSavingsGroupId() : null;
     const transactionData = {
       employee_id: emp.id,
@@ -971,10 +971,20 @@ export default function Employees() {
       ...(chosenDate ? { created_at: chosenDate } : {})
     };
 
-    if (editingTransaction) {
-      await updateEmployeeTransaction(editingTransaction.id, transactionData as any);
-    } else {
-      await addEmployeeTransaction(transactionData);
+    let saved = false;
+    try {
+      saved = editingTransaction
+        ? await updateEmployeeTransaction(editingTransaction.id, transactionData as any)
+        : await addEmployeeTransaction(transactionData);
+    } catch (error) {
+      console.error('Employee transaction save failed:', error);
+      alert(`تعذّر حفظ المعاملة؛ لم تُحفظ الملاحظة.\n${error instanceof Error ? error.message : String(error)}\nالنافذة ما زالت مفتوحة، حاولي مرة أخرى.`);
+      return;
+    }
+
+    if (!saved) return;
+
+    if (!editingTransaction) {
       if (toMain) {
         await recordMainTreasuryOut(split as any, 'main_expense', `${typeLabel} موظف: ${emp.name}${baseNote ? ` - ${baseNote}` : ''}`, chosenDate, mainGroupId as any);
       }
