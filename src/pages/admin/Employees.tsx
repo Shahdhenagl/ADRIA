@@ -38,6 +38,11 @@ type SaleRow = {
   items?: SaleItem[];
 };
 
+// مصدر الخزنة محفوظ داخل وسم الملاحظة للمعاملات القديمة والجديدة.
+// أي حركة بلا وسم [MAIN_TREASURY] تكون من خزنة المحل.
+const employeeTreasuryOf = (transaction: Pick<EmployeeTransaction, 'note'>) =>
+  String(transaction.note || '').includes('[MAIN_TREASURY]') ? 'الخزنة الرئيسية' : 'خزنة المحل';
+
 export default function Employees() {
   const {
     employees, employeeTransactions, employeeLeaves, employeeAttendance, employeeDeductions, employeeBonuses, storeSettings, orders, cashiers,
@@ -1576,6 +1581,7 @@ export default function Employees() {
                     <th className="p-6">النوع</th>
                     <th className="p-6">الشهر</th>
                     <th className="p-6">طريقة الدفع</th>
+                    <th className="p-6">الخزنة</th>
                     <th className="p-6 text-left">المبلغ</th>
                     <th className="p-6 text-left">إجراءات</th>
                   </tr>
@@ -1598,6 +1604,15 @@ export default function Employees() {
                           {t.paid_visa > 0 && <span className="text-[10px] font-black text-blue-600 flex items-center gap-1"><CreditCard size={12} /> فيزا</span>}
                           {t.paid_instapay > 0 && <span className="text-[10px] font-black text-amber-600 flex items-center gap-1"><Zap size={12} /> انستا</span>}
                         </div>
+                      </td>
+                      <td className="p-6">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black border ${
+                          employeeTreasuryOf(t) === 'الخزنة الرئيسية'
+                            ? 'bg-violet-50 text-violet-700 border-violet-100'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                        }`}>
+                          <Wallet size={12} /> {employeeTreasuryOf(t)}
+                        </span>
                       </td>
                       <td className="p-6 text-left">
                         <div className="flex flex-col items-left">
@@ -1625,7 +1640,7 @@ export default function Employees() {
                   ))}
                   {profileTransactions.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="py-12 text-center text-slate-400 font-bold">لا توجد حركات مالية في هذه الفترة</td>
+                      <td colSpan={7} className="py-12 text-center text-slate-400 font-bold">لا توجد حركات مالية في هذه الفترة</td>
                     </tr>
                   )}
                 </tbody>
@@ -2089,6 +2104,7 @@ export default function Employees() {
                   <th className="p-6">النوع</th>
                   <th className="p-6">الشهر</th>
                   <th className="p-6">طريقة الدفع</th>
+                  <th className="p-6">الخزنة</th>
                   <th className="p-6 text-left">المبلغ</th>
                   <th className="p-6 text-left">إجراءات</th>
                 </tr>
@@ -2114,6 +2130,15 @@ export default function Employees() {
                           {t.paid_visa > 0 && <span className="text-[10px] font-black text-blue-600 flex items-center gap-1"><CreditCard size={12} /> فيزا: {t.paid_visa.toLocaleString()}</span>}
                           {t.paid_instapay > 0 && <span className="text-[10px] font-black text-amber-600 flex items-center gap-1"><Zap size={12} /> انستا: {t.paid_instapay.toLocaleString()}</span>}
                         </div>
+                      </td>
+                      <td className="p-6">
+                        <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black border ${
+                          employeeTreasuryOf(t) === 'الخزنة الرئيسية'
+                            ? 'bg-violet-50 text-violet-700 border-violet-100'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                        }`}>
+                          <Wallet size={12} /> {employeeTreasuryOf(t)}
+                        </span>
                       </td>
                       <td className="p-6 text-left">
                         <div className="flex flex-col items-left">
