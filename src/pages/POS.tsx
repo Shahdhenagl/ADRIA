@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore, HELD_STATUS_LABEL, type HeldInvoice, type HeldStatus, type Product } from '../store/useStore';
 import { HeldReturnModal } from '../components/HeldReturnModal';
@@ -110,6 +110,17 @@ async function loadDayBudgetSource(dayStr: string, start: Date, end: Date, local
 
 export default function POS() {
   const { products, categories, cart, addToCart, addToCartQty, removeFromCart, updateQuantity, updatePrice, clearCart, checkout, processReturn, storeSettings, orders, activeInvoiceId, customers, activeCashier, logoutPOS, isOnline, isOfflineMode, offlineSnapshotAt, offlineQueue, offlineReturnsQueue, isSyncing, syncOfflineQueue, syncOfflineReturnsQueue, addCashierNote, addExpense, invoiceType, setInvoiceType, employees, salesperson, setSalesperson, deleteOrder, savingsTransfer, reopenDay, savingsConvert, recordMainTreasuryOut, recordMainTreasuryIn, addEmployeeTransaction, employeeDeductions, addEmployeeDeduction, updateProduct, heldInvoices, holdInvoice, confirmHeldInvoice, updateHeldInvoice, returnHeldInvoice, setHeldInvoiceStatus, recordHeldDepositConversion, updateSettings, restoreCart } = useStore();
+  const reservedByProduct = useMemo(() => {
+    const map = new Map<string, number>();
+    heldInvoices
+      .filter((h: any) => ['held', 'shipped', 'money_pending'].includes(h.status || 'held'))
+      .forEach((h: any) => (h.items || []).forEach((item: any) => {
+        const id = item.product_id || item.id;
+        if (id) map.set(id, (map.get(id) || 0) + (Number(item.quantity) || 0));
+      }));
+    return map;
+  }, [heldInvoices]);
+  const reservedOf = (product: Product) => reservedByProduct.get(product.id) || 0;
   const [lineDiscounts, setLineDiscounts] = useState<Record<string, number>>({});
   const [lineBasePrices, setLineBasePrices] = useState<Record<string, number>>({});
   const setPieceDiscount = (item: any) => {
@@ -4038,6 +4049,8 @@ export default function POS() {
             {filteredProducts.map((product) => {
               const isOutOfStock = product.stock_quantity <= 0;
               const isLowStock = product.stock_quantity > 0 && product.stock_quantity < 5;
+              const reservedQty = reservedOf(product);
+              const physicalQty = (Number(product.stock_quantity) || 0) + reservedQty;
 
               return (
                 <div
@@ -4051,6 +4064,11 @@ export default function POS() {
 
                   <div className="pt-2">
                     <h3 className="font-bold text-gray-800 dark:text-gray-100 line-clamp-2 leading-tight text-base">{product.name}</h3>
+                    <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-2 text-[10px] font-bold">
+                      <span className="text-emerald-600 dark:text-emerald-400">فعلي {formatQty(physicalQty, product.unit)}</span>
+                      <span className="text-blue-600 dark:text-blue-400">متاح {formatQty(product.stock_quantity, product.unit)}</span>
+                      {reservedQty > 0 && <span className="text-amber-600 dark:text-amber-400">محجوز {formatQty(reservedQty, product.unit)}</span>}
+                    </div>
                     {/* سعر الشراء مخفي في الكاشير — يظهر سعر البيع فقط */}
                   </div>
                   <div className="flex items-end justify-between mt-3 pt-2 border-t border-gray-100 dark:border-slate-700">

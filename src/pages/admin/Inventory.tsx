@@ -115,6 +115,20 @@ export default function Inventory() {
   const qtyOf = (p: any) => stockLocation === 'display' ? dispOf(p)
     : stockLocation === 'warehouse' ? ((Number(p.stock_quantity) || 0) - dispOf(p))
     : (Number(p.stock_quantity) || 0);
+  // stock_quantity هو المتاح للبيع في التصميم الحالي؛ الحجز يخصمه منه مؤقتاً.
+  // الموجود الفعلي = المتاح للبيع + الحجوزات النشطة، من غير تعديل البيانات القديمة.
+  const reservedByProduct = useMemo(() => {
+    const map = new Map<string, number>();
+    heldInvoices
+      .filter((h: any) => ['held', 'shipped', 'money_pending'].includes(h.status || 'held'))
+      .forEach((h: any) => (h.items || []).forEach((item: any) => {
+        const id = item.product_id || item.id;
+        if (id) map.set(id, (map.get(id) || 0) + (Number(item.quantity) || 0));
+      }));
+    return map;
+  }, [heldInvoices]);
+  const reservedOf = (p: any) => reservedByProduct.get(p.id) || 0;
+  const physicalOf = (p: any) => (Number(p.stock_quantity) || 0) + reservedOf(p);
   // كمية مباعة لكل منتج (صافي بعد المرتجع).
   const soldMap = useMemo(() => {
     const m = new Map<string, number>();
@@ -1986,7 +2000,7 @@ export default function Inventory() {
                 <th className="p-4 text-center">سعر الشراء</th>
                 <th className="p-4 text-center">متوسط الشراء</th>
                 <th className="p-4 text-center border-x border-slate-100 bg-slate-50">سعر البيع</th>
-                <th className="p-4 text-center border-l border-slate-100 bg-slate-50">المخزون المتوفر</th>
+                <th className="p-4 text-center border-l border-slate-100 bg-slate-50">المخزون</th>
                 <th className="p-4 text-center">الإجراءات</th>
               </tr>
             </thead>
@@ -1994,6 +2008,9 @@ export default function Inventory() {
               {filteredProducts.map((product) => {
                 const category = categories.find(c => c.id === product.category_id)?.name;
                 const isLowStock = qtyOf(product) < 5;
+                const availableQty = Number(product.stock_quantity) || 0;
+                const reservedQty = reservedOf(product);
+                const physicalQty = physicalOf(product);
                 
                 return (
                   <tr key={product.id} className={`hover:bg-slate-50 transition ${product.is_hidden ? 'opacity-50 bg-slate-50/80' : ''}`}>
@@ -2025,10 +2042,15 @@ export default function Inventory() {
                         style={{ '--hover-bg': storeSettings.themeColor + '15', '--hover-text': storeSettings.themeColor } as any}
                         className={`flex items-center justify-center gap-2 w-full font-bold px-3 py-1.5 rounded-lg transition group ${isLowStock ? 'bg-red-50 text-red-600' : 'hover:bg-[var(--hover-bg)] hover:text-[var(--hover-text)]'}`}
                       >
-                        {formatQty(qtyOf(product), product.unit)}
+                        {formatQty(availableQty, product.unit)}
                         <Edit2 size={14} className="opacity-100 md:opacity-0 md:group-hover:opacity-100" />
                       </button>
-                      <div className="text-[9px] text-slate-400 mt-1">مستودع {Math.max(0, (Number(product.stock_quantity) || 0) - dispOf(product))} · محل {dispOf(product)}</div>
+                      <div className="flex flex-wrap justify-center gap-1 mt-1 text-[9px] font-bold">
+                        <span className="text-emerald-600">فعلي {formatQty(physicalQty, product.unit)}</span>
+                        <span className="text-blue-600">متاح {formatQty(availableQty, product.unit)}</span>
+                        <span className="text-amber-600">محجوز {formatQty(reservedQty, product.unit)}</span>
+                      </div>
+                      <div className="text-[9px] text-slate-400 mt-1">مستودع {Math.max(0, availableQty - dispOf(product))} · محل {dispOf(product)}</div>
                     </td>
 
                     <td className="p-4">
